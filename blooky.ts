@@ -12,13 +12,13 @@ const STREAM_FILTER = Symbol("STREAM_FILTER");
  */
 type StreamState<A,B=any,C=any> = {
     /**
-     * ファンクタ。A->Bの変換だけを行う。
+     * ファンクタ。B->Aの変換だけを行う。
      * @param v 
      * @returns 
      */
     [STREAM_FUNCTOR]: (v:B) => A
     /**
-     * フィルタ。受け入れられるAかを判断する。
+     * フィルタ。受け入れられる値かを判断する。
      * @param v 
      * @returns 
      */
