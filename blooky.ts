@@ -122,9 +122,9 @@ const isStream = <A>(v:unknown) : v is Stream<A> => typeof v === "object" && v !
  * @param s 
  * @returns 
  */
-const countRefs = <V>(s:Stream<V>) : number => {
+const countRefs = <V>(s:Stream<V>) : Prop<number> => {
     if(!isStream(s)) throw new TypeError("countRefs function is need stream type");
-    return [...s.next,...s.lazyNext].reduce((v,s) => v + countRefs(s), s.observers.size + s.updates.size);
+    return () => [...s.next,...s.lazyNext].reduce((v,s) => v + countRefs(s)(), s.observers.size + s.updates.size);
 }
 
 /**
@@ -314,6 +314,41 @@ const accum = <A>(_s:Stream<A>) => <S>(f:(v:A,s:S)=>S, s: S) : Prop<S> => {
     return p;
 }
 
+const shed = <A>(ss: Stream<Stream<A>>) => {
+    const o = stream<A>();
+    const p = hold(ss)(o);
+    listen(ss)((s)=>{
+        p().next.delete(o);
+        s.next.add(o);
+    });
+    return o;
+}
+
+/**
+ * moments.framecountのファンクタに渡される状態変数。
+ */
+type FrameCountState = {
+    /**
+     * 現在時刻のミリ秒。performance.now、あるいはrequestAnimationFrameから受け取る値
+     */
+    now: number
+    /**
+     * framecount関数を呼び出した時刻の数値。
+     */
+    started: number
+    /**
+     * framecount関数を呼び出した時刻からの経過時間。
+     */
+    elapsed: number
+    /**
+     * 前回のframecountからの経過時間。
+     */
+    deltaTime: number
+    /**
+     * フレームカウント。
+     */
+    count: number
+}
 
 /**
  * 時間の更新をイベントストリームとして取得する。
@@ -336,7 +371,7 @@ type moments = {
      * @param limit 
      * @returns 
      */
-    framecount(limit:number) : Stream<number>
+    framecount(limit:number) : Stream<FrameCountState>
 }
 
 const moments = {} as moments; {
@@ -353,17 +388,33 @@ const moments = {} as moments; {
     moments.interval = (ms: number = 0) => {
         const s = stream(elapsed);
         const pid = setInterval(drip(s), ms, now());
-        listen(s)(()=>countRefs(s)<2 && clearInterval(pid));
+        listen(s)(()=>countRefs(s)()<2 && clearInterval(pid));
         return s;
     };
 
     moments.framecount = typeof window.requestAnimationFrame === "function"
         ? (limit: number = Infinity) => {
-            const n = now();
-            const s = stream((t) => t - n);
-            const c = limit === Infinity ? () => Infinity : accum(s)((_,s)=>s-1, limit);
-            listen(s)(() => c()>0 && countRefs(s)>1 && requestAnimationFrame(drip(s)));
+            const started = now();
+            const s: Stream<FrameCountState> = stream((now) => {
+                const prev = p();
+                return {
+                    now,
+                    started,
+                    elapsed: now - started,
+                    deltaTime: now - prev.now,
+                    count: prev.count + 1
+                }
+            });
+            const p = hold(s)({
+                started,
+                now: started,
+                elapsed: 0,
+                deltaTime: 0,
+                count: 0
+            });
+            listen(s)(() => p().count<limit && countRefs(s)()>ref_min && requestAnimationFrame(drip(s)));
             requestAnimationFrame(drip(s));
+            const ref_min = countRefs(s)();
             return s;
         }
         : (_:number) => {throw new Error('moments.framecount function need "requestAnimationFrame" function')};
@@ -371,5 +422,5 @@ const moments = {} as moments; {
 }
 
 
-export {stream,isStream,countRefs,clear,hold,accum,lift,merge,pipe,filter,snapshot,listen,drip,moments};
+export {stream,isStream,countRefs,clear,hold,accum,lift,merge,pipe,filter,snapshot,listen,drip,shed,moments};
 
