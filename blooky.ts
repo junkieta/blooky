@@ -97,7 +97,7 @@ const clear = (s:Stream<unknown>|Prop<unknown>) => {
         PROP_UPDATER.delete(s);
     }
     else if (!isStream(s)) {
-        throw new TypeError('clear function is need stream type');
+        throw new TypeError('clear function is need Stream or Prop type');
     }
     else {
         s.next.forEach(clear);
@@ -314,6 +314,11 @@ const accum = <A>(_s:Stream<A>) => <S>(f:(v:A,s:S)=>S, s: S) : Prop<S> => {
     return p;
 }
 
+/**
+ * 値を受け取るストリームをスイッチする
+ * @param ss 
+ * @returns 
+ */
 const shed = <A>(ss: Stream<Stream<A>>) => {
     const o = stream<A>();
     const p = hold(ss)(o);

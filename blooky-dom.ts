@@ -8,20 +8,41 @@ import { Stream, isStream, listen, Prop, stream, drip } from "./blooky";
 export type HTMLAttrName =
     "abbr" | "accept" | "accept-charset" | "accesskey" | "action" | "allow" | "allowfullscreen" | "allowpaymentrequest" | "alt" | "as" | "async" | "autocapitalize" | "autocomplete" | "autofocus" | "autoplay" | "charset" | "checked" | "cite" | "class" | "color" | "cols" | "colspan" | "content" | "contenteditable" | "controls" | "coords" | "crossorigin" | "data" | "datetime" | "decoding" | "default" | "defer" | "dir" | "dir" | "dirname" | "disabled" | "download" | "draggable" | "enctype" | "enterkeyhint" | "for" | "form" | "formaction" | "formenctype" | "formmethod" | "formnovalidate" | "formtarget" | "headers" | "height" | "hidden" | "high" | "href" | "hreflang" | "http-equiv" | "id" | "imagesizes" | "imagesrcset" | "inputmode" | "integrity" | "is" | "ismap" | "itemid" | "itemprop" | "itemref" | "itemscope" | "itemtype" | "kind" | "label" | "lang" | "list" | "loop" | "low" | "manifest" | "max" | "maxlength" | "media" | "method" | "min" | "minlength" | "multiple" | "muted" | "name" | "nomodule" | "nonce" | "novalidate" | "open" | "optimum" | "pattern" | "ping" | "placeholder" | "playsinline" | "poster" | "preload" | "readonly" | "referrerpolicy" | "rel" | "required" | "reversed" | "rows" | "rowspan" | "sandbox" | "scope" | "selected" | "shape" | "size" | "sizes" | "slot" | "span" | "spellcheck" | "src" | "srcdoc" | "srclang" | "srcset" | "start" | "step" | "style" | "tabindex" | "target" | "title" | "translate" | "type" | "usemap" | "value";
 
+export type WritableCSSProperty = Exclude<keyof CSSStyleDeclaration,
+    "getPropertyPriority"|
+    "getPropertyValue"|
+    "item"|
+    "removeProperty"|
+    "setProperty"|
+    "length"|
+    "parentRule"|
+    number|
+    symbol
+>;
+
 type HTMLTag = keyof HTMLElementTagNameMap;
 type HTMLEventHandlers = Extract<keyof GlobalEventHandlers,`on${string}`>;
 
 type V_STRING = string | number | boolean | undefined | null;
 type V_CLASSLIST = string[]|{[key:string]:boolean};
 type V_DATASET = {[key:string]:V_STRING};
-type V_STYLE = {[key:string]:V_STRING};
+type V_STYLE = { [key in WritableCSSProperty]?: V_STRING|Stream<V_STRING> };
 type V_EVENTLISTENER = EventListenerOrEventListenerObject|GlobalEventHandlers[HTMLEventHandlers];
-type T_ATTRSET = [string, V_DATASET|V_STYLE|V_CLASSLIST|V_EVENTLISTENER|V_STRING];
+type T_ATTRSET = 
+    ["dataset", V_DATASET]|
+    ["style", V_STYLE]|
+    ["classList", V_CLASSLIST]|
+    [`on${string}`, V_EVENTLISTENER]|
+    [string, V_STRING];
+
+
 
 type JSHTMLFragmentSource = JSHTMLNodeSource[];
 type JSHTMLTextSource = V_STRING;
 type JSHTMLNodeSource = JSHTMLElementSource<string> | JSHTMLTextSource | JSHTMLFragmentSource;
-type JSHTMLAttrSource = T_ATTRSET[1];
+type JSHTMLAttrSource = 
+    T_ATTRSET[1];
+
 type JSHTMLAttributeMapSource =
     Partial<
         { dataset: V_DATASET, style: V_STYLE, classList: V_CLASSLIST } &
@@ -43,12 +64,14 @@ customElements.define("jshtml-unknown", JSHTMLUnknownElement);
  * @param v 
  * @returns 
  */
-const gen_className_setter = (v:V_CLASSLIST|null) :(e:Element)=>void => 
+const gen_className_setter = (v:V_CLASSLIST|V_STRING) :(e:Element)=>void => 
     v == null
     ? (e:Element) => e.removeAttribute("class")
     : Array.isArray(v)
     ? (e:Element) => e.className = v.filter(Boolean).join(" ")
-    : (e:Element) => e.className = Object.keys(v).filter((k)=>v[k]).join(" ");
+    : (e:Element) => e.className = typeof v === "object"
+        ? Object.keys(v).filter((k)=>v[k]).join(" ")
+        : v + "";
 
 /**
  * datasetの設定用関数を生成する
@@ -67,11 +90,18 @@ const gen_dataset_setter =
  * @returns 
  */
 const gen_style_setter =
-    (v:V_STYLE|null) =>
+    (v:V_STYLE) =>
         v == null
         ? (e:HTMLElement) => e.removeAttribute("style")
         : (e:HTMLElement) => 
-            Object.entries(v).forEach(([k,v]) => e.style[k as any] = v != null ? v + '' : '');
+            (Object.entries(v) as [WritableCSSProperty,V_STRING][]).forEach(([k,v]) => {
+                if(isStream<V_STYLE>(v)) {
+                    bind_style_stream(v)([e,k]);
+                } else {
+                    e.style[k as any] = v != null ? v + '' : ''
+                }
+            })
+
 
 /**
  * イベントリスナーの設定用関数を生成する
@@ -80,7 +110,7 @@ const gen_style_setter =
  * @returns 
  */
 const gen_listener_setter =
-    (v:V_EVENTLISTENER|null, n: string) => 
+    (v:V_EVENTLISTENER, n: string) => 
         v && (typeof v === "function" || typeof v.handleEvent === "function")
         ? (e:EventTarget) => e.addEventListener(n.slice(2), v as EventListener)
         : (e:Element) => e.setAttribute(n,v+"");
@@ -100,7 +130,7 @@ const element = <T extends string>(s:JSHTMLElementSource<T|"$">) => {
             if(isStream<JSHTMLAttrSource>(v))
                 bind_attr_stream(v)([elm,k]);
             else
-                update_attr(elm)([k,v]);
+                update_attr(elm)([k,v] as T_ATTRSET);
         })
     return elm as T extends HTMLTag ? HTMLElementTagNameMap[T] : HTMLElement;
 }
@@ -151,6 +181,20 @@ const bind_attr_stream = (s:Stream<JSHTMLAttrSource>) => function f([e,n]:[HTMLE
 }
 
 /**
+ * スタイル属性値とストリームをバインディングする
+ * @param s 
+ * @returns 
+ */
+const bind_style_stream = (s:Stream<V_STYLE>) => ([e,p]:[HTMLElement, WritableCSSProperty]) => {
+    const unlisten = listen(s)((v) => {
+        if(e.isConnected) {
+            e.style[p] = v + "";
+            unlisten();
+        }
+    });
+}
+
+/**
  * DOM範囲の更新を行う
  * @param param0 
  * @returns 
@@ -174,19 +218,21 @@ const update_range = ([a,b]:[Node,Node]) => (v:JSHTMLNodeSource) : [Node,Node] =
  * @param e 
  * @returns 
  */
-const update_attr = (e:HTMLElement) => ([n,v]:[string,JSHTMLAttrSource]) => {
-    if(n === "classList")
-        gen_className_setter(v as V_CLASSLIST)(e);
+const update_attr = (e:HTMLElement) => ([n,v]:T_ATTRSET) => {
+    if(v == null)
+        e.removeAttribute(n);
+    else if(!(v instanceof Object))
+        e.setAttribute(n, v + "");
+    else if(n === "classList")
+        gen_className_setter(v)(e);
     else if(n === "dataset")
-        gen_dataset_setter(v as V_DATASET)(e);
+        gen_dataset_setter(v)(e);
     else if(n === "style")
-        gen_style_setter(v as V_STYLE)(e);
+        gen_style_setter(v)(e);
     else if(/^on+/.test(n))
         gen_listener_setter(v as V_EVENTLISTENER, n)(e);
-    else if(v == null || v == undefined)
-        e.removeAttribute(n)
     else
-        e.setAttribute(n, v+"");
+        throw new Error("unknown attribute's value")
 };
 
 
@@ -218,6 +264,11 @@ function jshtml<T extends string>(s:JSHTMLNodeSource|Prop<JSHTMLNodeSource>|Stre
     return new Text(s+"");
 }
 
+/**
+ * MutationObserverを介して、DOMの変異をイベントストリームに接続する。
+ * @param n 
+ * @returns 
+ */
 const mutations = (n: Node) => (init: MutationObserverInit) : [Stream<MutationRecord[]>,()=>void] => {
     const s = stream<MutationRecord[],MutationRecord[]>();
     const o = new MutationObserver(drip(s));
@@ -225,6 +276,11 @@ const mutations = (n: Node) => (init: MutationObserverInit) : [Stream<MutationRe
     return [s, o.disconnect.bind(o)];
 };
 
+/**
+ * addEventListenerを介して、DOMイベントをイベントストリームに接続する。
+ * @param target 
+ * @returns 
+ */
 const events = (target:EventTarget) => <T extends string, E = T extends keyof HTMLElementEventMap ? HTMLElementEventMap[T] : Event>(t: T) : [Stream<E>,()=>void] => {
     const s = stream<E,Event>();
     const l = drip(s);
