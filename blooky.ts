@@ -34,7 +34,7 @@ type StreamState<A,B=any,C=any> = {
     /**
      * イベント発生後に行うPROP更新
      */
-    updates: Set<Prop<A>>
+    updates: Set<(v:A)=>void>
     /**
      * イベントの発生を検知するオブザーバ
      */
@@ -63,12 +63,6 @@ const parrot = <A>(v:A) => v;
 const compose = <A,B>(a:(v:A)=>B) => <C>(b:(v:B)=>C) => (v:A) => b(a(v));
 export {parrot,compose};
 
-/**
- * Prop型とその値を更新する関数のマップ。
- * Propがガベージコレクトで自動解放されるようWeakMapとしつつ、
- * 手動でもclear関数を経由して削除できるようにしている。
- */
-const PROP_UPDATER = new WeakMap<Prop<any>,(v:any)=>void>();
 
 /**
  * ストリーム状態を生成する。
@@ -84,7 +78,7 @@ const stream = <A,B=any>(f:(v:B)=>A = parrot as (v:B)=>A) : StreamState<A,B> => 
         next: new Set(),
         lazyNext: new Set(),
         observers: new Set(),
-        updates: new Set(),
+        updates: new Set()
     }
 }
 
@@ -93,10 +87,7 @@ const stream = <A,B=any>(f:(v:B)=>A = parrot as (v:B)=>A) : StreamState<A,B> => 
  * @param s 
  */
 const clear = (s:Stream<unknown>|Prop<unknown>) => {
-    if(typeof s === "function") {
-        PROP_UPDATER.delete(s);
-    }
-    else if (!isStream(s)) {
+    if (!isStream(s)) {
         throw new TypeError('clear function is need Stream or Prop type');
     }
     else {
@@ -104,9 +95,7 @@ const clear = (s:Stream<unknown>|Prop<unknown>) => {
         s.next = new Set();
         s.lazyNext = new Set();
         s.observers.clear();
-        // プロパティアップデータを削除する
-        s.updates.forEach((p)=>PROP_UPDATER.delete(p));
-        s.updates = new Set();
+        s.updates.clear();
     }
 }
 
@@ -122,9 +111,11 @@ const isStream = <A>(v:unknown) : v is Stream<A> => typeof v === "object" && v !
  * @param s 
  * @returns 
  */
-const countRefs = <V>(s:Stream<V>) : Prop<number> => {
+const countRefs = <V>(s:Stream<V>, deep: boolean = false) : Prop<number> => {
     if(!isStream(s)) throw new TypeError("countRefs function is need stream type");
-    return () => [...s.next,...s.lazyNext].reduce((v,s) => v + countRefs(s)(), s.observers.size + s.updates.size);
+    return deep
+        ? () => [...s.next,...s.lazyNext].reduce((v,s) => v + countRefs(s,deep)(), s.observers.size + s.updates.size)
+        : () => s.observers.size + s.updates.size
 }
 
 /**
@@ -136,10 +127,7 @@ const streamToFlowingState = <A>(v:A) => (s:StreamState<A>) : FlowingState<A> =>
     waiting: [...s.lazyNext].map((s)=>[s,v]),
     observers: [...s.observers].map(<B>(_f:(v:A)=>B) => () => _f(v)),
     // PROPのアップデーターが残っていれば使用し、残っていないならガベージコレクト用にストリームからも消去。
-    updates: [...s.updates].map((p) => PROP_UPDATER.has(p)
-        ? () => (v:A) => PROP_UPDATER.get(p)!(v)
-        : () => (_:A) => {s.updates.delete(p);clear(p)}
-    )
+    updates: [...s.updates].map((p) => ()=>p(v))
 })
 
 /**
@@ -185,10 +173,7 @@ const flowLazy = <B>(v:B) => <A>(s:StreamState<A,B>) : FlowingState<A> => {
     // マージされたストリーム毎に、到着した値をリスト化する
     const m = new Map<StreamState<A,A[]>,A[]>();
     r.waiting.forEach(([s,v]) => {
-        if(m.has(s))
-            m.get(s)!.push(v);
-        else
-            m.set(s,[v]);
+        m.set(s, m.has(s) ? [...m.get(s)!, v] : [v]);
     });
 
     return [...m].map(([s,v])=>flowLazy(v)(s)).reduce(concatFlowingState, {
@@ -277,10 +262,8 @@ const filter = <A>(s:Stream<A>) => <B extends A>(f:(v:A)=>boolean): StreamState<
  * @returns 
  */
 const hold = <A>(s:Stream<A>) => (v:A) : Prop<A> => {
-    const p = ()=>v;
-    s.updates.add(p);
-    PROP_UPDATER.set(p, (_v:A)=>v=_v);
-    return p;
+    s.updates.add((_v)=>v=_v);
+    return ()=>v;
 }
 
 /**
