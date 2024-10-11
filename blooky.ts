@@ -5,6 +5,7 @@
 
 const STREAM_FUNCTOR = Symbol("STREAM_FUNCTOR");
 const STREAM_FILTER = Symbol("STREAM_FILTER");
+const STREAM_CLEANER = Symbol("STREAM_CLEANER");
 
 /**
  * ストリームの状態定義。
@@ -23,6 +24,13 @@ type StreamState<A,B=any,C=any> = {
      * @returns 
      */
     [STREAM_FILTER]?: (v:B) => boolean
+
+    /**
+     * ガベージコレクション
+     * @returns 
+     */
+    [STREAM_CLEANER]?: ()=>void
+
     /**
      * 連結されたストリーム
      */
@@ -86,17 +94,15 @@ const stream = <A,B=any>(f:(v:B)=>A = parrot as (v:B)=>A) : StreamState<A,B> => 
  * ストリーム/プロパティのメモリを解放する。ガベージコレクトの補助。
  * @param s 
  */
-const clear = (s:Stream<unknown>|Prop<unknown>) => {
-    if (!isStream(s)) {
+const clear = (s:Stream<unknown>) => {
+    if (!isStream(s))
         throw new TypeError('clear function is need Stream or Prop type');
-    }
-    else {
-        s.next.forEach(clear);
-        s.next = new Set();
-        s.lazyNext = new Set();
-        s.observers.clear();
-        s.updates.clear();
-    }
+    s.next.forEach(clear);
+    s.next = new Set();
+    s.lazyNext = new Set();
+    s.observers.clear();
+    s.updates.clear();
+    if(s[STREAM_CLEANER]) s[STREAM_CLEANER]();
 }
 
 /**
@@ -220,6 +226,7 @@ const merge = <A> (s:StreamState<A>[]) => (f:(a:A,b:A)=>A) : StreamState<A,A[]> 
         if(!v.length) throw new Error("No values have been merged yet.");
         return v.reduce(f);
     });
+    _s[STREAM_CLEANER] = () => s.forEach((s)=>s.lazyNext.delete(_s));
     s.forEach((s)=>s.lazyNext.add(_s));
     return _s;
 };
@@ -234,6 +241,7 @@ const pipe = <A>(s:StreamState<A>) => <B>(f:(v:A)=>B) => {
         throw new TypeError('pipe function must be a function');
     }
     const _s = stream(f);
+    _s[STREAM_CLEANER] = () => _s.next.delete(s);
     s.next.add(_s);
     return _s;
 }
@@ -277,17 +285,6 @@ const listen = <A>({observers}:Stream<A>) => (f:(v:A)=>void) => {
 };
 
 /**
- * 一つのイベントストリームから別の時変値のタイミングでサンプルを取る
- * @param s 
- * @returns 
- */
-const snapshot = <A>(s:Stream<A>) => <B>(c:Prop<B>) : StreamState<B,A> => {
-    const _s = stream(c);
-    s.next.add(_s);
-    return _s;
-}
-
-/**
  * イベントストリームから一つの値を計算する
  * @param _s 
  * @returns 
@@ -305,17 +302,21 @@ const accum = <A>(_s:Stream<A>) => <S>(f:(v:A,s:S)=>S, s: S) : Prop<S> => {
 const shed = <A>(ss: Stream<Stream<A>>) => {
     const o = stream<A>();
     const p = hold(ss)(o);
-    listen(ss)((s)=>{
+    const l = listen(ss)((s)=>{
         p().next.delete(o);
         s.next.add(o);
     });
+    o[STREAM_CLEANER] = () => {
+        p().next.delete(o);
+        l();
+    }
     return o;
 }
 
 /**
  * moments.framecountのファンクタに渡される状態変数。
  */
-type FrameCountState = {
+type MomentState = {
     /**
      * 現在時刻のミリ秒。performance.now、あるいはrequestAnimationFrameから受け取る値
      */
@@ -333,7 +334,7 @@ type FrameCountState = {
      */
     deltaTime: number
     /**
-     * フレームカウント。
+     * 呼び出し回数。
      */
     count: number
 }
@@ -347,62 +348,73 @@ type moments = {
      * @param ms 
      * @returns 
      */
-    timeout(ms:number) : Stream<number>
+    timeout(ms:number) : Stream<MomentState>
     /**
      * 一定間隔でタイムイベントを取得する
      * @param ms 
      * @returns 
      */
-    interval(ms:number) : Stream<number>
+    interval(ms:number) : Stream<MomentState>
     /**
      * 一定回数のフレーム更新を取得する
      * @param limit 
      * @returns 
      */
-    framecount(limit:number) : Stream<FrameCountState>
+    framecount(limit:number) : Stream<MomentState>
 }
 
 const moments = {} as moments; {
 
     const now: Prop<number> = performance.now.bind(performance);
-    const elapsed = (t:number) => now() - t;
+    const nextState = (s:MomentState) => (n:number) : MomentState => 
+    ({
+        now: n,
+        started: s.started,
+        elapsed: n - s.started,
+        deltaTime: n - s.now,
+        count: s.count + 1
+    });
+    const stateStream = (started: number): Stream<MomentState> => {
+        const s = stream((n:number) => nextState(p())(n));
+        const p = hold(s)({
+            started,
+            now: started,
+            elapsed: 0,
+            deltaTime: 0,
+            count: 0
+        });
+        return s;
+    }
 
     moments.timeout = (ms:number = 0) => {
-        const s = stream(elapsed);
-        setTimeout(drip(s), ms, now());
+        const s = stateStream(now());
+        setTimeout(()=>drip(s)(now()), ms);
         return s;
     };
 
     moments.interval = (ms: number = 0) => {
-        const s = stream(elapsed);
-        const pid = setInterval(drip(s), ms, now());
-        listen(s)(()=>countRefs(s)()<2 && clearInterval(pid));
+        const s = stateStream(now());
+        const pid = setInterval(()=>drip(s)(now()), ms);
+        const l = listen(s)(()=>{
+            if(countRefs(s)() >= ref_min) return;
+            l();
+            clearInterval(pid);
+        });
+        const ref_min = countRefs(s)() + 1;
         return s;
     };
 
     moments.framecount = typeof window.requestAnimationFrame === "function"
         ? (limit: number = Infinity) => {
-            const started = now();
-            const s: Stream<FrameCountState> = stream((now) => {
-                const prev = p();
-                return {
-                    now,
-                    started,
-                    elapsed: now - started,
-                    deltaTime: now - prev.now,
-                    count: prev.count + 1
-                }
+            const s = stateStream(now());
+            const l = listen(s)(({count}) => {
+                if(count<=limit && countRefs(s)() > ref_min)
+                    requestAnimationFrame(drip(s));
+                else
+                    l();
             });
-            const p = hold(s)({
-                started,
-                now: started,
-                elapsed: 0,
-                deltaTime: 0,
-                count: 0
-            });
-            listen(s)(() => p().count<limit && countRefs(s)()>ref_min && requestAnimationFrame(drip(s)));
-            requestAnimationFrame(drip(s));
             const ref_min = countRefs(s)();
+            requestAnimationFrame(drip(s));
             return s;
         }
         : (_:number) => {throw new Error('moments.framecount function need "requestAnimationFrame" function')};
@@ -410,5 +422,5 @@ const moments = {} as moments; {
 }
 
 
-export {stream,isStream,countRefs,clear,hold,accum,lift,merge,pipe,filter,snapshot,listen,drip,shed,moments};
+export {stream,isStream,countRefs,clear,hold,accum,lift,merge,pipe,filter,listen,drip,shed,moments};
 
