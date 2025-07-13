@@ -3,7 +3,7 @@
  * blooky-domを用いてリアクティブなDOMを構築するライブラリ。
  * 簡易な仕様でDOMを構築しつつ、Streamを利用した更新管理も行う。
  */
-import { Stream, isStream, listen, Prop, stream, drip } from "./blooky";
+import { Stream, listen, Prop, stream, drip } from "./blooky";
 
 export type HTMLAttrName =
     "abbr" | "accept" | "accept-charset" | "accesskey" | "action" | "allow" | "allowfullscreen" | "allowpaymentrequest" | "alt" | "as" | "async" | "autocapitalize" | "autocomplete" | "autofocus" | "autoplay" | "charset" | "checked" | "cite" | "class" | "color" | "cols" | "colspan" | "content" | "contenteditable" | "controls" | "coords" | "crossorigin" | "data" | "datetime" | "decoding" | "default" | "defer" | "dir" | "dir" | "dirname" | "disabled" | "download" | "draggable" | "enctype" | "enterkeyhint" | "for" | "form" | "formaction" | "formenctype" | "formmethod" | "formnovalidate" | "formtarget" | "headers" | "height" | "hidden" | "high" | "href" | "hreflang" | "http-equiv" | "id" | "imagesizes" | "imagesrcset" | "inputmode" | "integrity" | "is" | "ismap" | "itemid" | "itemprop" | "itemref" | "itemscope" | "itemtype" | "kind" | "label" | "lang" | "list" | "loop" | "low" | "manifest" | "max" | "maxlength" | "media" | "method" | "min" | "minlength" | "multiple" | "muted" | "name" | "nomodule" | "nonce" | "novalidate" | "open" | "optimum" | "pattern" | "ping" | "placeholder" | "playsinline" | "poster" | "preload" | "readonly" | "referrerpolicy" | "rel" | "required" | "reversed" | "rows" | "rowspan" | "sandbox" | "scope" | "selected" | "shape" | "size" | "sizes" | "slot" | "span" | "spellcheck" | "src" | "srcdoc" | "srclang" | "srcset" | "start" | "step" | "style" | "tabindex" | "target" | "title" | "translate" | "type" | "usemap" | "value";
@@ -26,7 +26,7 @@ type HTMLEventHandlers = Extract<keyof GlobalEventHandlers,`on${string}`>;
 type V_STRING = string | number | boolean | undefined | null;
 type V_CLASSLIST = string[]|{[key:string]:boolean};
 type V_DATASET = {[key:string]:V_STRING};
-type V_STYLE = { [key in WritableCSSProperty]?: V_STRING|Stream<V_STRING> };
+type V_STYLE = { [key in WritableCSSProperty]?: V_STRING|Vars<V_STRING> };
 type V_EVENTLISTENER = EventListenerOrEventListenerObject|GlobalEventHandlers[HTMLEventHandlers];
 type T_ATTRSET = 
     ["dataset", V_DATASET]|
@@ -39,18 +39,19 @@ type T_ATTRSET =
 
 type JSHTMLFragmentSource = JSHTMLNodeSource[];
 type JSHTMLTextSource = V_STRING;
-type JSHTMLNodeSource = JSHTMLElementSource<string> | JSHTMLTextSource | JSHTMLFragmentSource;
+type JSHTMLNodeSource = Vars<JSHTMLNodeSource>| JSHTMLElementSource<string> | JSHTMLTextSource | JSHTMLFragmentSource;
 type JSHTMLAttrSource = 
-    T_ATTRSET[1];
+    T_ATTRSET[1] | Vars<T_ATTRSET[1]>;
 
 type JSHTMLAttributeMapSource =
     Partial<
         { dataset: V_DATASET, style: V_STYLE, classList: V_CLASSLIST } &
         { [key in HTMLAttrName]: JSHTMLAttrSource } & 
-        { [key in HTMLEventHandlers]: GlobalEventHandlers[key] }
+        { [key in HTMLEventHandlers]: GlobalEventHandlers[key] } &
+        { [key: string]: JSHTMLAttrSource }
     >;
-type JSHTMLElementSource<T extends string> = 
-    { [key in T]: T extends "$" ? JSHTMLAttributeMapSource : JSHTMLNodeSource };
+type JSHTMLElementSource<T extends string> = { [key in T]: JSHTMLNodeSource } & { $?: JSHTMLAttributeMapSource };
+//    { [key in T]: T extends "$" ? JSHTMLAttributeMapSource : JSHTMLNodeSource };
 
 /**
  * tag指定がjshtmlの仕様に沿わなかった場合に生成される要素の定義。
@@ -58,6 +59,16 @@ type JSHTMLElementSource<T extends string> =
 class JSHTMLUnknownElement extends HTMLElement {}
 customElements.define("jshtml-unknown", JSHTMLUnknownElement);
 
+const VAR = Symbol("VAR");
+class Vars<A> {
+    [VAR]: [Stream<A>,A]
+    constructor(s:Stream<A>,v:A) {
+        this[VAR] = [s,v];
+    }
+}
+
+const vars = <A>(s:Stream<A>) => (v:A) => new Vars(s,v); 
+const isVars = <A>(v:unknown): v is Vars<A> => v instanceof Vars;
 
 /**
  * class属性の設定用関数を生成する
@@ -95,8 +106,9 @@ const gen_style_setter =
         ? (e:HTMLElement) => e.removeAttribute("style")
         : (e:HTMLElement) => 
             (Object.entries(v) as [WritableCSSProperty,V_STRING][]).forEach(([k,v]) => {
-                if(isStream<V_STYLE>(v)) {
+                if(isVars<V_STYLE>(v)) {
                     bind_style_stream(v)([e,k]);
+                    e.style[k as any] = v[VAR][1] + '';
                 } else {
                     e.style[k as any] = v != null ? v + '' : ''
                 }
@@ -127,7 +139,7 @@ const element = <T extends string>(s:JSHTMLElementSource<T|"$">) => {
         elm.append(jshtml(children));
     if(attrs)
         Object.entries(attrs).forEach(([k,v])=> {
-            if(isStream<JSHTMLAttrSource>(v))
+            if(isVars<JSHTMLAttrSource>(v))
                 bind_attr_stream(v)([elm,k]);
             else
                 update_attr(elm)([k,v] as T_ATTRSET);
@@ -170,8 +182,8 @@ const bind_node_stream = (s:Stream<JSHTMLNodeSource>) => function f(p:[Node,Node
  * @param s 
  * @returns 
  */
-const bind_attr_stream = (s:Stream<JSHTMLAttrSource>) => function f([e,n]:[HTMLElement,string]) {
-    const unlisten = listen(s)((v) => {
+const bind_attr_stream = (v:Vars<JSHTMLAttrSource>) => function f([e,n]:[HTMLElement,string]) {
+    const unlisten = listen(v[VAR][0])((v) => {
         if(e.isConnected) {
             update_attr(e)([n,v] as T_ATTRSET);
             f([e,n]);
@@ -185,10 +197,11 @@ const bind_attr_stream = (s:Stream<JSHTMLAttrSource>) => function f([e,n]:[HTMLE
  * @param s 
  * @returns 
  */
-const bind_style_stream = (s:Stream<V_STYLE>) => ([e,p]:[HTMLElement, WritableCSSProperty]) => {
-    const unlisten = listen(s)((v) => {
+const bind_style_stream = (s:Vars<V_STYLE>) => ([e,p]:[HTMLElement, WritableCSSProperty]) => {
+    const unlisten = listen(s[VAR][0])((v) => {
         if(e.isConnected) {
             e.style[p] = v + "";
+        } else {
             unlisten();
         }
     });
@@ -221,6 +234,8 @@ const update_range = ([a,b]:[Node,Node]) => (v:JSHTMLNodeSource) : [Node,Node] =
 const update_attr = (e:HTMLElement) => ([n,v]:T_ATTRSET) => {
     if(v == null)
         e.removeAttribute(n);
+    else if(typeof v === "boolean")
+        e.toggleAttribute(n, v);
     else if(!(v instanceof Object))
         e.setAttribute(n, v + "");
     else if(n === "classList")
@@ -231,8 +246,10 @@ const update_attr = (e:HTMLElement) => ([n,v]:T_ATTRSET) => {
         gen_style_setter(v)(e);
     else if(/^on+/.test(n))
         gen_listener_setter(v as V_EVENTLISTENER, n)(e);
-    else
+    else {
+        console.log(n,v);
         throw new Error("unknown attribute's value")
+    }
 };
 
 
@@ -241,13 +258,12 @@ const update_attr = (e:HTMLElement) => ([n,v]:T_ATTRSET) => {
  * @param s 
  * @returns 
  */
-function jshtml<T extends string>(s:JSHTMLElementSource<T|"$">): T extends HTMLTag ? HTMLElementTagNameMap[T] : HTMLElement;
-function jshtml<V>(s:Prop<V>): ReturnType<typeof jshtml>;
-function jshtml<V>(s:Stream<V>): Comment;
+function jshtml<T extends string>(s:JSHTMLElementSource<T>): T extends HTMLTag ? HTMLElementTagNameMap[T] : HTMLElement;
+function jshtml(s:undefined|null): Comment;
 function jshtml(s:JSHTMLTextSource): Text;
 function jshtml(s:JSHTMLFragmentSource): DocumentFragment;
-function jshtml<T extends string>(s:JSHTMLNodeSource|Prop<JSHTMLNodeSource>|Stream<JSHTMLNodeSource>): T extends HTMLTag ? HTMLElementTagNameMap[T] : HTMLElement | DocumentFragment | Text | Comment;
-function jshtml<T extends string>(s:JSHTMLNodeSource|Prop<JSHTMLNodeSource>|Stream<JSHTMLNodeSource>) {
+function jshtml<T extends string>(s:JSHTMLNodeSource|Prop<JSHTMLNodeSource>|Vars<JSHTMLNodeSource>): T extends HTMLTag ? HTMLElementTagNameMap[T] : HTMLElement | DocumentFragment | Text | Comment;
+function jshtml<T extends string>(s:JSHTMLNodeSource|Prop<JSHTMLNodeSource>) {
     if(typeof s === "function")
         return jshtml<T>(s());
     if(Array.isArray(s)) {
@@ -255,13 +271,29 @@ function jshtml<T extends string>(s:JSHTMLNodeSource|Prop<JSHTMLNodeSource>|Stre
         df.append(...s.map(jshtml));
         return df;
     }
-    if(s != null && typeof s === "object") {
-        if(!isStream<JSHTMLNodeSource>(s)) return element(s);
-        const n = new Comment("[jshtml::placeholder]");
-        bind_node_stream(s)([n,n])
+    if(s == null || s == undefined) {
+        return new Comment("[jshtml::null]");
+    }
+    if(typeof s !== "object") {
+        return new Text(s+"");
+    }
+    if(isVars<JSHTMLNodeSource>(s)){
+        const [stream,value] = s[VAR];
+        const n = jshtml(value);
+        if(n.nodeType !== n.DOCUMENT_FRAGMENT_NODE) {
+            bind_node_stream(stream)([n,n]);
+        }
+        else if(n.hasChildNodes()) {
+            bind_node_stream(stream)([n.firstChild!,n.lastChild!]);
+        }
+        else {
+            const _n = new Comment("[jshtml::placeholder]");
+            bind_node_stream(stream)([_n,_n]);
+            return _n;
+        }
         return n;
     }
-    return new Text(s+"");
+    return element(s);
 }
 
 /**
@@ -288,4 +320,5 @@ const events = (target:EventTarget) => <T extends string, E = T extends keyof HT
     return [s, target.removeEventListener.bind(target,t,l,false)];
 }
 
-export {jshtml, mutations, events};
+export {jshtml, mutations, events, vars, isVars, Vars};
+export type { JSHTMLNodeSource, JSHTMLAttrSource, JSHTMLAttributeMapSource };

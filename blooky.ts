@@ -11,7 +11,7 @@ const STREAM_CLEANER = Symbol("STREAM_CLEANER");
  * ストリームの状態定義。
  * ファンクタをベースに生成し、対応する時変値の更新と次のストリームへの接続用情報を保持する。
  */
-type StreamState<A,B=any,C=any> = {
+type StreamState<A,B=any> = {
     /**
      * ファンクタ。B->Aの変換だけを行う。
      * @param v 
@@ -34,7 +34,7 @@ type StreamState<A,B=any,C=any> = {
     /**
      * 連結されたストリーム
      */
-    next: Set<StreamState<C,A>>
+    next: Set<StreamState<any,A>>
     /**
      * 連結先のうち、マージされる可能性のあるストリーム
      */
@@ -94,8 +94,8 @@ const stream = <A,B=any>(f:(v:B)=>A = parrot as (v:B)=>A) : StreamState<A,B> => 
  * ストリーム/プロパティのメモリを解放する。ガベージコレクトの補助。
  * @param s 
  */
-const clear = (s:Stream<unknown>) => {
-    if (!isStream(s))
+const clear = <A>(s:Stream<A>) => {
+    if (!isStream<A>(s))
         throw new TypeError('clear function is need Stream or Prop type');
     s.next.forEach(clear);
     s.next = new Set();
@@ -123,6 +123,7 @@ const countRefs = <V>(s:Stream<V>, deep: boolean = false) : Prop<number> => {
         ? () => [...s.next,...s.lazyNext].reduce((v,s) => v + countRefs(s,deep)(), s.observers.size + s.updates.size)
         : () => s.observers.size + s.updates.size
 }
+
 
 /**
  * 受け取った時変値でフロー状態を作成する
@@ -189,7 +190,6 @@ const flowLazy = <B>(v:B) => <A>(s:StreamState<A,B>) : FlowingState<A> => {
     });
 }
 
-
 /**
  * 起点となるストリームに時変値を流し込み、関連するオブザーバの呼び出しと時変値の更新を行う。
  * @param s 
@@ -214,6 +214,7 @@ const drip = <A,B>(s: StreamState<A,B>) => (v:B) : FlowingState<A> => {
 };
 
 drip.observerPhase = false;
+
 
 /**
  * 二つ以上のイベントストリームを一つにまとめる
@@ -339,6 +340,8 @@ type MomentState = {
     count: number
 }
 
+type MomentStream = Stream<MomentState> & { disconnect: ()=>void };
+
 /**
  * 時間の更新をイベントストリームとして取得する。
  */
@@ -374,53 +377,62 @@ const moments = {} as moments; {
         deltaTime: n - s.now,
         count: s.count + 1
     });
-    const stateStream = (started: number): Stream<MomentState> => {
-        const s = stream((n:number) => nextState(p())(n));
-        const p = hold(s)({
+    const tickStateStream = (f?:(s:MomentState)=>boolean): MomentStream => {
+        const started = now();
+        const s = pipe(globalTickStream)((n:number): MomentState => nextState(p())(n));
+        const _s = (f ? filter(s)(f) : s) as MomentStream;
+        const p = hold(_s)({
             started,
             now: started,
             elapsed: 0,
             deltaTime: 0,
             count: 0
         });
-        return s;
+        _s.disconnect = ()=>{
+            clear(s);
+            globalTickStream.next.delete(s);
+        };
+        return _s;
     }
 
+    const globalTickStream = stream<number>();
+    const tick = (t:number) => {
+        const state = flowLazy(t)(globalTickStream);
+        state.observers.forEach(f => f());
+        state.updates.forEach(f => f());
+        if(countRefs(globalTickStream,true)()>0)
+            requestAnimationFrame(tick);
+    };
+
     moments.timeout = (ms:number = 0) => {
-        const s = stateStream(now());
-        setTimeout(()=>drip(s)(now()), ms);
+        if(!countRefs(globalTickStream, true)()) requestAnimationFrame(tick);
+        const s = tickStateStream(({elapsed})=>ms <= elapsed);
+        listen(s)(s.disconnect);
         return s;
     };
 
     moments.interval = (ms: number = 0) => {
-        const s = stateStream(now());
-        const pid = setInterval(()=>drip(s)(now()), ms);
-        const l = listen(s)(()=>{
-            if(countRefs(s)() >= ref_min) return;
-            l();
-            clearInterval(pid);
+        if(!countRefs(globalTickStream, true)()) requestAnimationFrame(tick);
+        const s = tickStateStream((state)=>state.deltaTime >= ms);
+        const c = countRefs(s)();
+        listen(s)(()=>{
+            if(countRefs(s, true)() <= c) s.disconnect();
         });
-        const ref_min = countRefs(s)() + 1;
         return s;
     };
 
     moments.framecount = typeof window.requestAnimationFrame === "function"
         ? (limit: number = Infinity) => {
-            const s = stateStream(now());
-            const l = listen(s)(({count}) => {
-                if(count<=limit && countRefs(s)() > ref_min)
-                    requestAnimationFrame(drip(s));
-                else
-                    l();
-            });
-            const ref_min = countRefs(s)();
-            requestAnimationFrame(drip(s));
+            if(!countRefs(globalTickStream, true)()) requestAnimationFrame(tick);
+            const s = tickStateStream(limit === Infinity ? undefined : ({count})=>count<=limit);
+            if(limit) listen(s)(({count})=>{
+                if(count===limit) s.disconnect();
+            })
             return s;
         }
         : (_:number) => {throw new Error('moments.framecount function need "requestAnimationFrame" function')};
 
+
 }
-
-
 export {stream,isStream,countRefs,clear,hold,accum,lift,merge,pipe,filter,listen,drip,shed,moments};
 
