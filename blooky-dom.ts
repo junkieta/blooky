@@ -20,7 +20,6 @@ export type WritableCSSProperty = Exclude<keyof CSSStyleDeclaration,
     symbol
 >;
 
-type HTMLTag = keyof HTMLElementTagNameMap;
 type HTMLEventHandlers = Extract<keyof GlobalEventHandlers,`on${string}`>;
 
 type V_STRING = string | number | boolean | undefined | null;
@@ -35,11 +34,9 @@ type T_ATTRSET =
     [`on${string}`, V_EVENTLISTENER]|
     [string, V_STRING];
 
-
-
 type JSHTMLFragmentSource = JSHTMLNodeSource[];
 type JSHTMLTextSource = V_STRING;
-type JSHTMLNodeSource = Vars<JSHTMLNodeSource>| JSHTMLElementSource<string> | JSHTMLTextSource | JSHTMLFragmentSource;
+type JSHTMLNodeSource = Vars<JSHTMLNodeSource>| JSHTMLElementSource | JSHTMLTextSource | JSHTMLFragmentSource;
 type JSHTMLAttrSource = 
     T_ATTRSET[1] | Vars<T_ATTRSET[1]>;
 
@@ -50,7 +47,7 @@ type JSHTMLAttributeMapSource =
         { [key in HTMLEventHandlers]: GlobalEventHandlers[key] } &
         { [key: string]: JSHTMLAttrSource }
     >;
-type JSHTMLElementSource<T extends string> = { [key in T]: JSHTMLNodeSource } & { $?: JSHTMLAttributeMapSource };
+type JSHTMLElementSource = { [key:string]: JSHTMLNodeSource | JSHTMLAttributeMapSource, $?: JSHTMLAttributeMapSource };
 //    { [key in T]: T extends "$" ? JSHTMLAttributeMapSource : JSHTMLNodeSource };
 
 /**
@@ -132,8 +129,8 @@ const gen_listener_setter =
  * @param s 
  * @returns 
  */
-const element = <T extends string>(s:JSHTMLElementSource<T|"$">) => {
-    const [tag,children,attrs] = extractElementSource<T>(s);
+const element = (s:JSHTMLElementSource) => {
+    const [tag,children,attrs] = extractElementSource(s);
     const elm = document.createElement(tag);
     if(children)
         elm.append(jshtml(children));
@@ -144,7 +141,7 @@ const element = <T extends string>(s:JSHTMLElementSource<T|"$">) => {
             else
                 update_attr(elm)([k,v] as T_ATTRSET);
         })
-    return elm as T extends HTMLTag ? HTMLElementTagNameMap[T] : HTMLElement;
+    return elm;
 }
 
 /**
@@ -152,13 +149,13 @@ const element = <T extends string>(s:JSHTMLElementSource<T|"$">) => {
  * @param s 
  * @returns 
  */
-const extractElementSource = <T extends string>(s:JSHTMLElementSource<T>) : [T,JSHTMLNodeSource,JSHTMLAttributeMapSource?] => {
+const extractElementSource = (s:JSHTMLElementSource) : [string,JSHTMLNodeSource,JSHTMLAttributeMapSource?] => {
     const k = Object.keys(s).filter((t)=>t !== "$");
     if(!k.length) {
         console.error("invalid tag name err: returned 'jshtml-unknown' tag");
-        return ["jshtml-unknown" as T, null];
+        return ["jshtml-unknown", null];
     }
-    const tag = k[0] as T;
+    const tag = k[0];
     const children = s[tag] as JSHTMLNodeSource;
     const attrs = "$" in s ? (s.$ as JSHTMLAttributeMapSource) : undefined;
     return [tag,children,attrs];
@@ -258,14 +255,9 @@ const update_attr = (e:HTMLElement) => ([n,v]:T_ATTRSET) => {
  * @param s 
  * @returns 
  */
-function jshtml<T extends string>(s:JSHTMLElementSource<T>): T extends HTMLTag ? HTMLElementTagNameMap[T] : HTMLElement;
-function jshtml(s:undefined|null): Comment;
-function jshtml(s:JSHTMLTextSource): Text;
-function jshtml(s:JSHTMLFragmentSource): DocumentFragment;
-function jshtml<T extends string>(s:JSHTMLNodeSource|Prop<JSHTMLNodeSource>|Vars<JSHTMLNodeSource>): T extends HTMLTag ? HTMLElementTagNameMap[T] : HTMLElement | DocumentFragment | Text | Comment;
-function jshtml<T extends string>(s:JSHTMLNodeSource|Prop<JSHTMLNodeSource>) {
+function jshtml(s:JSHTMLNodeSource|Prop<JSHTMLNodeSource>): Node {
     if(typeof s === "function")
-        return jshtml<T>(s());
+        return jshtml(s());
     if(Array.isArray(s)) {
         const df = document.createDocumentFragment();
         df.append(...s.map(jshtml));
@@ -302,7 +294,7 @@ function jshtml<T extends string>(s:JSHTMLNodeSource|Prop<JSHTMLNodeSource>) {
  * @returns 
  */
 const mutations = (n: Node) => (init: MutationObserverInit) : [Stream<MutationRecord[]>,()=>void] => {
-    const s = stream<MutationRecord[],MutationRecord[]>();
+    const s = stream<MutationRecord[]>();
     const o = new MutationObserver(drip(s));
     o.observe(n, init);
     return [s, o.disconnect.bind(o)];
@@ -314,10 +306,15 @@ const mutations = (n: Node) => (init: MutationObserverInit) : [Stream<MutationRe
  * @returns 
  */
 const events = (target:EventTarget) => <T extends string, E = T extends keyof HTMLElementEventMap ? HTMLElementEventMap[T] : Event>(t: T) : [Stream<E>,()=>void] => {
-    const s = stream<E,Event>();
-    const l = drip(s);
+    const s = stream<E>();
+    const l = drip(s) as unknown as EventListener;
     target.addEventListener(t, l, false);
     return [s, target.removeEventListener.bind(target,t,l,false)];
+}
+
+// 単なるヘルパーメソッド
+export const mount = (q:string, n: Node) => {
+    document.querySelector(q)?.replaceChildren(n);
 }
 
 export {jshtml, mutations, events, vars, isVars, Vars};

@@ -7,23 +7,18 @@ const STREAM_FUNCTOR = Symbol("STREAM_FUNCTOR");
 const STREAM_FILTER = Symbol("STREAM_FILTER");
 const STREAM_CLEANER = Symbol("STREAM_CLEANER");
 
+
 /**
  * ストリームの状態定義。
  * ファンクタをベースに生成し、対応する時変値の更新と次のストリームへの接続用情報を保持する。
  */
-type StreamState<A,B=any> = {
-    /**
-     * ファンクタ。B->Aの変換だけを行う。
-     * @param v 
-     * @returns 
-     */
-    [STREAM_FUNCTOR]: (v:B) => A
+type StreamState<A> = {
     /**
      * フィルタ。受け入れられる値かを判断する。
      * @param v 
      * @returns 
      */
-    [STREAM_FILTER]?: (v:B) => boolean
+    [STREAM_FILTER]: (v:A) => boolean
 
     /**
      * ガベージコレクション
@@ -34,11 +29,11 @@ type StreamState<A,B=any> = {
     /**
      * 連結されたストリーム
      */
-    next: Set<StreamState<any,A>>
+    next: Map<StreamState<any>,(v:A)=>any>
     /**
      * 連結先のうち、マージされる可能性のあるストリーム
      */
-    lazyNext: Set<StreamState<A,A[]>>
+    lazyNext: Set<MergedStream<A>>
     /**
      * イベント発生後に行うPROP更新
      */
@@ -49,11 +44,13 @@ type StreamState<A,B=any> = {
     observers: Set<(v:A)=>void>
 };
 
+type MergedStream<A> = StreamState<A> & { reducer: (a:A,b:A)=>A };
+
 /**
  * 連結したストリームを辿り、受け取った時変値の処理関数をまとめる
  */
-type FlowingState<A> = {
-    waiting: [StreamState<A,A[]>,A][]
+type FlowingState = {
+    waiting: [MergedStream<any>,any][]
     observers: (()=>void)[]
     updates: (()=>void)[]
 }
@@ -72,18 +69,19 @@ const compose = <A,B>(a:(v:A)=>B) => <C>(b:(v:B)=>C) => (v:A) => b(a(v));
 export {parrot,compose};
 
 
+const TRUE = ()=>true;
 /**
  * ストリーム状態を生成する。
  * @param f 
  * @returns 
  */
-const stream = <A,B=any>(f:(v:B)=>A = parrot as (v:B)=>A) : StreamState<A,B> => {
+const stream = <A>(f?:(v:A)=>boolean) : StreamState<A> => {
     if (typeof f !== 'function') {
         throw new TypeError('STREAM_FUNCTOR must be a function');
     }
     return {
-        [STREAM_FUNCTOR]: f,
-        next: new Set(),
+        [STREAM_FILTER]: f || TRUE,
+        next: new Map(),
         lazyNext: new Set(),
         observers: new Set(),
         updates: new Set()
@@ -97,8 +95,8 @@ const stream = <A,B=any>(f:(v:B)=>A = parrot as (v:B)=>A) : StreamState<A,B> => 
 const clear = <A>(s:Stream<A>) => {
     if (!isStream<A>(s))
         throw new TypeError('clear function is need Stream or Prop type');
-    s.next.forEach(clear);
-    s.next = new Set();
+    s.next.forEach((_,s)=>clear(s));
+    s.next = new Map();
     s.lazyNext = new Set();
     s.observers.clear();
     s.updates.clear();
@@ -120,8 +118,9 @@ const isStream = <A>(v:unknown) : v is Stream<A> => typeof v === "object" && v !
 const countRefs = <V>(s:Stream<V>, deep: boolean = false) : Prop<number> => {
     if(!isStream(s)) throw new TypeError("countRefs function is need stream type");
     return deep
-        ? () => [...s.next,...s.lazyNext].reduce((v,s) => v + countRefs(s,deep)(), s.observers.size + s.updates.size)
-        : () => s.observers.size + s.updates.size
+        ? () => [...s.next].reduce((v,[s]) => v + countRefs(s,deep)(), s.observers.size + s.updates.size)
+              + [...s.lazyNext].reduce((v,s) => v + countRefs(s,deep)(), s.observers.size + s.updates.size)
+        : () => s.observers.size + s.updates.size;
 }
 
 
@@ -130,9 +129,9 @@ const countRefs = <V>(s:Stream<V>, deep: boolean = false) : Prop<number> => {
  * @param v 
  * @returns 
  */
-const streamToFlowingState = <A>(v:A) => (s:StreamState<A>) : FlowingState<A> => ({
-    waiting: [...s.lazyNext].map((s)=>[s,v]),
-    observers: [...s.observers].map(<B>(_f:(v:A)=>B) => () => _f(v)),
+const streamToFlowingState = <A>(v:A) => (s:StreamState<A>) : FlowingState => ({
+    waiting: [...s.lazyNext].map((s) => [s,v]),
+    observers: [...s.observers].map((_f) => () => _f(v)),
     // PROPのアップデーターが残っていれば使用し、残っていないならガベージコレクト用にストリームからも消去。
     updates: [...s.updates].map((p) => ()=>p(v))
 })
@@ -143,7 +142,7 @@ const streamToFlowingState = <A>(v:A) => (s:StreamState<A>) : FlowingState<A> =>
  * @param b 
  * @returns 
  */
-const concatFlowingState = <V>(a:FlowingState<V>, b:FlowingState<V>) => ({
+const concatFlowingState = (a:FlowingState, b:FlowingState) => ({
     waiting: [...a.waiting, ...b.waiting],
     observers: [...a.observers, ...b.observers],
     updates: [...a.updates, ...b.updates]
@@ -154,13 +153,13 @@ const concatFlowingState = <V>(a:FlowingState<V>, b:FlowingState<V>) => ({
  * @param v 
  * @returns 
  */
-const flow = <B>(v:B) => <A>(s:StreamState<A,B>) : FlowingState<A> => {
+const flow = <A>(v:A) => (s:StreamState<A>) : FlowingState => {
     try {
-        const r = s[STREAM_FUNCTOR](v);
-        return [...s.next]
-            .filter(s => !s[STREAM_FILTER] || s[STREAM_FILTER](r))
-            .map(flow(r))
-            .reduce(concatFlowingState, streamToFlowingState(r)(s));
+        return s[STREAM_FILTER](v)
+            ? [...s.next]
+                .map(([_s,f])=>flow(f(v))(_s))
+                .reduce(concatFlowingState, streamToFlowingState(v)(s))
+            : { waiting: [], observers: [], updates: [] };
     } catch (error) {
         console.error('Error in flow function:', error);
         return { waiting: [], observers: [], updates: [] }; // エラー時のデフォルト状態を返す
@@ -172,18 +171,18 @@ const flow = <B>(v:B) => <A>(s:StreamState<A,B>) : FlowingState<A> => {
  * @param v 
  * @returns 
  */
-const flowLazy = <B>(v:B) => <A>(s:StreamState<A,B>) : FlowingState<A> => {
+const flowLazy = <A>(v:A) => (s:StreamState<A>) : FlowingState => {
     const r = flow(v)(s);
     // マージされたストリームとはつながっていない
     if(!r.waiting.length) return r;
     
     // マージされたストリーム毎に、到着した値をリスト化する
-    const m = new Map<StreamState<A,A[]>,A[]>();
+    const m = new Map<MergedStream<unknown>,unknown[]>();
     r.waiting.forEach(([s,v]) => {
         m.set(s, m.has(s) ? [...m.get(s)!, v] : [v]);
     });
 
-    return [...m].map(([s,v])=>flowLazy(v)(s)).reduce(concatFlowingState, {
+    return [...m].map(([s,v])=>flowLazy(v.reduce(s.reducer))(s)).reduce(concatFlowingState, {
         waiting: [],
         observers: r.observers,
         updates: r.updates
@@ -195,7 +194,7 @@ const flowLazy = <B>(v:B) => <A>(s:StreamState<A,B>) : FlowingState<A> => {
  * @param s 
  * @returns 
  */
-const drip = <A,B>(s: StreamState<A,B>) => (v:B) : FlowingState<A> => {
+const drip = <A>(s: StreamState<A>) => (v:A) : FlowingState => {
     if (drip.observerPhase) {
         throw new Error('drip cannot be called during observer phase');
     }
@@ -221,12 +220,10 @@ drip.observerPhase = false;
  * @param s 
  * @returns 
  */
-const merge = <A> (s:StreamState<A>[]) => (f:(a:A,b:A)=>A) : StreamState<A,A[]> => {
+const merge = <A> (s:StreamState<A>[]) => (f:(a:A,b:A)=>A) : MergedStream<A> => {
     // マージ後のストリーム
-    const _s : StreamState<A,A[]> = stream((v:A[]) => {
-        if(!v.length) throw new Error("No values have been merged yet.");
-        return v.reduce(f);
-    });
+    const _s = stream() as MergedStream<A>;
+    _s.reducer = f;
     _s[STREAM_CLEANER] = () => s.forEach((s)=>s.lazyNext.delete(_s));
     s.forEach((s)=>s.lazyNext.add(_s));
     return _s;
@@ -237,13 +234,13 @@ const merge = <A> (s:StreamState<A>[]) => (f:(a:A,b:A)=>A) : StreamState<A,A[]> 
  * @param s 
  * @returns 
  */
-const pipe = <A>(s:StreamState<A>) => <B>(f:(v:A)=>B) => {
+const pipe = <A>(s:StreamState<A>) => <B>(f:(v:A)=>B) : StreamState<B> => {
     if (typeof f !== 'function') {
         throw new TypeError('pipe function must be a function');
     }
-    const _s = stream(f);
+    const _s = stream<B>();
     _s[STREAM_CLEANER] = () => _s.next.delete(s);
-    s.next.add(_s);
+    s.next.set(_s, f);
     return _s;
 }
 
@@ -259,9 +256,9 @@ const lift = <A>(c:Prop<any>[]) => (f:(p: any[])=>A) : Prop<A> => () => f(c.map(
  * @param s 
  * @returns 
  */
-const filter = <A>(s:Stream<A>) => <B extends A>(f:(v:A)=>boolean): StreamState<B,A> => {
-    const _s = pipe(s)(parrot as (v:A)=>B);
-    _s[STREAM_FILTER] = f;
+const filter = <A>(s:Stream<A>) => (f:(v:A)=>boolean): StreamState<A> => {
+    const _s = stream(f);
+    s.next.set(_s,parrot);
     return _s;
 }
 
@@ -305,7 +302,7 @@ const shed = <A>(ss: Stream<Stream<A>>) => {
     const p = hold(ss)(o);
     const l = listen(ss)((s)=>{
         p().next.delete(o);
-        s.next.add(o);
+        s.next.set(o,parrot);
     });
     o[STREAM_CLEANER] = () => {
         p().next.delete(o);
