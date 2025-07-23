@@ -36,7 +36,7 @@ type Stream<A> = {
     /**
      * イベント発生後に行うPROP更新
      */
-    updates: Set<(v:A)=>void>
+    updates: Map<()=>A,(v:A)=>void>
     /**
      * イベントの発生を検知するオブザーバ
      */
@@ -67,43 +67,59 @@ const compose = <A,B>(a:(v:A)=>B) => <C>(b:(v:B)=>C) => (v:A) => b(a(v));
 export {parrot,compose};
 
 /**
- * ストリーム状態を生成する。
- * @param f 
- * @returns 
+ * ストリーム/プロパティのメモリを解放する。ガベージコレクトの補助。
+ * @param s 
  */
-const stream = <A>(f:(v:A)=>boolean=()=>true) : Stream<A> => {
+const clear = <A>(s: Stream<A>, recursive = true, visited = new WeakSet<Stream<any>>()) => {
+    if (!isStream(s)) {
+        throw new TypeError('clear requires Stream or Prop');
+    } else if (visited.has(s)) {
+        return; // 既に訪問済み
+    } else {
+        visited.add(s);
+        if(recursive) {
+            s.next.forEach((_, nextStream) => clear(nextStream, recursive, visited));
+            s.lazyNext.forEach((nextStream) => clear(nextStream, recursive, visited));
+        }
+        if (s[STREAM_CLEANER]) s[STREAM_CLEANER]();
+        s.next.clear();
+        s.lazyNext.clear();
+        s.observers.clear();
+        s.updates.clear();
+    }
+};
+
+// GCにあわせて参照を解除する
+const cleanupRegistry = new FinalizationRegistry<Stream<any>|Prop<any>>((streamOrProp) => {
+    if(typeof streamOrProp === "function") {
+        if(PROP_RELATIONS.has(streamOrProp))
+            PROP_RELATIONS.get(streamOrProp)!.updates.delete(streamOrProp);
+    } else {
+        clear(streamOrProp, false);
+    }
+    console.log("[blooky] Stream auto-cleared by GC");
+});
+
+/**
+ * ストリーム状態を生成する。
+ */
+const stream = <A>(f: (v: A) => boolean = () => true): Stream<A> => {
     if (typeof f !== 'function') {
         throw new TypeError('STREAM_FUNCTOR must be a function');
     }
-    return {
+    const s: Stream<A> = {
         [STREAM_FILTER]: f,
         next: new Map(),
         lazyNext: new Set(),
         observers: new Set(),
-        updates: new Set()
-    }
-}
+        updates: new Map()
+    };
+    // StreamがGCされたら自動clear
+    cleanupRegistry.register(s, s);
+    return s;
+};
 
-/**
- * ストリーム/プロパティのメモリを解放する。ガベージコレクトの補助。
- * @param s 
- */
-const clear = <A>(s:Stream<A>|Prop<A>) => {
-    if(typeof s === "function") {
-        if(!PROP_RELATIONS.has(s)) return;
-        const _s = PROP_RELATIONS.get(s)!;
-        _s.updates.delete(s);
-        return;
-    }
-    if (!isStream<A>(s))
-        throw new TypeError('clear function is need Stream or Prop type');
-    s.next.forEach((_,s)=>clear(s));
-    s.next = new Map();
-    s.lazyNext = new Set();
-    s.observers.clear();
-    s.updates.clear();
-    if(s[STREAM_CLEANER]) s[STREAM_CLEANER]();
-}
+
 
 /**
  * 引数がストリームであるかを判別する。
@@ -117,28 +133,33 @@ const isStream = <A>(v:unknown) : v is Stream<A> => typeof v === "object" && v !
  * @param s 
  * @returns 
  */
-const countRefs = <V>(s:Stream<V>, deep: boolean = false) : Prop<number> => {
+const countReferences = <V>(s:Stream<V>, deep: boolean = false) : Prop<number> => {
     if(!isStream(s)) throw new TypeError("countRefs function is need Stream type");
     return deep
-        ? () => [...s.next].reduce((v,[s]) => v + countRefs(s,deep)(), s.observers.size + s.updates.size)
-              + [...s.lazyNext].reduce((v,s) => v + countRefs(s,deep)(), s.observers.size + s.updates.size)
+        ? () => [...s.next].reduce((v,[s]) => v + countReferences(s,deep)(), s.observers.size + s.updates.size)
+              + [...s.lazyNext].reduce((v,s) => v + countReferences(s,deep)(), s.observers.size + s.updates.size)
         : () => s.observers.size + s.updates.size;
 }
 
 /**
- * リファレンスが存在するかどうかだけを調べる。countRefsの負荷が気になる箇所で使用。
- * @param s 
- * @returns 
+ * ストリームに一定以上の参照が残っているか判定
+ * @param s      対象ストリーム
+ * @param than   閾値 (デフォルト0 = 1つでも参照があればtrue)
  */
-const hasReferences = (s: Stream<any>): boolean => {
+const hasReferences = (s: Stream<any>, than = 0): boolean => {
+    const visited = new WeakSet<Stream<any>>();
     const stack: Stream<any>[] = [s];
+    let count = 0;
     while (stack.length) {
         const current = stack.pop()!;
-        if (current.updates.size || current.observers.size) return true;
+        if (visited.has(current)) continue;
+        visited.add(current);
+        count += current.updates.size + current.observers.size;
+        if (count > than) return true;
         stack.push(...current.next.keys(), ...current.lazyNext);
     }
     return false;
-}
+};
 
 /**
  * 受け取った時変値でフロー状態を作成する
@@ -147,9 +168,8 @@ const hasReferences = (s: Stream<any>): boolean => {
  */
 const streamToFlowingState = <A>(v:A) => (s:Stream<A>) : FlowingState => ({
     waiting: [...s.lazyNext].map((s) => [s,v]),
-    observers: [...s.observers].map((_f) => () => _f(v)),
-    // PROPのアップデーターが残っていれば使用し、残っていないならガベージコレクト用にストリームからも消去。
-    updates: [...s.updates].map((p) => ()=>p(v))
+    observers: [...s.observers].map((f) => ()=>f(v)),
+    updates: [...s.updates.values()].map((p) => ()=>p(v))
 })
 
 /**
@@ -191,18 +211,8 @@ const flowLazy = <A>(v:A) => (s:Stream<A>) : FlowingState => {
     const r = flow(v)(s);
     // マージされたストリームとはつながっていない
     if(!r.waiting.length) return r;
-    
     // マージされたストリーム毎に、到着した値をリスト化する
-    const m = new Map<MergedStream<unknown>,unknown[]>();
-    r.waiting.forEach(([s,v]) => {
-        m.set(s, m.has(s) ? [...m.get(s)!, v] : [v]);
-    });
-
-    return [...m].map(([s,v])=>flowLazy(v.reduce(s.reducer))(s)).reduce(concatFlowingState, {
-        waiting: [],
-        observers: r.observers,
-        updates: r.updates
-    });
+    return [...new Map(r.waiting)].map(([s,v])=>flowLazy(v.reduce(s.reducer))(s)).reduce(concatFlowingState, { ...r, waiting: [] });
 }
 
 /**
@@ -240,7 +250,9 @@ const merge = <A> (s:Stream<A>[]) => (f?:(a:A,b:A)=>A) : MergedStream<A> => {
     // マージ後のストリーム
     const _s = stream() as MergedStream<A>;
     _s.reducer = f || ((_,v) => v);
-    _s[STREAM_CLEANER] = () => s.forEach((s)=>s.lazyNext.delete(_s));
+    _s[STREAM_CLEANER] = () => {
+        s.forEach((s)=>s.lazyNext.delete(_s));
+    };
     s.forEach((s)=>s.lazyNext.add(_s));
     return _s;
 };
@@ -255,7 +267,7 @@ const pipe = <A>(s:Stream<A>) => <B>(f:(v:A)=>B) : Stream<B> => {
         throw new TypeError('pipe function must be a function');
     }
     const _s = stream<B>();
-    _s[STREAM_CLEANER] = () => _s.next.delete(s);
+    _s[STREAM_CLEANER] = () => s.next.delete(s);
     s.next.set(_s, f);
     return _s;
 }
@@ -283,14 +295,22 @@ const lift = <A>(c:Prop<any>[]) => (f:(p: any[])=>A) : Prop<A> => {
             ? pipe(PROP_RELATIONS.get(p)!)((v)=>[[i,v]] as [number,any][])
             : null
     ).filter(Boolean) as Stream<[number,any][]>[];
-    return s.length
-        // blookyのPROPがなければfをラップするだけ
-        ? ()=>f(c.map((f)=>f()))
-        // Streamをマージした上でPropにする
-        : hold(pipe(merge(s)((a,b)=>a.concat(b)))((u) => {
-            const m = new Map(u);
-            return f(c.map((p,i) => m.has(i) ? m.get(i)! : p()));
-        }))(f(c.map((f)=>f())));
+
+    // blookyのPROPがなければfをラップするだけ
+    if(!s.length)
+        return ()=>f(c.map((f)=>f()));
+
+    // Streamをマージした上でPropにする
+    const merged = pipe(merge(s)((a,b)=>a.concat(b)))((u) => {
+        const m = new Map(u);
+        return f(c.map((p,i) => m.has(i) ? m.get(i)! : p()));
+    });
+
+    merged[STREAM_CLEANER] = () => {
+        c.filter((p)=>PROP_RELATIONS.has(p)).forEach((p,i)=> PROP_RELATIONS.get(p)!.next.delete(s[i]));
+    };
+
+    return hold(merged)(f(c.map((f)=>f())));
 }
 
 /**
@@ -310,9 +330,10 @@ const filter = <A>(s:Stream<A>) => (f:(v:A)=>boolean): Stream<A> => {
  * @returns 
  */
 const hold = <A>(s:Stream<A>) => (v:A) : Prop<A> => {
-    s.updates.add((_v)=>v=_v);
     const p = () => v;
+    s.updates.set(p, (_v)=>v=_v);
     PROP_RELATIONS.set(p, s);
+    cleanupRegistry.register(p, p);
     return p;
 }
 
@@ -435,8 +456,9 @@ const moments = {} as moments; {
             deltaTime: 0,
             count: 0
         });
+        _s[STREAM_CLEANER] = 
         _s.disconnect = ()=>{
-            clear(s);
+            clear(s, true);
             globalTickStream.next.delete(s);
         };
         return _s;
@@ -444,6 +466,7 @@ const moments = {} as moments; {
 
     const globalTickStream = stream<number>();
     const tick = (t:number) => {
+        if(!hasReferences(globalTickStream)) return;
         const state = flowLazy(t)(globalTickStream);
         state.observers.forEach(f => f());
         state.updates.forEach(f => f());
@@ -460,10 +483,10 @@ const moments = {} as moments; {
 
     moments.interval = (ms: number = 0) => {
         if(!hasReferences(globalTickStream)) requestAnimationFrame(tick);
-        const s = tickStateStream((state)=>state.deltaTime >= ms);
-        const c = countRefs(s)();
+        const s = tickStateStream(({deltaTime})=>deltaTime >= ms);
+        const c = countReferences(s,true)() + 1;
         listen(s)(()=>{
-            if(countRefs(s, true)() <= c) s.disconnect();
+            if(!hasReferences(s,c)) s.disconnect();
         });
         return s;
     };
@@ -479,8 +502,7 @@ const moments = {} as moments; {
         }
         : (_:number) => {throw new Error('moments.framecount function need "requestAnimationFrame" function')};
 
-
 }
 
-export {stream,isStream,countRefs,clear,hold,accum,lift,merge,pipe,map,filter,listen,drip,shed,moments};
+export {stream,isStream,countReferences,hasReferences,clear,hold,accum,lift,merge,pipe,map,filter,listen,drip,shed,moments};
 export type {Stream,MergedStream,MomentState,MomentStream,Prop};
