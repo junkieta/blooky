@@ -25,7 +25,7 @@ type HTMLEventHandlers = Extract<keyof GlobalEventHandlers,`on${string}`>;
 type V_STRING = string | number | boolean | undefined | null;
 type V_CLASSLIST = string[]|{[key:string]:boolean};
 type V_DATASET = {[key:string]:V_STRING};
-type V_STYLE = { [key in WritableCSSProperty]?: V_STRING|Vars<V_STRING> };
+type V_STYLE = { [key in WritableCSSProperty]?: V_STRING|Prop<V_STRING> };
 type V_EVENTLISTENER = EventListenerOrEventListenerObject|GlobalEventHandlers[HTMLEventHandlers];
 type T_ATTRSET = 
     ["dataset", V_DATASET]|
@@ -36,9 +36,9 @@ type T_ATTRSET =
 
 type JSHTMLFragmentSource = JSHTMLNodeSource[];
 type JSHTMLTextSource = V_STRING;
-type JSHTMLNodeSource = Vars<JSHTMLNodeSource>| JSHTMLElementSource | JSHTMLTextSource | JSHTMLFragmentSource;
+type JSHTMLNodeSource = JSHTMLElementSource | JSHTMLTextSource | JSHTMLFragmentSource;
 type JSHTMLAttrSource = 
-    T_ATTRSET[1] | Vars<T_ATTRSET[1]>;
+    T_ATTRSET[1];
 
 type JSHTMLAttributeMapSource =
     Partial<
@@ -55,17 +55,6 @@ type JSHTMLElementSource = { [key:string]: JSHTMLNodeSource | JSHTMLAttributeMap
  */
 class JSHTMLUnknownElement extends HTMLElement {}
 customElements.define("jshtml-unknown", JSHTMLUnknownElement);
-
-const VAR = Symbol("VAR");
-class Vars<A> {
-    [VAR]: [Stream<A>,A]
-    constructor(s:Stream<A>,v:A) {
-        this[VAR] = [s,v];
-    }
-}
-
-const vars = <A>(s:Stream<A>) => (v:A) => new Vars(s,v); 
-const isVars = <A>(v:unknown): v is Vars<A> => v instanceof Vars;
 
 /**
  * class属性の設定用関数を生成する
@@ -102,13 +91,13 @@ const gen_style_setter =
         v == null
         ? (e:HTMLElement) => e.removeAttribute("style")
         : (e:HTMLElement) => 
-            (Object.entries(v) as [WritableCSSProperty,V_STRING][]).forEach(([k,v]) => {
-                if(isVars<V_STYLE>(v)) {
+            (Object.entries(v) as [WritableCSSProperty,V_STRING|Prop<V_STRING>][]).forEach(([k,v]) => {
+                let _v = v;
+                if(typeof v === "function") {
                     bind_style_stream(v)([e,k]);
-                    e.style[k as any] = v[VAR][1] + '';
-                } else {
-                    e.style[k as any] = v != null ? v + '' : ''
+                     _v = v();
                 }
+                e.style[k as any] = _v != null ? v + '' : ''
             })
 
 
@@ -136,10 +125,12 @@ const element = (s:JSHTMLElementSource) => {
         elm.append(jshtml(children));
     if(attrs)
         Object.entries(attrs).forEach(([k,v])=> {
-            if(isVars<JSHTMLAttrSource>(v))
-                bind_attr_stream(v)([elm,k]);
-            else
+            if(typeof v !== "function")
                 update_attr(elm)([k,v] as T_ATTRSET);
+            else if(/^on.+/.test(k))
+                gen_listener_setter(v as V_EVENTLISTENER, k)(elm);
+            else 
+                bind_attr_stream(v as Prop<JSHTMLAttrSource>)([elm,k]);
         })
     return elm;
 }
@@ -166,7 +157,7 @@ const extractElementSource = (s:JSHTMLElementSource) : [string,JSHTMLNodeSource,
  * @param s 
  * @returns 
  */
-const bind_node_stream = (s:Stream<JSHTMLNodeSource>) => function f(p:[Node,Node]) {
+const bind_node_stream = <T extends JSHTMLNodeSource>(s:Stream<T>|Prop<T>) => function f(p:[Node,Node]) {
     const unlisten = listen(s)((v) => {
         if(p.every((n)=>n.isConnected))
             f(update_range(p)(v));
@@ -179,8 +170,8 @@ const bind_node_stream = (s:Stream<JSHTMLNodeSource>) => function f(p:[Node,Node
  * @param s 
  * @returns 
  */
-const bind_attr_stream = (v:Vars<JSHTMLAttrSource>) => function f([e,n]:[HTMLElement,string]) {
-    const unlisten = listen(v[VAR][0])((v) => {
+const bind_attr_stream = (p:Prop<JSHTMLAttrSource>) => function f([e,n]:[HTMLElement,string]) {
+    const unlisten = listen(p)((v) => {
         if(e.isConnected) {
             update_attr(e)([n,v] as T_ATTRSET);
             f([e,n]);
@@ -194,8 +185,8 @@ const bind_attr_stream = (v:Vars<JSHTMLAttrSource>) => function f([e,n]:[HTMLEle
  * @param s 
  * @returns 
  */
-const bind_style_stream = (s:Vars<V_STYLE>) => ([e,p]:[HTMLElement, WritableCSSProperty]) => {
-    const unlisten = listen(s[VAR][0])((v) => {
+const bind_style_stream = (s:Prop<V_STRING>) => ([e,p]:[HTMLElement, WritableCSSProperty]) => {
+    const unlisten = listen(s)((v) => {
         if(e.isConnected) {
             e.style[p] = v + "";
         } else {
@@ -256,8 +247,21 @@ const update_attr = (e:HTMLElement) => ([n,v]:T_ATTRSET) => {
  * @returns 
  */
 function jshtml(s:JSHTMLNodeSource|Prop<JSHTMLNodeSource>): Node {
-    if(typeof s === "function")
-        return jshtml(s());
+    if(typeof s === "function") {
+        const n = jshtml(s());
+        if(n.nodeType !== n.DOCUMENT_FRAGMENT_NODE) {
+            bind_node_stream(s)([n,n]);
+        }
+        else if(n.hasChildNodes()) {
+            bind_node_stream(s)([n.firstChild!,n.lastChild!]);
+        }
+        else {
+            const _n = new Comment("[jshtml::placeholder]");
+            bind_node_stream(s)([_n,_n]);
+            return _n;
+        }
+        return n;
+    }
     if(Array.isArray(s)) {
         const df = document.createDocumentFragment();
         df.append(...s.map(jshtml));
@@ -268,22 +272,6 @@ function jshtml(s:JSHTMLNodeSource|Prop<JSHTMLNodeSource>): Node {
     }
     if(typeof s !== "object") {
         return new Text(s+"");
-    }
-    if(isVars<JSHTMLNodeSource>(s)){
-        const [stream,value] = s[VAR];
-        const n = jshtml(value);
-        if(n.nodeType !== n.DOCUMENT_FRAGMENT_NODE) {
-            bind_node_stream(stream)([n,n]);
-        }
-        else if(n.hasChildNodes()) {
-            bind_node_stream(stream)([n.firstChild!,n.lastChild!]);
-        }
-        else {
-            const _n = new Comment("[jshtml::placeholder]");
-            bind_node_stream(stream)([_n,_n]);
-            return _n;
-        }
-        return n;
     }
     return element(s);
 }
@@ -317,5 +305,5 @@ export const mount = (q:string, n: Node) => {
     document.querySelector(q)?.replaceChildren(n);
 }
 
-export {jshtml, mutations, events, vars, isVars, Vars};
+export {jshtml, mutations, events};
 export type { JSHTMLNodeSource, JSHTMLAttrSource, JSHTMLAttributeMapSource };
