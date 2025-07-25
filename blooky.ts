@@ -54,6 +54,8 @@ type FlowingState = {
     updates: (()=>void)[]
 }
 
+// 副作用の集合体
+type Effect = Omit<FlowingState, "waiting"> & { created: number };
 
 /**
  * 時変値を返す関数の型。
@@ -90,15 +92,27 @@ const clear = <A>(s: Stream<A>, recursive = true, visited = new WeakSet<Stream<a
 };
 
 // GCにあわせて参照を解除する
-const cleanupRegistry = new FinalizationRegistry<Stream<any>|Prop<any>>((streamOrProp) => {
-    if(typeof streamOrProp === "function") {
-        if(PROP_RELATIONS.has(streamOrProp))
-            PROP_RELATIONS.get(streamOrProp)!.updates.delete(streamOrProp);
-    } else {
-        clear(streamOrProp, false);
-    }
-    console.log("[blooky] Stream auto-cleared by GC");
-});
+const cleanupRegistry = 
+    window.FinalizationRegistry
+    ? new FinalizationRegistry<WeakRef<Stream<any>|Prop<any>>>((ref) => {
+        const v = ref.deref();
+        if(!v) return;
+        if(typeof v === "function") {
+            if(PROP_RELATIONS.has(v))
+                PROP_RELATIONS.get(v)!.updates.delete(v);
+        } else {
+            clear(v, false);
+        }
+        console.log("[blooky] Stream auto-cleared by GC");
+    })
+    /**
+     * ES2021～でしか使えないので、一応ダミーで対応
+     * (GC補助用途だけなので、ダミー呼び出しに置き換えてもプログラム自体に影響することはない)
+     */
+    : {
+        register(_: WeakKey, __: WeakRef<Stream<any>|Prop<any>>, ___?: WeakKey) {},
+        unregister(_: WeakKey): boolean {return false}
+    } as FinalizationRegistry<WeakRef<Stream<any>|Prop<any>>>;
 
 /**
  * ストリーム状態を生成する。
@@ -112,10 +126,10 @@ const stream = <A>(f: (v: A) => boolean = () => true): Stream<A> => {
         next: new Map(),
         lazyNext: new Set(),
         observers: new Set(),
-        updates: new Map()
+        updates: new Map(),
     };
     // StreamがGCされたら自動clear
-    cleanupRegistry.register(s, s);
+    cleanupRegistry.register(s, new WeakRef(s));
     return s;
 };
 
@@ -135,10 +149,22 @@ const isStream = <A>(v:unknown) : v is Stream<A> => typeof v === "object" && v !
  */
 const countReferences = <V>(s:Stream<V>, deep: boolean = false) : Prop<number> => {
     if(!isStream(s)) throw new TypeError("countRefs function is need Stream type");
-    return deep
-        ? () => [...s.next].reduce((v,[s]) => v + countReferences(s,deep)(), s.observers.size + s.updates.size)
-              + [...s.lazyNext].reduce((v,s) => v + countReferences(s,deep)(), s.observers.size + s.updates.size)
-        : () => s.observers.size + s.updates.size;
+
+    if(!deep) return () => s.observers.size + s.updates.size;
+
+    return () => {
+        const visited = new WeakSet<Stream<any>>();
+        const stack: Stream<any>[] = [s];
+        let count = 0;
+        while (stack.length) {
+            const current = stack.pop()!;
+            if (visited.has(current)) continue;
+            visited.add(current);
+            count += current.updates.size + current.observers.size;
+            stack.push(...current.next.keys(), ...current.lazyNext);
+        }
+        return count;
+    };
 }
 
 /**
@@ -220,25 +246,33 @@ const flowLazy = <A>(v:A) => (s:Stream<A>) : FlowingState => {
  * @param s 
  * @returns 
  */
-const drip = <A>(s: Stream<A>) => (v:A) : FlowingState => {
-    if (drip.observerPhase) {
-        throw new Error('drip cannot be called during observer phase');
-    }
-    try {
-        const state = flowLazy(v)(s);
-        drip.observerPhase = true;
-        state.observers.forEach(f => f());
-        drip.observerPhase = false;
-        state.updates.forEach(f => f());
-        return state;
-    } catch (error) {
-        console.error('Error in drip function:', error);
-        drip.observerPhase = false;
-        return { waiting: [], observers: [], updates: [] }; // エラー時のデフォルト状態を返す
-    }
-};
+const drip = <A>(s: Stream<A>) => {
+    if (drip.observerPhase) throw new Error('drip cannot be called during observer phase');
+    const f = (v:A) => applyDripEffect(Object.assign(flowLazy(v)(s), { created: Date.now() }) as Effect);
+    f.lazy = (v:A) => () => f(v);
+    return f;
+}
+
+// 最終実行時間-エフェクトの生成後に何らかのエフェクトが実行されていた場合は、既に無効な呼び出しだとしてエラーにする
+drip.lastExecuted = 0;
 
 drip.observerPhase = false;
+
+function applyDripEffect(effect: Effect) {
+    if(drip.lastExecuted >= effect.created) throw new Error("effect expired error");
+    drip.lastExecuted = effect.created;
+    try {
+        drip.observerPhase = true;
+        effect.observers.forEach(f => f());
+        drip.observerPhase = false;
+        effect.updates.forEach(f => f());
+    } catch (error) {
+        drip.observerPhase = false;
+        console.error('Error in drip function:', error);
+        throw error;
+    }
+    return effect;
+}
 
 
 /**
@@ -333,7 +367,7 @@ const hold = <A>(s:Stream<A>) => (v:A) : Prop<A> => {
     const p = () => v;
     s.updates.set(p, (_v)=>v=_v);
     PROP_RELATIONS.set(p, s);
-    cleanupRegistry.register(p, p);
+    cleanupRegistry.register(p, new WeakRef(p));
     return p;
 }
 
@@ -341,7 +375,7 @@ const hold = <A>(s:Stream<A>) => (v:A) : Prop<A> => {
  * イベントストリームにオブザーバーを登録する
  * Propが渡された場合は、即座に一度listenされる
  */
-const listen = <A>(s:Stream<A>|Prop<A>) => function (f:(v:A)=>void) : ()=>void {
+const listen = <A>(s:Stream<A>|Prop<A>) => function (f:(v:A)=>void, immediate = true) : ()=>void {
     if(typeof s !== "function") {
         s.observers.add(f);
         return s.observers.delete.bind(s.observers, f);
@@ -349,7 +383,7 @@ const listen = <A>(s:Stream<A>|Prop<A>) => function (f:(v:A)=>void) : ()=>void {
     if(!PROP_RELATIONS.has(s))
         throw new Error("Prop is not registered:use hold function");
     const l = listen(PROP_RELATIONS.get(s)! as Stream<A>)(f);
-    f(s());
+    if(immediate) f(s());
     return l;
 };
 
@@ -456,7 +490,9 @@ const moments = {} as moments; {
             deltaTime: 0,
             count: 0
         });
-        _s[STREAM_CLEANER] = 
+        _s[STREAM_CLEANER] = ()=>{
+            globalTickStream.next.delete(s);
+        }
         _s.disconnect = ()=>{
             clear(s, true);
             globalTickStream.next.delete(s);
