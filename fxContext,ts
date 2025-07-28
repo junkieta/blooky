@@ -1,0 +1,29 @@
+// fxContext.ts
+import type { Prop, Stream } from "./blooky";
+
+type FxResolvable = Prop<any> | Stream<any>;
+
+type FxContextMap = Record<string, FxResolvable>;
+
+let currentContext: FxContextMap = {};
+
+/**
+ * PropやStreamなどを文字列キーで登録
+ */
+export function registerFxContext(ctx: FxContextMap) {
+  currentContext = { ...currentContext, ...ctx };
+}
+
+/**
+ * by="..." などで指定された名前をもとに、PropやStreamを解決
+ */
+export function resolveFxContext(key: string): FxResolvable | undefined {
+  return currentContext[key];
+}
+
+/**
+ * 現在のContextを明示的にクリア（テストやリセット用）
+ */
+export function clearFxContext() {
+  currentContext = {};
+}
