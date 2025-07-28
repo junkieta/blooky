@@ -1,29 +1,61 @@
 // fxContext.ts
+
 import type { Prop, Stream } from "./blooky";
 
-type FxResolvable = Prop<any> | Stream<any>;
+// 型定義
+export type FxResolvable = Prop<any> | Stream<any>;
 
 type FxContextMap = Record<string, FxResolvable>;
 
-let currentContext: FxContextMap = {};
+// 内部保存用（将来のスコープ対応を考慮）
+let currentContext: Map<string, FxResolvable> = new Map();
 
 /**
- * PropやStreamなどを文字列キーで登録
+ * PropやStreamを名前で登録する
  */
-export function registerFxContext(ctx: FxContextMap) {
-  currentContext = { ...currentContext, ...ctx };
+export function registerFxContext(ctx: FxContextMap): void {
+  Object.entries(ctx).forEach(([key, value]) => {
+    if (currentContext.has(key)) {
+      console.warn(`[fxContext] Overwriting context key: "${key}"`);
+    }
+    currentContext.set(key, value);
+  });
 }
 
 /**
- * by="..." などで指定された名前をもとに、PropやStreamを解決
+ * 個別登録
+ */
+export function setFxContext(key: string, value: FxResolvable): void {
+  if (currentContext.has(key)) {
+    console.warn(`[fxContext] Overwriting context key: "${key}"`);
+  }
+  currentContext.set(key, value);
+}
+
+/**
+ * 名前で登録解除
+ */
+export function unregisterFxContext(key: string): void {
+  currentContext.delete(key);
+}
+
+/**
+ * 登録されているPropまたはStreamを取得
  */
 export function resolveFxContext(key: string): FxResolvable | undefined {
-  return currentContext[key];
+  return currentContext.get(key);
 }
 
 /**
- * 現在のContextを明示的にクリア（テストやリセット用）
+ * 登録をすべて削除
  */
-export function clearFxContext() {
-  currentContext = {};
+export function clearFxContext(): void {
+  currentContext.clear();
+}
+
+/**
+ * デバッグ用：登録されているキー一覧を取得
+ */
+export function listFxContext(): string[] {
+  return Array.from(currentContext.keys());
 }
