@@ -252,7 +252,6 @@ class FxEffect extends FxContext {
       <slot></slot>
     `;
 
-    this.attachShadow({ mode: "open" }).innerHTML = `<slot></slot>`;
     const fxNode = this.childrenToFxNodes()[0] ?? fx.none();
     const { cancel } = runCancelable(fxNode);
     this._cancel = cancel;
