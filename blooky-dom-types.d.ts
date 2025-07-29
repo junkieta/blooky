@@ -1,12 +1,27 @@
 // blooky-dom-types.d.ts
 
-import type { Prop } from "./blooky"; // あなたの Prop/Stream 型に合わせて
+import type { Prop } from "./blooky"; // Prop/Stream 型に合わせて
 
 // --- HTML属性名一覧
 export type HTMLAttrName =
-  | "id" | "class" | "href" | "src" | "alt" | "title" | "value" | "type" | "name"
-  | "disabled" | "checked" | "placeholder" | "readonly" | "required"
-  | "width" | "height" | "style" | "tabindex" | "data-*" // etc
+  | "abbr" | "accept" | "accept-charset" | "accesskey" | "action" | "allow" | "allowfullscreen" 
+  | "allowpaymentrequest" | "alt" | "as" | "async" | "autocapitalize" | "autocomplete" 
+  | "autofocus" | "autoplay" | "charset" | "checked" | "cite" | "class" | "color" 
+  | "cols" | "colspan" | "content" | "contenteditable" | "controls" | "coords" 
+  | "crossorigin" | "data" | "datetime" | "decoding" | "default" | "defer" 
+  | "dir" | "dir" | "dirname" | "disabled" | "download" | "draggable" 
+  | "enctype" | "enterkeyhint" | "for" | "form" | "formaction" 
+  | "formenctype" | "formmethod" | "formnovalidate" | "formtarget" 
+  | "headers" | "height" | "hidden" | "high" | "href" | "hreflang" 
+  | "http-equiv" | "id" | "imagesizes" | "imagesrcset" | "inputmode" | "integrity" | "is" 
+  | "ismap" | "itemid" | "itemprop" | "itemref" | "itemscope" | "itemtype" | "kind" | "label" 
+  | "lang" | "list" | "loop" | "low" | "manifest" | "max" | "maxlength" | "media" | "method" 
+  | "min" | "minlength" | "multiple" | "muted" | "name" | "nomodule" | "nonce" | "novalidate" 
+  | "open" | "optimum" | "pattern" | "ping" | "placeholder" | "playsinline" | "poster" 
+  | "preload" | "readonly" | "referrerpolicy" | "rel" | "required" | "reversed" | "rows" 
+  | "rowspan" | "sandbox" | "scope" | "selected" | "shape" | "size" | "sizes" | "slot" 
+  | "span" | "spellcheck" | "src" | "srcdoc" | "srclang" | "srcset" | "start" | "step" 
+  | "style" | "tabindex" | "target" | "title" | "translate" | "type" | "usemap" | "value"
   | string; // fallback for custom attributes
 
 // --- CSSのプロパティ名のうち、書き換え可能なものだけ

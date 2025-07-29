@@ -3,52 +3,15 @@
  * blooky-domを用いてリアクティブなDOMを構築するライブラリ。
  * 簡易な仕様でDOMを構築しつつ、Streamを利用した更新管理も行う。
  */
+import type { V_DATASET, V_STYLE, V_CLASSLIST, V_EVENTLISTENER, V_STRING, WritableCSSProperty, JSHTMLElementSource, JSHTMLAttrSource, JSHTMLNodeSource, JSHTMLAttributeMapSource } from "./blooky-dom-types";
 import { Stream, listen, Prop, stream, drip } from "./blooky";
 
-export type HTMLAttrName =
-    "abbr" | "accept" | "accept-charset" | "accesskey" | "action" | "allow" | "allowfullscreen" | "allowpaymentrequest" | "alt" | "as" | "async" | "autocapitalize" | "autocomplete" | "autofocus" | "autoplay" | "charset" | "checked" | "cite" | "class" | "color" | "cols" | "colspan" | "content" | "contenteditable" | "controls" | "coords" | "crossorigin" | "data" | "datetime" | "decoding" | "default" | "defer" | "dir" | "dir" | "dirname" | "disabled" | "download" | "draggable" | "enctype" | "enterkeyhint" | "for" | "form" | "formaction" | "formenctype" | "formmethod" | "formnovalidate" | "formtarget" | "headers" | "height" | "hidden" | "high" | "href" | "hreflang" | "http-equiv" | "id" | "imagesizes" | "imagesrcset" | "inputmode" | "integrity" | "is" | "ismap" | "itemid" | "itemprop" | "itemref" | "itemscope" | "itemtype" | "kind" | "label" | "lang" | "list" | "loop" | "low" | "manifest" | "max" | "maxlength" | "media" | "method" | "min" | "minlength" | "multiple" | "muted" | "name" | "nomodule" | "nonce" | "novalidate" | "open" | "optimum" | "pattern" | "ping" | "placeholder" | "playsinline" | "poster" | "preload" | "readonly" | "referrerpolicy" | "rel" | "required" | "reversed" | "rows" | "rowspan" | "sandbox" | "scope" | "selected" | "shape" | "size" | "sizes" | "slot" | "span" | "spellcheck" | "src" | "srcdoc" | "srclang" | "srcset" | "start" | "step" | "style" | "tabindex" | "target" | "title" | "translate" | "type" | "usemap" | "value";
-
-export type WritableCSSProperty = Exclude<keyof CSSStyleDeclaration,
-    "getPropertyPriority"|
-    "getPropertyValue"|
-    "item"|
-    "removeProperty"|
-    "setProperty"|
-    "length"|
-    "parentRule"|
-    number|
-    symbol
->;
-
-type HTMLEventHandlers = Extract<keyof GlobalEventHandlers,`on${string}`>;
-
-type V_STRING = string | number | boolean | undefined | null;
-type V_CLASSLIST = string[]|{[key:string]:boolean};
-type V_DATASET = {[key:string]:V_STRING};
-type V_STYLE = { [key in WritableCSSProperty]?: V_STRING|Prop<V_STRING> };
-type V_EVENTLISTENER = EventListenerOrEventListenerObject|GlobalEventHandlers[HTMLEventHandlers];
 type T_ATTRSET = 
     ["dataset", V_DATASET]|
     ["style", V_STYLE]|
     ["classList", V_CLASSLIST]|
     [`on${string}`, V_EVENTLISTENER]|
     [string, V_STRING];
-
-type JSHTMLFragmentSource = JSHTMLNodeSource[];
-type JSHTMLTextSource = V_STRING;
-type JSHTMLNodeSource = JSHTMLElementSource | JSHTMLTextSource | JSHTMLFragmentSource;
-type JSHTMLAttrSource = 
-    T_ATTRSET[1];
-
-type JSHTMLAttributeMapSource =
-    Partial<
-        { dataset: V_DATASET, style: V_STYLE, classList: V_CLASSLIST } &
-        { [key in HTMLAttrName]: JSHTMLAttrSource } & 
-        { [key in HTMLEventHandlers]: GlobalEventHandlers[key] } &
-        { [key: string]: JSHTMLAttrSource }
-    >;
-type JSHTMLElementSource = { [key:string]: JSHTMLNodeSource | JSHTMLAttributeMapSource, $?: JSHTMLAttributeMapSource };
-//    { [key in T]: T extends "$" ? JSHTMLAttributeMapSource : JSHTMLNodeSource };
 
 /**
  * tag指定がjshtmlの仕様に沿わなかった場合に生成される要素の定義。
@@ -161,7 +124,8 @@ const bind_node_stream = <T extends JSHTMLNodeSource>(s:Stream<T>|Prop<T>) => fu
     const unlisten = listen(s)((v) => {
         if(p.every((n)=>n.isConnected))
             f(update_range(p)(v));
-        unlisten();
+        else
+            unlisten();
     });
 }
 
@@ -170,13 +134,13 @@ const bind_node_stream = <T extends JSHTMLNodeSource>(s:Stream<T>|Prop<T>) => fu
  * @param s 
  * @returns 
  */
-const bind_attr_stream = (p:Prop<JSHTMLAttrSource>) => function f([e,n]:[HTMLElement,string]) {
+const bind_attr_stream = (p:Prop<JSHTMLAttrSource>) => ([e,n]:[HTMLElement,string]) => {
     const unlisten = listen(p)((v) => {
         if(e.isConnected) {
             update_attr(e)([n,v] as T_ATTRSET);
-            f([e,n]);
+        } else {
+            unlisten();
         }
-        unlisten();
     });
 }
 
@@ -300,10 +264,4 @@ const events = (target:EventTarget) => <T extends string, E = T extends keyof HT
     return [s, target.removeEventListener.bind(target,t,l,false)];
 }
 
-// 単なるヘルパーメソッド
-export const mount = (q:string, n: Node) => {
-    document.querySelector(q)?.replaceChildren(n);
-}
-
 export {jshtml, mutations, events};
-export type { JSHTMLNodeSource, JSHTMLAttrSource, JSHTMLAttributeMapSource };
