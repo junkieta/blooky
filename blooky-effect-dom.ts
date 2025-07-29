@@ -74,21 +74,46 @@ class FxCall extends EffectElement {
 }
 customElements.define("fx-call", FxCall);
 
+
+// FxIf 要素の実装イメージ
 class FxIf extends EffectElement {
   toFxNode(): FxNode {
-    const condStr = this.getAttribute("when") ?? "false";
-    const cond = (() => {
-      try { return JSON.parse(condStr); }
-      catch { return false; }
-    })();
+    const key = this.getAttribute("when");
+    if (!key) return fx.none();
+
+    // 自分から一番近いプロバイダを探す
+    const provider = this.closest<FxContextProvider>("fx-context-provider");
+    const condProp = provider?.getContextValue(key) as Prop<boolean>;
+
+    if (!condProp) {
+        console.warn(`Prop "${key}" not found in context.`);
+        return fx.none();
+    }
+    
     const thenNode = this.querySelector('[slot="then"]') as EffectElement | null;
     const elseNode = this.querySelector('[slot="else"]') as EffectElement | null;
-    return cond
-      ? thenNode?.toFxNode() ?? fx.none()
-      : elseNode?.toFxNode() ?? fx.none();
+
+    return fx.condition(() => condProp(), thenNode?.toFxNode(), elseNode?.toFxNode());
   }
 }
+
 customElements.define("fx-if", FxIf);
+
+
+// FxContext 要素の実装イメージ
+class FxContextElement extends HTMLElement {
+  private context: Map<string, FxResolvable> = new Map();
+
+  // プロパティ経由でコンテキストを設定する
+  setContext(ctx: Record<string, FxResolvable>) {
+    this.context = new Map(Object.entries(ctx));
+  }
+
+  getContextValue(key: string): FxResolvable | undefined {
+    return this.context.get(key);
+  }
+}
+customElements.define("fx-context", FxContextElement);
 
 class FxRepeat extends EffectElement {
   toFxNode(): FxNode {
@@ -107,6 +132,9 @@ class FxCancel extends EffectElement {
   }
 }
 customElements.define("fx-cancel", FxCancel);
+
+
+
 
 // ---- FxEffect Root Element ----
 
