@@ -1,3 +1,5 @@
+// blooky-fxdom.ts
+
 import { Prop, Stream } from "./blooky";
 import { fx, FxDispatchOptions, FxNode, runCancelable } from "./blooky-effect"; // assume effect-core exists
 
@@ -48,7 +50,10 @@ customElements.define("fx-delay", FxDelay);
 class FxCall extends EffectElement {
   toFxNode(): FxNode {
     const src = this.getAttribute("src");
-    const fn = this.getAttribute("fn");
+    const fnName = this.getAttribute("fn");
+    if (!fnName) {
+      throw new Error("<fx-call> requires a 'fn' attribute.");
+    }
 
     const args = Array.from(this.querySelectorAll("arg"))
       .map(arg => {
@@ -60,18 +65,26 @@ class FxCall extends EffectElement {
         }
       });
 
-    if (src && fn) {
+    // Case 1: src属性がある場合 → 動的import
+    if (src) {
       return fx.call(async () => {
         const mod = await import(src);
-        const func = mod[fn];
-        if (typeof func !== "function") throw new Error(`Function '${fn}' not found`);
-        await func(...args);
+        const func = mod[fnName];
+        if (typeof func !== "function") throw new Error(`Function '${fnName}' not found in module '${src}'`);
+        return func(...args);
       });
     }
 
-    return fx.call(() => {
-      throw new Error("<fx-call> requires src and fn attributes");
-    });
+    // Case 2: src属性がない場合 → コンテキストから関数を取得
+    const provider = this.closest<FxContext>("fx-context,fx-effect");
+    const funcFromContext = provider?.getContextValue(fnName) as Function;
+
+    if (typeof funcFromContext === "function") {
+      return fx.call(() => funcFromContext(...args));
+    }
+
+    // どちらにも見つからない場合
+    throw new Error(`Function '${fnName}' not found in context, and no 'src' was provided.`);
   }
 }
 customElements.define("fx-call", FxCall);
@@ -129,9 +142,13 @@ class FxSwitch extends EffectElement {
 customElements.define("fx-switch", FxSwitch);
 
 
-// FxContext 要素の実装イメージ
 class FxContext extends EffectElement {
+
   private context: Map<string, FxResolvable> = new Map();
+
+  parentContext() : FxContext | null {
+    return this.parentElement ? this.parentElement.closest("fx-context,fx-effect") : null;
+  }
 
   toFxNode(): FxNode {
     return this.childrenToFxNodes()[0] ?? fx.none();
@@ -141,10 +158,29 @@ class FxContext extends EffectElement {
   setContext(ctx: Record<string, FxResolvable>) {
     this.context = new Map(Object.entries(ctx));
   }
-
+  
+  // 自分からルートまで値を検索する
   getContextValue(key: string): FxResolvable | undefined {
-    return this.context.get(key);
+
+    // use属性値をホワイトリストとして利用
+    const useList = this.getAttribute("use")?.replace(/\s+/g,"").split(",");
+    if(useList && !useList.includes(key)) {
+      console.warn(`[fx-context] Invalid context key: "${key}" is not contained "use" attribute.`);
+    }
+    
+    // 1. まず自分のコンテキストを確認
+    if (this.context.has(key)) {
+      return this.context.get(key);
+    }
+    // 2. なければ、親コンテキストに問い合わせる
+    const parent = this.parentContext();
+    if (parent) {
+      return parent.getContextValue(key); // 親に対して同じ関数を再帰的に呼び出す
+    }
+    // 3. 親がいなければ（ルートまで到達）、undefinedを返す
+    return undefined;
   }
+
 }
 customElements.define("fx-context", FxContext);
 
@@ -249,7 +285,10 @@ class FxEffect extends FxContext {
       </style>
       <slot></slot>
     `;
+    this.run();
+  }
 
+  run() {
     const fxNode = this.childrenToFxNodes()[0] ?? fx.none();
     const { cancel } = runCancelable(fxNode);
     this._cancel = cancel;

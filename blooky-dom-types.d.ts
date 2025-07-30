@@ -85,3 +85,11 @@ export type JSHTMLElementSource = (
     $?: JSHTMLAttributeMapSource;
   }
 );
+
+// --- fxdom用タグ
+export type FxTag = "call" | "delay" | "sequence" | "parallel" | "cancel" | "repeat" | "race" | "if";
+
+// --- fxdom
+export type JSHTMLEffectElementSource = {
+  [K in FxTag]?: JSHTMLEffectElementSource | JSHTMLNodeSource | null;
+} & { $?: JSHTMLAttributeMapSource };

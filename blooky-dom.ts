@@ -104,12 +104,11 @@ const element = (s:JSHTMLElementSource) => {
  * @returns 
  */
 const extractElementSource = (s:JSHTMLElementSource) : [string,JSHTMLNodeSource,JSHTMLAttributeMapSource?] => {
-    const k = Object.keys(s).filter((t)=>t !== "$");
-    if(!k.length) {
+    const tag = Object.keys(s).find((t)=>t !== "$");
+    if(!tag) {
         console.error("invalid tag name err: returned 'jshtml-unknown' tag");
         return ["jshtml-unknown", null];
     }
-    const tag = k[0];
     const children = s[tag] as JSHTMLNodeSource;
     const attrs = "$" in s ? (s.$ as JSHTMLAttributeMapSource) : undefined;
     return [tag,children,attrs];
@@ -264,4 +263,35 @@ const events = (target:EventTarget) => <T extends string, E = T extends keyof HT
     return [s, target.removeEventListener.bind(target,t,l,false)];
 }
 
-export {jshtml, mutations, events};
+/**
+ * プレフィクス付きタグ名を自動解決して使うjshtml
+ */
+const jshtmlWithPrefixAuto = (prefix: string) => (node: JSHTMLNodeSource): Node  => {
+    if (typeof node === "function") return jshtmlWithPrefixAuto(prefix)(node());
+    if (Array.isArray(node)) {
+        const df = new DocumentFragment();
+        df.append(...node.map(jshtmlWithPrefixAuto(prefix)));
+        return df;
+    }
+
+    if (node == null || typeof node !== "object") return jshtml(node);
+
+    const tag = Object.keys(node).find(k => k !== "$");
+    if (!tag) return jshtml(node);
+
+    const maybeRealTag = tag.includes("-") 
+        ? tag // すでに hyphenated
+        : `${prefix}-${tag}`;
+
+    const resolvedTag = customElements.get(maybeRealTag)
+        ? maybeRealTag
+        : tag;
+
+    const mappedNode = { [resolvedTag]: node[tag], ...(node.$ ? { $: node.$ } : {}) };
+
+    return jshtml(mappedNode);
+};
+
+export {jshtml, mutations, events, jshtmlWithPrefixAuto};
+
+
