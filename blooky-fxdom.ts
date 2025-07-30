@@ -2,8 +2,6 @@ import { Prop, Stream } from "./blooky";
 import { fx, FxDispatchOptions, FxNode, runCancelable } from "./blooky-effect"; // assume effect-core exists
 
 type FxResolvable = Prop<any> | Stream<any>;
-type FxDispatchTargetKeyWord = "_self" | "_parent" | "_window" | "_document";
-
 
 // ---- Abstract Base ----
 
