@@ -1,9 +1,9 @@
 // blooky-fxdom.ts
 
-import { Prop, Stream } from "./blooky";
-import { fx, FxDispatchOptions, FxNode, runCancelable } from "./blooky-effect"; // assume effect-core exists
+import { isStream, Prop, Stream } from "./blooky";
+import { fx, FxDispatchOptions, FxNode, IEffectContext, runCancelable } from "./blooky-effect"; // assume effect-core exists
 
-type FxResolvable = Prop<any> | Stream<any>;
+type FxResolvable = Prop<any> | Stream<any> | Function;
 
 // ---- Abstract Base ----
 
@@ -142,9 +142,10 @@ class FxSwitch extends EffectElement {
 customElements.define("fx-switch", FxSwitch);
 
 
-class FxContext extends EffectElement {
+class FxContext extends EffectElement implements IEffectContext {
 
   private context: Map<string, FxResolvable> = new Map();
+  private state: { previousNode: FxNode, result: any };
 
   parentContext() : FxContext | null {
     return this.parentElement ? this.parentElement.closest("fx-context,fx-effect") : null;
@@ -158,10 +159,14 @@ class FxContext extends EffectElement {
   setContext(ctx: Record<string, FxResolvable>) {
     this.context = new Map(Object.entries(ctx));
   }
-  
-  // 自分からルートまで値を検索する
-  getContextValue(key: string): FxResolvable | undefined {
 
+  setRuntimeState(state: { previousNode: FxNode; result: any; }): void {
+    this.state = state;
+  }
+
+  // 自分からルートまで値を検索する
+  getContextValue(key: string): FxResolvable | { previousNode: FxNode, result: any } | undefined {
+    if(key === "state") return this.state;
     // use属性値をホワイトリストとして利用
     const useList = this.getAttribute("use")?.replace(/\s+/g,"").split(",");
     if(useList && !useList.includes(key)) {
@@ -239,7 +244,7 @@ class FxDrip extends EffectElement {
     // 2. コンテキストから指定されたStreamを探す
     const provider = this.closest<FxContext>("fx-context, fx-effect");
     const stream = provider?.getContextValue(streamKey);
-    if (!stream || typeof stream !== "object") {
+    if (!isStream(stream)) {
         console.warn(`Stream with key "${streamKey}" not found in context.`);
         return fx.none();
     }
@@ -285,12 +290,13 @@ class FxEffect extends FxContext {
       </style>
       <slot></slot>
     `;
-    this.run();
+    if(this.hasAttribute("autostart"))
+      this.run();
   }
 
   run() {
     const fxNode = this.childrenToFxNodes()[0] ?? fx.none();
-    const { cancel } = runCancelable(fxNode);
+    const { cancel } = runCancelable(fxNode, this);
     this._cancel = cancel;
   }
 

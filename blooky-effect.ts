@@ -7,7 +7,7 @@ import { drip } from "./blooky";
 //
 
 export type FxNode =
-  | { type: "none", action: () => unknown }
+  | { type: "none" }
   | { type: "call", action: () => unknown }
   | { type: "sequence", steps: FxNode[] }
   | { type: "parallel", steps: FxNode[] }
@@ -35,7 +35,7 @@ export const fx = {
   parallel: (steps: FxNode[]): FxNode => ({ type: "parallel", steps }),
   delay: (ms: number): FxNode => ({ type: "delay", ms }),
   race: (steps: FxNode[]): FxNode => ({ type: "race", steps }),
-  none: (): FxNode => ({ type: "none", action: ()=>{} }),
+  none: (): FxNode => ({ type: "none" }),
   condition: (
     cond: () => boolean,
     thenBranch: FxNode,
@@ -85,9 +85,24 @@ export const fx = {
   },
 };
 
+/**
+ * エフェクト実行エンジンが要求するコンテキストの機能。
+ */
+export interface IEffectContext {
+  /**
+   * 実行時の状態を書き込むためのメソッド。
+   * @param state 実行状態を表すオブジェクト
+   */
+  setRuntimeState(state: { previousNode: FxNode, result: any }): void;
+
+  /**
+   * コンテキストから値を取得するためのメソッド。
+   * @param key 取得したい値のキー
+   */
+  getContextValue(key: string): any;
+}
 
 type CancelToken = { cancel: () => void; cancelled: () => boolean };
-
 function createCancelToken(): CancelToken {
   let isCancelled = false;
   return {
@@ -96,17 +111,30 @@ function createCancelToken(): CancelToken {
   };
 }
 
-export function runCancelable(node: FxNode, token: CancelToken = createCancelToken()): { promise: Promise<void>, cancel: () => void } {
+export function runCancelable(
+  node: FxNode,
+  context: IEffectContext = {
+    getContextValue: (key)=>{},
+    setRuntimeState: (state)=>{},
+  },
+  token: CancelToken = createCancelToken()
+) : { promise: Promise<void>, cancel: () => void } {
   const promise = (async function(n: FxNode): Promise<void> {
     if (token.cancelled()) return;
 
     switch (n.type) {
+
+      case "none":
+        break;
+
       case "call":
-        n.action();
+        const result = n.action();
+        context.setRuntimeState({ previousNode: n, result });
         break;
 
       case "drip":
         drip(n.stream)(n.value);
+        context.setRuntimeState({ previousNode: n, result: n.value });
         break;
 
       case "delay":
@@ -127,22 +155,22 @@ export function runCancelable(node: FxNode, token: CancelToken = createCancelTok
 
       case "sequence":
         for (const step of n.steps) {
-          await runCancelable(step, token);
+          await runCancelable(step, context, token).promise;
           if (token.cancelled()) return;
         }
         break;
 
       case "parallel":
-        await Promise.all(n.steps.map((step) => runCancelable(step, token).promise));
+        await Promise.all(n.steps.map((step) => runCancelable(step, context, token).promise));
         break;
 
       case "race":
-        await Promise.race(n.steps.map((step) => runCancelable(step, token).promise));
+        await Promise.race(n.steps.map((step) => runCancelable(step, context, token).promise));
         break;
 
       case "condition":
         const branch = n.if() ? n.then : n.else;
-        if (branch) await runCancelable(branch, token);
+        if (branch) await runCancelable(branch, context, token).promise;
         break;
     }
   })(node);
