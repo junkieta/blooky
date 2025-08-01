@@ -1,13 +1,14 @@
 // blooky-effect.ts
-import type { Stream } from "./blooky";
+import type { Prop, Stream } from "./blooky";
 import { drip } from "./blooky";
+import { FxContextInterface, FxContextInternalInterface, FxContextObject } from "./blooky-context";
 
 //
 // 型定義
 //
 
 export type FxNode =
-  | { type: "none", action: () => unknown }
+  | { type: "none" }
   | { type: "call", action: () => unknown }
   | { type: "sequence", steps: FxNode[] }
   | { type: "parallel", steps: FxNode[] }
@@ -25,6 +26,9 @@ export type FxDispatchOptions = {
   cancelable?: boolean;
 };
 
+export type FxResolvable = Prop<any> | Stream<any>;
+
+
 //
 // DSL（ファクトリ）
 //
@@ -35,7 +39,7 @@ export const fx = {
   parallel: (steps: FxNode[]): FxNode => ({ type: "parallel", steps }),
   delay: (ms: number): FxNode => ({ type: "delay", ms }),
   race: (steps: FxNode[]): FxNode => ({ type: "race", steps }),
-  none: (): FxNode => ({ type: "none", action: ()=>{} }),
+  none: (): FxNode => ({ type: "none" }),
   condition: (
     cond: () => boolean,
     thenBranch: FxNode,
@@ -62,7 +66,10 @@ export const fx = {
 
       let target : EventTarget | null;
 
-      if(typeof options.target === "string") switch(options.target) {
+      if(options.target instanceof EventTarget) {
+        target = options.target;
+      }
+      else switch(options.target) {
         case undefined:
         case null:
         case "_document":
@@ -73,7 +80,6 @@ export const fx = {
           target = document.getElementById(options.target);
           break;
       }
-      else target = options.target;
 
       if(!target) {
         throw new Error("not found fx-dispatch target");
@@ -86,27 +92,44 @@ export const fx = {
 };
 
 
-type CancelToken = { cancel: () => void; cancelled: () => boolean };
+type CancelToken = {
+  cancel: () => void;
+  cancelled: () => boolean
+};
 
-function createCancelToken(): CancelToken {
+export function createCancelToken(): CancelToken {
   let isCancelled = false;
   return {
     cancel: () => { isCancelled = true },
-    cancelled: () => isCancelled
+    cancelled: () => isCancelled,
   };
 }
 
-export function runCancelable(node: FxNode, token: CancelToken = createCancelToken()): { promise: Promise<void>, cancel: () => void } {
+
+export function runCancelable(
+  node: FxNode,
+  context: FxContextInternalInterface = new FxContextObject(),
+  token = createCancelToken()
+) : {
+  promise: Promise<void>,
+  cancel: () => void,
+  context: FxContextInternalInterface
+} {
   const promise = (async function(n: FxNode): Promise<void> {
     if (token.cancelled()) return;
 
     switch (n.type) {
+
+      case "none":
+        break;
+
       case "call":
-        n.action();
+        const result = await n.action();
+        context.set("result", result);
         break;
 
       case "drip":
-        drip(n.stream)(n.value);
+        context.set("lastDrip", drip(n.stream)(n.value));
         break;
 
       case "delay":
@@ -127,25 +150,26 @@ export function runCancelable(node: FxNode, token: CancelToken = createCancelTok
 
       case "sequence":
         for (const step of n.steps) {
-          await runCancelable(step, token);
+          await runCancelable(step, context).promise;
           if (token.cancelled()) return;
         }
         break;
 
       case "parallel":
-        await Promise.all(n.steps.map((step) => runCancelable(step, token).promise));
+        await Promise.all(n.steps.map((step) => runCancelable(step, context, token).promise));
         break;
 
       case "race":
-        await Promise.race(n.steps.map((step) => runCancelable(step, token).promise));
+        await Promise.race(n.steps.map((step) => runCancelable(step, context, token).promise));
         break;
 
       case "condition":
         const branch = n.if() ? n.then : n.else;
-        if (branch) await runCancelable(branch, token);
+        if (branch) await runCancelable(branch, context);
         break;
+        
     }
   })(node);
 
-  return { promise, cancel: token.cancel };
+  return { promise, cancel: token.cancel, context };
 }
