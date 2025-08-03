@@ -1,20 +1,26 @@
 // blooky-effect.ts
-import type { Stream } from "./blooky";
-import { drip } from "./blooky";
+import type { Prop, Stream } from "./blooky";
+import { drip, hold, listen } from "./blooky";
 
 //
 // 型定義
 //
-
 export type FxNode =
   | { type: "none" }
   | { type: "call", action: () => unknown }
   | { type: "sequence", steps: FxNode[] }
   | { type: "parallel", steps: FxNode[] }
-  | { type: "delay", ms: number }
+  | { type: "wait", ms: number }
   | { type: "race", steps: FxNode[] }
-  | { type: "condition", if: () => boolean, then: FxNode, else?: FxNode }
-  | { type: "drip", stream: Stream<any>, value: any };
+  | { type: "loop", cond: Prop<boolean>, body: FxNode }
+  | { type: "condition", if: Prop<boolean>, then: FxNode, else?: FxNode }
+  | { type: "switch",
+      by: Prop<string | number | symbol>, // 判断基準となるProp
+      cases: Map<string | number | symbol, FxNode>, // 分岐先のMap
+      default?: FxNode // defaultの分岐先
+    }
+  | { type: "drip", stream: Stream<any>, value: any }
+  | { type: "take", stream: Stream<any> }
 
 export type FxDispatchOptions = {
   name: string;
@@ -30,14 +36,15 @@ export type FxDispatchOptions = {
 //
 
 export const fx = {
+  none: (): FxNode => ({ type: "none" }),
   call: (action: () => unknown): FxNode => ({ type: "call", action }),
   sequence: (steps: FxNode[]): FxNode => ({ type: "sequence", steps }),
   parallel: (steps: FxNode[]): FxNode => ({ type: "parallel", steps }),
-  delay: (ms: number): FxNode => ({ type: "delay", ms }),
   race: (steps: FxNode[]): FxNode => ({ type: "race", steps }),
-  none: (): FxNode => ({ type: "none" }),
+  wait: (ms: number): FxNode => ({ type: "wait", ms }),
+  loop: (cond: Prop<boolean>, body: FxNode): FxNode => ({ type: "loop", cond, body }),
   condition: (
-    cond: () => boolean,
+    cond: Prop<boolean>,
     thenBranch: FxNode,
     elseBranch?: FxNode
   ): FxNode => ({
@@ -46,15 +53,29 @@ export const fx = {
     then: thenBranch,
     else: elseBranch,
   }),
+  switch: (
+    by: Prop<any>,
+    cases: Map<any, FxNode>,
+    defaultNode?: FxNode
+  ): FxNode => ({
+    type: "switch",
+    by,
+    cases,
+    default: defaultNode,
+  }),  
   drip: <T>(stream: Stream<T>, value: T): FxNode => ({
     type: "drip",
     stream,
     value,
   }),
+  take: <T>(stream: Stream<T>) : FxNode =>({
+    type: "take",
+    stream
+  }),
   dispatch: (options: FxDispatchOptions, child?: FxNode): FxNode => {
     return fx.condition(() => {
       const e = new CustomEvent(options.name, {
-        detail: options.detail ?? {},
+        detail: options.detail ?? null,
         bubbles: options.bubbles ?? true,
         composed: options.composed ?? true,
         cancelable: options.cancelable ?? false
@@ -78,9 +99,7 @@ export const fx = {
       if(!target) {
         throw new Error("not found fx-dispatch target");
       }
-       
-      const accepted = target.dispatchEvent(e);
-      return accepted; // ← キャンセルされていない場合 true
+      return target.dispatchEvent(e); // ← キャンセルされていない場合 true
     }, child ?? fx.none());
   },
 };
@@ -93,7 +112,7 @@ export interface IEffectContext {
    * 実行時の状態を書き込むためのメソッド。
    * @param state 実行状態を表すオブジェクト
    */
-  setRuntimeState(state: { previousNode: FxNode, result: any }): void;
+  setRuntimeState(state: { lastResult: any }): void;
 
   /**
    * コンテキストから値を取得するためのメソッド。
@@ -102,8 +121,8 @@ export interface IEffectContext {
   getContextValue(key: string): any;
 }
 
-type CancelToken = { cancel: () => void; cancelled: () => boolean };
-function createCancelToken(): CancelToken {
+export type CancelToken = { cancel: () => void; cancelled: () => boolean };
+export function createCancelToken(): CancelToken {
   let isCancelled = false;
   return {
     cancel: () => { isCancelled = true },
@@ -111,69 +130,143 @@ function createCancelToken(): CancelToken {
   };
 }
 
-export function runCancelable(
-  node: FxNode,
-  context: IEffectContext = {
-    getContextValue: (key)=>{},
-    setRuntimeState: (state)=>{},
+export function* run(node: FxNode): Generator<FxNode, void, any> {
+  switch (node.type) {
+    case "none":
+      break;
+    case 'sequence':
+      for (const step of node.steps) {
+        yield* run(step); // yield*で別のGeneratorに処理を委譲
+      }
+      break;
+    default:
+/* 
+    case 'condition':
+    case 'call':
+    case 'delay':
+    case 'drip':
+    case 'switch':
+    case 'take':
+    case "parallel":
+    case "race":
+*/
+      yield node; // executeの必要なノードはそのままyieldする
+      break;
+  }
+}
+
+export type FxHandlerArg<K extends FxNode["type"]> = {
+  node: Extract<FxNode, { type: K }>
+  context: IEffectContext
+  token: CancelToken
+  execute: typeof execute
+  run: typeof run
+}
+export type FxHandlerMap = {
+  [K in FxNode["type"]]: (args: FxHandlerArg<K>) => Promise<any>
+}
+
+export const fxHandlers: FxHandlerMap = {
+  call: async ({ node }) => {
+    return await node.action();
   },
-  token: CancelToken = createCancelToken()
-) : { promise: Promise<void>, cancel: () => void } {
-  const promise = (async function(n: FxNode): Promise<void> {
-    if (token.cancelled()) return;
-
-    switch (n.type) {
-
-      case "none":
-        break;
-
-      case "call":
-        const result = n.action();
-        context.setRuntimeState({ previousNode: n, result });
-        break;
-
-      case "drip":
-        drip(n.stream)(n.value);
-        context.setRuntimeState({ previousNode: n, result: n.value });
-        break;
-
-      case "delay":
-        const delayPromise = new Promise(resolve => setTimeout(resolve, n.ms));
-        const cancelPromise = new Promise((_, reject) => {
-            const check = () => {
-                if (token.cancelled()) {
-                    reject(new Error("Cancelled")); // キャンセルされたら即座にPromiseをreject
-                } else {
-                    // requestAnimationFrameや短いsetTimeoutで定期的にチェック
-                    requestAnimationFrame(check); 
-                }
-            };
-            check();
-        });
-        await Promise.race([delayPromise, cancelPromise]);
-        break;
-
-      case "sequence":
-        for (const step of n.steps) {
-          await runCancelable(step, context, token).promise;
-          if (token.cancelled()) return;
-        }
-        break;
-
-      case "parallel":
-        await Promise.all(n.steps.map((step) => runCancelable(step, context, token).promise));
-        break;
-
-      case "race":
-        await Promise.race(n.steps.map((step) => runCancelable(step, context, token).promise));
-        break;
-
-      case "condition":
-        const branch = n.if() ? n.then : n.else;
-        if (branch) await runCancelable(branch, context, token).promise;
-        break;
+  wait: async ({ node }) => {
+    await new Promise(res => setTimeout(res, node.ms));
+  },
+  drip: async ({ node }) => {
+    drip(node.stream)(node.value);
+  },
+  parallel: async ({ node, context, token, execute, run }) => {
+    await Promise.all(node.steps.map(step =>
+      execute(run(step), context, token)
+    ));
+  },
+  race: async ({ node, context, token, execute, run }) => {
+    const racers = node.steps.map(step => {
+      const racerToken = createCancelToken();
+      const combinedToken = {
+        cancelled: () => token.cancelled() || racerToken.cancelled(),
+        cancel: () => { token.cancel(); racerToken.cancel(); },
+      };
+      return {
+        promise: execute(run(step), context, combinedToken),
+        cancel: racerToken.cancel,
+      };
+    });
+    try {
+      await Promise.race(racers.map(r => r.promise));
+    } finally {
+      racers.forEach(r => r.cancel());
     }
-  })(node);
+  },
+  take: async ({ node, token }) => {
+    return await new Promise(resolve => {
+      const uninitiarized = Symbol("uninit");
+      const p = hold<any|typeof uninitiarized>(node.stream)(uninitiarized);
+      const unsub = listen(p)(val => {
+        unsub();
+        resolve(val);
+      });
+      if (token.cancelled()) {
+        unsub();
+        resolve(undefined);
+      }
+    });
+  },
+  condition: async ({ node, context, token, execute, run }) => {
+    const branch = node.if() ? node.then : node.else;
+    if (branch) {
+      await execute(run(branch), context, token);
+    }
+  },
+  loop: async ({ node, context, token, execute, run }) => {
+    while (!token.cancelled() && node.cond()) {
+      await execute(run(node.body), context, token);
+      await yieldToMainThread();
+    }
+  },
+  switch: async ({ node, context, token, execute, run }) => {
+    const key = node.by();
+    const branch = node.cases.get(key) ?? node.default;
+    if (branch) {
+      await execute(run(branch), context, token);
+    }
+  },
+  none: async () => {},
+  sequence: async ({ node, context, token, execute, run }) => {
+    for (const step of node.steps) {
+      await execute(run(step), context, token);
+    }
+  },
+};
 
-  return { promise, cancel: token.cancel };
+export async function execute(
+  generator: Generator<FxNode, void, any>,
+  context: IEffectContext = {
+    getContextValue:(key:string)=>context.hasOwnProperty(key) ? (context as IEffectContext & { [key:string]: any })[key] : undefined,
+    setRuntimeState:(state)=>Object.assign(context,state)
+  } as IEffectContext & { [key:string]: any },
+  token: CancelToken = createCancelToken()
+) {
+  let result = generator.next();
+  while (!result.done) {
+    const node = result.value;
+    const handler = fxHandlers[node.type] as (o:FxHandlerArg<typeof node.type>)=>void;
+    if (!handler) throw new Error(`Unhandled FxNode type: ${node.type}`);
+    const nextValue = await handler({ node, context, token, execute, run });
+    context.setRuntimeState({ lastResult: nextValue });
+    await yieldToMainThread();
+    result = generator.next(nextValue);
+  }
+  return { context, cancel: token.cancel };
+}
+
+/**
+ * 現在の処理を一旦中断し、後続の処理を新しいマイクロタスクとして予約するPromiseを返す。
+ * これにより、メインスレッドに一度処理を「譲る」ことができる。
+ */
+export function yieldToMainThread(): Promise<void> {
+  return new Promise(resolve => {
+    queueMicrotask(resolve);
+  });
 }

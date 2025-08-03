@@ -1,6 +1,6 @@
 // blooky-dom-types.d.ts
 
-import type { Prop } from "./blooky"; // Prop/Stream 型に合わせて
+import type { Prop } from "./blooky.old"; // Prop/Stream 型に合わせて
 
 // --- HTML属性名一覧
 export type HTMLAttrName =
@@ -79,7 +79,7 @@ export type JSHTMLNodeSource =
 // --- 要素本体型（補完付きタグ名＋カスタム要素名OK）
 export type JSHTMLElementSource = (
   {
-    [K in keyof HTMLElementTagNameMap]?: JSHTMLNodeSource;
+    [K in keyof HTMLElementTagNameMap]?: JSHTMLNodeSource | JSHTMLAttributeMapSource;
   } & {
     [customTag: string]: JSHTMLNodeSource | JSHTMLAttributeMapSource | undefined;
     $?: JSHTMLAttributeMapSource;
