@@ -4,7 +4,7 @@
  * 簡易な仕様でDOMを構築しつつ、Streamを利用した更新管理も行う。
  */
 import type { V_DATASET, V_STYLE, V_CLASSLIST, V_EVENTLISTENER, V_STRING, WritableCSSProperty, JSHTMLElementSource, JSHTMLAttrSource, JSHTMLNodeSource, JSHTMLAttributeMapSource } from "./blooky-dom-types";
-import { Stream, listen, Prop, stream, drip } from "./blooky";
+import { type Stream, listen, type Prop, stream, drip } from "./blooky";
 
 type T_ATTRSET = 
     ["dataset", V_DATASET]|
@@ -76,6 +76,7 @@ const gen_listener_setter =
         ? (e:EventTarget) => e.addEventListener(n.slice(2), v as EventListener)
         : (e:Element) => e.setAttribute(n,v+"");
 
+type JSHTMLExtractedElementSource = [tag: string, children: JSHTMLNodeSource, attrs?: JSHTMLAttributeMapSource];
 /**
  * 仕様に沿った要素を生成する
  * @param s 
@@ -103,15 +104,17 @@ const element = (s:JSHTMLElementSource) => {
  * @param s 
  * @returns 
  */
-const extractElementSource = (s:JSHTMLElementSource) : [string,JSHTMLNodeSource,JSHTMLAttributeMapSource?] => {
+const extractElementSource = (s:JSHTMLElementSource) : JSHTMLExtractedElementSource => {
     const tag = Object.keys(s).find((t)=>t !== "$");
     if(!tag) {
-        console.error("invalid tag name err: returned 'jshtml-unknown' tag");
+        console.error("invalid tag name err:", tag);
         return ["jshtml-unknown", null];
     }
     const children = s[tag] as JSHTMLNodeSource;
     const attrs = "$" in s ? (s.$ as JSHTMLAttributeMapSource) : undefined;
-    return [tag,children,attrs];
+    return !attrs && children instanceof EmptyElementAttributeMapSource
+        ? [tag,null,children.source]
+        : [tag,children,attrs];
 }
 
 /**
@@ -119,7 +122,7 @@ const extractElementSource = (s:JSHTMLElementSource) : [string,JSHTMLNodeSource,
  * @param s 
  * @returns 
  */
-const bind_node_stream = <T extends JSHTMLNodeSource>(s:Stream<T>|Prop<T>) => function f(p:[Node,Node]) {
+const bind_node_stream = <T extends JSHTMLNodeSource>(s:Prop<T>) => function f(p:[Node,Node]) {
     const unlisten = listen(s)((v) => {
         if(p.every((n)=>n.isConnected))
             f(update_range(p)(v));
@@ -238,6 +241,14 @@ function jshtml(s:JSHTMLNodeSource|Prop<JSHTMLNodeSource>): Node {
     }
     return element(s);
 }
+
+class EmptyElementAttributeMapSource {
+    source:JSHTMLAttributeMapSource
+    constructor(source:JSHTMLAttributeMapSource){
+        this.source = source;
+    }
+}
+jshtml.$ = (attrs: JSHTMLAttributeMapSource) => new EmptyElementAttributeMapSource(attrs);
 
 /**
  * MutationObserverを介して、DOMの変異をイベントストリームに接続する。
