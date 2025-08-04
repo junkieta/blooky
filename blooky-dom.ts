@@ -57,7 +57,7 @@ const gen_style_setter =
             (Object.entries(v) as [WritableCSSProperty,V_STRING|Prop<V_STRING>][]).forEach(([k,v]) => {
                 let _v = v;
                 if(typeof v === "function") {
-                    bind_style_stream(v)([e,k]);
+                    bind_style_prop(v)([e,k]);
                      _v = v();
                 }
                 e.style[k as any] = _v != null ? v + '' : ''
@@ -94,7 +94,7 @@ const element = (s:JSHTMLElementSource) => {
             else if(/^on.+/.test(k))
                 gen_listener_setter(v as V_EVENTLISTENER, k)(elm);
             else 
-                bind_attr_stream(v as Prop<JSHTMLAttrSource>)([elm,k]);
+                bind_attr_prop(v as Prop<JSHTMLAttrSource>)([elm,k]);
         })
     return elm;
 }
@@ -122,7 +122,7 @@ const extractElementSource = (s:JSHTMLElementSource) : JSHTMLExtractedElementSou
  * @param s 
  * @returns 
  */
-const bind_node_stream = <T extends JSHTMLNodeSource>(s:Prop<T>) => function f(p:[Node,Node]) {
+const bind_node_prop = <T extends JSHTMLNodeSource>(s:Prop<T>) => function f(p:[Node,Node]) {
     const unlisten = listen(s)((v) => {
         if(p.every((n)=>n.isConnected))
             f(update_range(p)(v));
@@ -136,7 +136,7 @@ const bind_node_stream = <T extends JSHTMLNodeSource>(s:Prop<T>) => function f(p
  * @param s 
  * @returns 
  */
-const bind_attr_stream = (p:Prop<JSHTMLAttrSource>) => ([e,n]:[HTMLElement,string]) => {
+const bind_attr_prop = (p:Prop<JSHTMLAttrSource>) => ([e,n]:[HTMLElement,string]) => {
     const unlisten = listen(p)((v) => {
         if(e.isConnected) {
             update_attr(e)([n,v] as T_ATTRSET);
@@ -151,7 +151,7 @@ const bind_attr_stream = (p:Prop<JSHTMLAttrSource>) => ([e,n]:[HTMLElement,strin
  * @param s 
  * @returns 
  */
-const bind_style_stream = (s:Prop<V_STRING>) => ([e,p]:[HTMLElement, WritableCSSProperty]) => {
+const bind_style_prop = (s:Prop<V_STRING>) => ([e,p]:[HTMLElement, WritableCSSProperty]) => {
     const unlisten = listen(s)((v) => {
         if(e.isConnected) {
             e.style[p] = v + "";
@@ -216,14 +216,14 @@ function jshtml(s:JSHTMLNodeSource|Prop<JSHTMLNodeSource>): Node {
     if(typeof s === "function") {
         const n = jshtml(s());
         if(n.nodeType !== n.DOCUMENT_FRAGMENT_NODE) {
-            bind_node_stream(s)([n,n]);
+            bind_node_prop(s)([n,n]);
         }
         else if(n.hasChildNodes()) {
-            bind_node_stream(s)([n.firstChild!,n.lastChild!]);
+            bind_node_prop(s)([n.firstChild!,n.lastChild!]);
         }
         else {
             const _n = new Comment("[jshtml::placeholder]");
-            bind_node_stream(s)([_n,_n]);
+            bind_node_prop(s)([_n,_n]);
             return _n;
         }
         return n;
