@@ -3,13 +3,15 @@
  * 関数型のリアクティブプログラミングをtypescriptで行うためのライブラリ。
  */
 
-import { execute, fx, run, type FxNode } from "./blooky-effect";
-
-const STREAM_FILTER = Symbol("STREAM_FILTER");
+// ガベージコレクタの格納プロパティ用シンボル
 const STREAM_CLEANER = Symbol("STREAM_CLEANER");
+
+/**
+ * Stream->Propの接続状況
+ */
 const STREAM_PROP_RELATIONS = new WeakMap<Stream<any>,Prop<any>[]>();
 /**
- * 値を運んでくるストリーム
+ * Prop->Streamの逆参照
  */
 const PROP_FROM = new WeakMap<Prop<any>, Stream<any>>();
 /**
@@ -27,38 +29,52 @@ const PROP_OBSERVERS = new WeakMap<Prop<any>, Set<(v:any,prev?:any)=>void>>();
  */
 type Stream<A> = {
     /**
-     * フィルタ。受け入れられる値かを判断する。
-     * @param v 
-     * @returns 
-     */
-    [STREAM_FILTER]: (v:A) => boolean
-
-    /**
      * ガベージコレクション
      * @returns 
      */
     [STREAM_CLEANER]?: ()=>void
-
     /**
      * 連結されたストリーム
      */
-    next: Map<Stream<any>,(v:A)=>any>
+    next: Set<MappedStream<any,A>|FilterStream<A>>
     /**
      * 連結先のうち、マージされる可能性のあるストリーム
      */
     lazyNext: Set<MergedStream<A>>
 };
 
-type MergedStream<A> = Stream<A> & { reducer: (a:A,b:A)=>A };
+
+const IS_DRIPPER = Symbol("IS_DRIPPER");
+
+type DripperStream<A> = Stream<A> & {
+    IS_DRIPPER: typeof IS_DRIPPER
+}
+type MergedStream<A> = Stream<A> & {
+    reducerFn: (a:A,b:A)=>A
+};
+type MappedStream<A,B> = Stream<A> & {
+    mapFn: (v:B)=>A
+};
+type FilterStream<A> = Stream<A> & { 
+    /**
+     * フィルタ。受け入れられる値かを判断する。
+     * @param v 
+     * @returns 
+     */
+    filterFn: (v:A)=>boolean 
+}
 
 /**
  * 連結したストリームを辿り、受け取った時変値の処理関数をまとめる
  */
-type FlowingState = [[MergedStream<any>,any][], (()=>void)[], (()=>void)[]];
+type FlowingState = [(()=>void)[], (()=>void)[], [MergedStream<any>,any][]];
 
 // 副作用の集合体
-type Effect = FlowingState;
-
+type Effect = {
+    created: number
+    observers: (()=>void)[]
+    updates: (()=>void)[]
+};
 /**
  * 時変値を返す関数の型。
  */
@@ -80,7 +96,7 @@ const clear = <A>(s: Stream<A>, recursive = true, visited = new WeakSet<Stream<a
     } else {
         visited.add(s);
         if(recursive) {
-            s.next.forEach((_, nextStream) => clear(nextStream, recursive, visited));
+            s.next.forEach((nextStream) => clear(nextStream, recursive, visited));
             s.lazyNext.forEach((nextStream) => clear(nextStream, recursive, visited));
         }
         if (s[STREAM_CLEANER]) s[STREAM_CLEANER]();
@@ -129,14 +145,11 @@ const cleanupRegistry =
 /**
  * ストリーム状態を生成する。
  */
-const stream = <A>(f: (v: A) => boolean = () => true): Stream<A> => {
-    if (typeof f !== 'function') {
-        throw new TypeError('STREAM_FUNCTOR must be a function');
-    }
-    const s: Stream<A> = {
-        [STREAM_FILTER]: f,
-        next: new Map(),
+const stream = <A>(): Stream<A> => {
+    const s: DripperStream<A> = {
+        next: new Set(),
         lazyNext: new Set(),
+        IS_DRIPPER
     };
     // StreamがGCされたら自動clear
     cleanupRegistry.register(s, new WeakRef(s));
@@ -144,13 +157,83 @@ const stream = <A>(f: (v: A) => boolean = () => true): Stream<A> => {
 };
 
 
+/**
+ * 二つ以上のイベントストリームを一つにまとめる
+ * @param s 
+ * @returns 
+ */
+const merge = <A> (f?:(a:A,b:A)=>A) => (s:Stream<A>[]) : MergedStream<A> => {
+    // マージ後のストリーム
+    const _s : MergedStream<A> = {
+        next: new Set(),
+        lazyNext: new Set(),
+        reducerFn: f || ((_,v) => v),
+        [STREAM_CLEANER]: () => {
+            s.forEach((s)=>s.lazyNext.delete(_s));
+        }
+    };
+    s.forEach((s)=>s.lazyNext.add(_s));
+    return _s;
+};
+
+/**
+ * イベントストリームから条件に合う値だけを取り出すストリームを生成する
+ * @param s 
+ * @returns 
+ */
+const filter = <A>(f:(v:A)=>boolean) => (s:Stream<A>) : FilterStream<A> => {
+    const _s: FilterStream<A> = {
+        filterFn: f,
+        next: new Set(),
+        lazyNext: new Set(),
+    };
+    cleanupRegistry.register(_s, new WeakRef(s));
+    return _s;
+}
+
+/**
+ * ストリームを別の流れに変換する
+ */
+const map = <A,B>(f:(v:B)=>A) => (p:Stream<B>) : MappedStream<A,B> => ({
+    mapFn: f,
+    next: new Set(),
+    lazyNext: new Set()
+});
+
+/**
+ * イベントストリームから一つの値を計算する
+ */
+const accum = <A>(_s:Stream<A>) => <S>(f:(v:A,s:S)=>S, s: S) : Prop<S> => {
+    const p: Prop<S> = hold(s)(map((v:A)=>f(v,p()))(_s));
+    return p;
+}
+
+/**
+ * 値を受け取るストリームをスイッチする
+ * @param ss 
+ * @returns 
+ */
+const shed = <A>(ss: Stream<Stream<A>>) => {
+    const o = stream<A>();
+    const p = hold(o)(ss);
+    const l = listen<Stream<A>>((s)=>{
+        (p().next as Set<Stream<A>>).delete(o);
+        (s.next as Set<Stream<A>>).add(o);
+    })(p);
+    o[STREAM_CLEANER] = () => {
+        (p().next as Set<Stream<A>>).delete(o);
+        l();
+    }
+    return o;
+}
 
 /**
  * 引数がストリームであるかを判別する。
  * @param v 
  * @returns 
  */
-const isStream = <A>(v:unknown) : v is Stream<A> => typeof v === "object" && v != null && STREAM_FILTER in v;
+const isStream = <A>(v:unknown) : v is Stream<A> => 
+    v != null && typeof v === "object" && "next" in v && "lazyNext" in v;
 
 /**
  * これくらいスムーズに書き下したいんだけど、せめて循環参照はチェックする
@@ -172,7 +255,7 @@ const countReferences = (s: Stream<any>, deep = false): Prop<number> => {
   const countDeep = (s: Stream<any>, visited: WeakSet<Stream<any>>): number => {
     if(visited.has(s)) return 0;
     visited.add(s);
-    return [...s.next.keys(), ...s.lazyNext].reduce((acc, child) => acc + countDeep(child, visited), countDirect(s));
+    return [...s.next, ...s.lazyNext].reduce((acc, child) => acc + countDeep(child, visited), countDirect(s));
   };
   return deep === true
     ? () => countDeep(s, new WeakSet())
@@ -196,7 +279,7 @@ const hasReferences = (s: Stream<any>, than = 0): boolean => {
         const o = STREAM_PROP_RELATIONS.get(current)!;
         if (o.length) count += o.length;
         if (count > than) return true;
-        stack.push(...current.next.keys(), ...current.lazyNext);
+        stack.push(...current.next, ...current.lazyNext);
     }
     return false;
 };
@@ -208,11 +291,11 @@ const hasReferences = (s: Stream<any>, than = 0): boolean => {
  */
 const streamToFlowingState = <A>(v:A) => (s:Stream<A>) : FlowingState => {
     const waiting = [...s.lazyNext].map((s) => [s,v] as [MergedStream<any>,any]);
-    if(!STREAM_PROP_RELATIONS.has(s)) return [waiting, [], []];
+    if(!STREAM_PROP_RELATIONS.has(s)) return [[], [], waiting];
     const p = STREAM_PROP_RELATIONS.get(s)!;
     const observers = p.map((p)=>PROP_OBSERVERS.has(p) ? ()=>[...PROP_OBSERVERS.get(p)!].forEach((o)=>o(v,p())) : ()=>{});
     const update   = p.map((p)=>PROP_UPDATE.has(p) ? ()=>PROP_UPDATE.get(p)!(v) : ()=>{});
-    return [waiting,observers,update];
+    return [update,observers,waiting];
 }
 /**
  * 二つのフロー状態を結合して単一のフロー状態とする
@@ -233,10 +316,10 @@ const concatFlowingState = (a:FlowingState, b:FlowingState) => [
  */
 const flow = <A>(v:A) => (s:Stream<A>) : FlowingState => {
     try {
-        return s[STREAM_FILTER](v)
-            ? [...s.next]
-                .map(([_s,f])=>flow(f(v))(_s))
-                .reduce(concatFlowingState, streamToFlowingState(v)(s))
+        const next = [...s.next].filter((s)=> !("filterFn" in s) || s.filterFn(v));
+        return next.length
+            ? next.map((_s) => flow("mapFn" in _s ? _s.mapFn(v) : v)(_s))
+              .reduce(concatFlowingState, streamToFlowingState(v)(s))
             : [[],[],[]];
     } catch (error) {
         console.error('Error in flow function:', error);
@@ -251,7 +334,7 @@ const flow = <A>(v:A) => (s:Stream<A>) : FlowingState => {
  */
 const flowLazy = <A>(v:A) => (s:Stream<A>) : FlowingState => {
     const r = flow(v)(s);
-    const [waiting,observers,updates] = r;
+    const [updates,observers,waiting] = r;
     // マージされたストリームとはつながっていない
     if(!waiting.length) return r;
     // マージされたストリーム毎に、到着した値をリスト化する
@@ -260,132 +343,26 @@ const flowLazy = <A>(v:A) => (s:Stream<A>) : FlowingState => {
         return m;
     }, new Map<MergedStream<any>,any[]>());
     // ストリーム毎のreducerを呼んだ上で通常のstreamとしてflowする
-    return [...m].map(([s,v])=>flowLazy(v.reduce(s.reducer))(s)).reduce(concatFlowingState, [[],observers,updates]);
+    return [...m].map(([s,v])=>flowLazy(v.reduce(s.reducerFn))(s)).reduce(concatFlowingState, [updates,observers,[]]);
 }
 
+
 /**
- * 起点となるストリームに時変値を流し込み、関連するオブザーバの呼び出しと時変値の更新を行う。
+ * 起点となるストリームに時変値を流し込み、関連するオブザーバの呼び出しと時変値で構成されたEffectを返す。
  * @param s 
  * @returns 
  */
-
-// 1. Stream<void>用のオーバーロードシグネチャ
-// 引数を取らない関数を返すことを明記
-function drip(s: Stream<void>): () => Effect;
-
-// 2. それ以外の汎用的なStream<A>用のオーバーロードシグネチャ
-// 型Aの引数を1つ取る関数を返すことを明記
-function drip<A>(s: Stream<A>): (v: A) => Effect;
-
-// 関数本体
-function drip<A>(s: Stream<A>) {
-    const dripFn = (v: A) => {
-        execute(run(dripEffectToFxNodeSaga(flowLazy(v)(s))));
-    };
-    // drip関数に、atomicモードで実行するメソッドを生やす
-    dripFn.atomic = (v: A) => {
-        execute(run(dripEffectToFxNodeAtomic(flowLazy(v)(s))));
-    };
-    return dripFn as any; // 型推論を助けるためにanyにキャストするが、関数のシグネチャが型安全性を保証する
+const drip = <A>(v:A) => (d:DripperStream<A>) : Effect => {
+    const [observers,updates] = flowLazy(v)(d);
+    return {observers,updates,created:Date.now()};
 };
-
-// drip-Atomicモード：全処理を一つのfx.callにまとめる
-const dripEffectToFxNodeAtomic = ([_,observers,updates]: Effect) => fx.call(() => {
-    if(dripEffectToFxNodeAtomic.observerPhase) { console.error("drip.observerPhase is true: observer recursion called"); return; };
-    dripEffectToFxNodeAtomic.observerPhase = true;
-    observers.forEach((f)=>f());
-    dripEffectToFxNodeAtomic.observerPhase = false;
-    updates.forEach(f => f());
-});
-// adomicモードのdrip時に参照する。drip再帰を防ぐトラップ
-dripEffectToFxNodeAtomic.observerPhase = false;
-
-// drip-Sagaモード：詳細なFxNodeツリーを構築
-const dripEffectToFxNodeSaga = ([_,observers,updates]: Effect) => {
-    const observerNodes = observers.map(fx.call);
-    const updateNodes = updates.map(fx.call);
-    return fx.sequence([
-      fx.parallel(observerNodes),
-      fx.parallel(updateNodes),
-    ]);
-};
-
-/**
- * 二つ以上のイベントストリームを一つにまとめる
- * @param s 
- * @returns 
- */
-const merge = <A> (s:Stream<A>[]) => (f?:(a:A,b:A)=>A) : MergedStream<A> => {
-    // マージ後のストリーム
-    const _s = stream() as MergedStream<A>;
-    _s.reducer = f || ((_,v) => v);
-    _s[STREAM_CLEANER] = () => {
-        s.forEach((s)=>s.lazyNext.delete(_s));
-    };
-    s.forEach((s)=>s.lazyNext.add(_s));
-    return _s;
-};
-
-/**
- * ストリームを分岐させる
- * @param s 
- * @returns 
- */
-const pipe = <A>(s:Stream<A>) => <B>(f:(v:A)=>B) : Stream<B> => {
-    if (typeof f !== 'function') {
-        throw new TypeError('pipe function must be a function');
-    }
-    const _s = stream<B>();
-    _s[STREAM_CLEANER] = () => s.next.delete(_s);
-    s.next.set(_s, f);
-    return _s;
-}
-
-/**
- * プロパティを別プロパティに変換する
- */
-const map = <A>(p:Prop<A>) => <B>(f:(v:A,p?:A)=>B) => 
-    PROP_FROM.has(p)
-        ? hold(pipe(PROP_FROM.get(p)!)((v:A)=>f(v,p())))(f(p()))
-        : ()=>f(p());
-
-/**
- * 時変値に関数を適用して新しい時変値を作る
- * @param c 
- * @returns 
- */
-const lift = <A>(props: Prop<any>[]) => (f: (values: any[]) => A): Prop<A> => {
-  const valueFn = () => f(props.map(p => p()));
-  // Streamを持っているPropだけを集める
-  const streams = props.flatMap((p, i) => PROP_FROM.has(p) ? pipe(PROP_FROM.get(p)!)((v) => [[i, v]] as [number, any][]) : []);
-  const mergedStream = merge(streams)((a, b) => a.concat(b));
-  const transformed = pipe(mergedStream)((updates) => {
-    const map = new Map(updates);
-    return f(props.map((p, i) => map.has(i) ? map.get(i)! : p()));
-  });
-  transformed[STREAM_CLEANER] = () => {
-    streams.forEach((s)=>clear(s));
-  };
-  return hold(transformed)(valueFn());
-};
-
-/**
- * イベントストリームから条件に合う値だけを取り出すストリームを生成する
- * @param s 
- * @returns 
- */
-const filter = <A>(s:Stream<A>) => (f:(v:A)=>boolean): Stream<A> => {
-    const _s = stream(f);
-    s.next.set(_s,parrot);
-    return _s;
-}
 
 /**
  * イベントストリームからプロパティを作る
  * @param s 
  * @returns 
  */
-const hold = <A>(s:Stream<A>) => (v:A) : Prop<A> => {
+const hold = <A>(v:A) => (s:Stream<A>): Prop<A> => {
     const p = (() => v) as Prop<A>;
     PROP_FROM.set(p, s);
     PROP_UPDATE.set(p, (_v) => v = _v);
@@ -396,9 +373,40 @@ const hold = <A>(s:Stream<A>) => (v:A) : Prop<A> => {
 }
 
 /**
+ * プロパティを別プロパティに変換する
+ */
+const remap = <A,B>(f:(v:B,p?:B)=>A) => (p:Prop<B>) : Prop<A> => 
+    PROP_FROM.has(p)
+        ? hold(f(p()))(PROP_FROM.get(p)!)
+        : ()=>f(p());
+
+
+/**
+ * 時変値に関数を適用して新しい時変値を作る
+ * @param c 
+ * @returns 
+ */
+const lift = <A>(f: (values: any[]) => A) => (props: Prop<any>[]) : Prop<A> => {
+  type reservation = [number, any];
+  const valueFn = () => f(props.map(p => p()));
+  // Streamを持っているPropだけを集める
+  const streams = props.flatMap((p, i) => PROP_FROM.has(p) ? map((v) => [[i, v]] as reservation[])(PROP_FROM.get(p)!) : []);
+  const mergedStream = merge<reservation[]>((a, b) => a.concat(b))(streams);
+  const transformed = map((updates: reservation[]) => {
+    const map = new Map(updates);
+    return f(props.map((p, i) => map.has(i) ? map.get(i)! : p()));
+  })(mergedStream);
+  transformed[STREAM_CLEANER] = () => {
+    streams.forEach((s)=>clear(s));
+  };
+  return hold(valueFn())(transformed);
+};
+
+
+/**
  * Propにオブザーバーを登録する
  */
-const listen = <A>(p:Prop<A>) => function (f:(v:A,s?:A)=>void, options?: { immediate?: A }) : ()=>void {
+const listen = <A>(f:(v:A,s?:A)=>void, options?: { immediate?: A }) => (p:Prop<A>) => {
     if(!PROP_OBSERVERS.has(p)) return ()=>{};
     const observers = PROP_OBSERVERS.get(p)!;
     observers.add((v:A)=>f(v,p()));
@@ -406,33 +414,6 @@ const listen = <A>(p:Prop<A>) => function (f:(v:A,s?:A)=>void, options?: { immed
     if(options && "immediate" in options) f(p(), options.immediate);
     return unsubscribe;
 };
-
-/**
- * イベントストリームから一つの値を計算する
- */
-const accum = <A>(_s:Stream<A>) => <S>(f:(v:A,s:S)=>S, s: S) : Prop<S> => {
-    const p: Prop<S> = hold(pipe(_s)((v:A)=>f(v,p())))(s);
-    return p;
-}
-
-/**
- * 値を受け取るストリームをスイッチする
- * @param ss 
- * @returns 
- */
-const shed = <A>(ss: Stream<Stream<A>>) => {
-    const o = stream<A>();
-    const p = hold(ss)(o);
-    const l = listen(p)((s)=>{
-        p().next.delete(o);
-        s.next.set(o,parrot);
-    });
-    o[STREAM_CLEANER] = () => {
-        p().next.delete(o);
-        l();
-    }
-    return o;
-}
 
 /**
  * moments.framecountのファンクタに渡される状態変数。
@@ -499,15 +480,15 @@ const moments = {} as moments; {
     });
     const tickStateStream = (f?:(s:MomentState)=>boolean): MomentStream => {
         const started = now();
-        const s = pipe(globalTickStream)((n:number): MomentState => nextState(p())(n));
-        const _s = (f ? filter(s)(f) : s) as MomentStream;
-        const p = hold(_s)({
+        const s = map((n:number): MomentState => nextState(p())(n))(globalTickStream);
+        const _s = (f ? filter(f)(s) : s) as Stream<MomentState> as MomentStream;
+        const p = hold({
             started,
             now: started,
             elapsed: 0,
             deltaTime: 0,
             count: 0
-        });
+        })(_s);
         _s[STREAM_CLEANER] = ()=>{
             globalTickStream.next.delete(s);
         }
@@ -521,7 +502,7 @@ const moments = {} as moments; {
     const globalTickStream = stream<number>();
     const tick = (t:number) => {
         if(!hasReferences(globalTickStream)) return;
-        const [_,observers,updates] = flowLazy(t)(globalTickStream);
+        const [observers,updates] = flowLazy(t)(globalTickStream);
         observers.forEach(f => f());
         updates.forEach(f => f());
         if(hasReferences(globalTickStream))
@@ -549,14 +530,12 @@ const moments = {} as moments; {
         ? (limit: number = Infinity) => {
             if(!hasReferences(globalTickStream)) requestAnimationFrame(tick);
             const s = tickStateStream(limit === Infinity ? undefined : ({count})=>count<=limit);
-            if(limit) listen(STREAM_PROP_RELATIONS.get(s)![0])(({count})=>{
-                if(count===limit) s.disconnect();
-            })
+            if(limit) listen(({count}:{count:number})=>{ if(count===limit) s.disconnect(); })(STREAM_PROP_RELATIONS.get(s)![0]);
             return s;
         }
         : (_:number) => {throw new Error('moments.framecount function need "requestAnimationFrame" function')};
 
 }
 
-export {stream,isStream,countReferences,hasReferences,clear,hold,accum,lift,merge,pipe,map,filter,listen,drip,shed,moments};
-export type {Stream,MergedStream,MomentState,MomentStream,Prop};
+export {drip,stream,isStream,countReferences,hasReferences,clear,hold,accum,lift,merge,map,remap,filter,listen, shed,moments};
+export type {Stream,FilterStream,MappedStream,MergedStream,DripperStream,MomentState,MomentStream,Prop,Effect};
