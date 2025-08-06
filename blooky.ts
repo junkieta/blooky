@@ -171,6 +171,7 @@ const merge = <A> (f?:(a:A,b:A)=>A) => (s:Stream<A>[]) : MergedStream<A> => {
         }
     };
     s.forEach((s)=>s.lazyNext.add(_s));
+    cleanupRegistry.register(_s, new WeakRef(_s));
     return _s;
 };
 
@@ -192,11 +193,16 @@ const filter = <A>(f:(v:A)=>boolean) => (s:Stream<A>) : FilterStream<A> => {
 /**
  * ストリームを別の流れに変換する
  */
-const map = <A,B>(f:(v:B)=>A) => (p:Stream<B>) : MappedStream<A,B> => ({
-    mapFn: f,
-    next: new Set(),
-    lazyNext: new Set()
-});
+const map = <A,B>(f:(v:B)=>A) => (s:Stream<B>) : MappedStream<A,B> => {
+    const _s: MappedStream<A,B> = {
+        mapFn: f,
+        next: new Set(),
+        lazyNext: new Set()
+    };
+    s.next.add(_s);
+    cleanupRegistry.register(_s, new WeakRef(_s));
+    return _s;
+};
 
 /**
  * イベントストリームから一つの値を計算する
