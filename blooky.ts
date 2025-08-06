@@ -18,10 +18,6 @@ const PROP_FROM = new WeakMap<Prop<any>, Stream<any>>();
  * Propの値を更新する
  */
 const PROP_UPDATE = new WeakMap<Prop<any>, (v:any)=>void>();
-/**
- * イベントの発生を検知するオブザーバ
- */
-const PROP_OBSERVERS = new WeakMap<Prop<any>, Set<(v:any,prev?:any)=>void>>();
 
 /**
  * ストリームの状態定義。
@@ -67,14 +63,18 @@ type FilterStream<A> = Stream<A> & {
 /**
  * 連結したストリームを辿り、受け取った時変値の処理関数をまとめる
  */
-type FlowingState = [(()=>void)[], (()=>void)[], [MergedStream<any>,any][]];
+type FlowingState = [PropEffect<unknown>[], [MergedStream<any>,any][]];
 
 // 副作用の集合体
-type Effect = {
+type Effect = PropEffect<unknown>[];
+
+type PropEffect<A> = {
     created: number
-    observers: (()=>void)[]
-    updates: (()=>void)[]
-};
+    prop: Prop<A>
+    nextValue: A
+    update: (v:A)=>void
+}
+
 /**
  * 時変値を返す関数の型。
  */
@@ -105,7 +105,6 @@ const clear = <A>(s: Stream<A>, recursive = true, visited = new WeakSet<Stream<a
         if(STREAM_PROP_RELATIONS.has(s)) {
             STREAM_PROP_RELATIONS.get(s)!.forEach((p)=>{
                 PROP_FROM.delete(p);
-                PROP_OBSERVERS.delete(p);
                 PROP_UPDATE.delete(p);
             });
             STREAM_PROP_RELATIONS.delete(s);
@@ -126,7 +125,6 @@ const cleanupRegistry =
             arr.splice(arr.indexOf(v), 1);
             if(!arr.length) STREAM_PROP_RELATIONS.delete(from);
             PROP_FROM.delete(v);
-            PROP_OBSERVERS.delete(v);
             PROP_UPDATE.delete(v);
         } else {
             clear(v, false);
@@ -145,7 +143,7 @@ const cleanupRegistry =
 /**
  * ストリーム状態を生成する。
  */
-const stream = <A>(): Stream<A> => {
+const stream = <A>() => {
     const s: DripperStream<A> = {
         next: new Set(),
         lazyNext: new Set(),
@@ -208,24 +206,6 @@ const accum = <A>(_s:Stream<A>) => <S>(f:(v:A,s:S)=>S, s: S) : Prop<S> => {
     return p;
 }
 
-/**
- * 値を受け取るストリームをスイッチする
- * @param ss 
- * @returns 
- */
-const shed = <A>(ss: Stream<Stream<A>>) => {
-    const o = stream<A>();
-    const p = hold(o)(ss);
-    const l = listen<Stream<A>>((s)=>{
-        (p().next as Set<Stream<A>>).delete(o);
-        (s.next as Set<Stream<A>>).add(o);
-    })(p);
-    o[STREAM_CLEANER] = () => {
-        (p().next as Set<Stream<A>>).delete(o);
-        l();
-    }
-    return o;
-}
 
 /**
  * 引数がストリームであるかを判別する。
@@ -236,30 +216,21 @@ const isStream = <A>(v:unknown) : v is Stream<A> =>
     v != null && typeof v === "object" && "next" in v && "lazyNext" in v;
 
 /**
- * これくらいスムーズに書き下したいんだけど、せめて循環参照はチェックする
- * 
-const countReferences = (s:Stream<any>,deep = false) => 
-    deep === true
-    ? [...s.next.keys(),...s.lazyNext].reduce((n,s)=> n + _countReferences(s,deep)(), s.updates.size + s.observers.size)
-    : s.updates.size + s.observers.size
- */
-
-/**
  * ストリームがオブザーバかプロパティによってどれだけ参照されているかを調べる
  * @param s 
  * @returns 
  */
 const countReferences = (s: Stream<any>, deep = false): Prop<number> => {
   if (!isStream(s)) throw new TypeError("countReferences requires Stream");
-  const countDirect = (s: Stream<any>) => STREAM_PROP_RELATIONS.has(s) ? STREAM_PROP_RELATIONS.get(s)!.length : 0;
-  const countDeep = (s: Stream<any>, visited: WeakSet<Stream<any>>): number => {
+  const count = (s: Stream<any>) => STREAM_PROP_RELATIONS.has(s) ? STREAM_PROP_RELATIONS.get(s)!.length : 0;
+  const count_deep = (s: Stream<any>, visited: WeakSet<Stream<any>>): number => {
     if(visited.has(s)) return 0;
     visited.add(s);
-    return [...s.next, ...s.lazyNext].reduce((acc, child) => acc + countDeep(child, visited), countDirect(s));
+    return [...s.next, ...s.lazyNext].reduce((acc, child) => acc + count_deep(child, visited), count(s));
   };
   return deep === true
-    ? () => countDeep(s, new WeakSet())
-    : () => countDirect(s);
+    ? () => count_deep(s, new WeakSet())
+    : () => count(s);
 };
 
 
@@ -291,23 +262,19 @@ const hasReferences = (s: Stream<any>, than = 0): boolean => {
  */
 const streamToFlowingState = <A>(v:A) => (s:Stream<A>) : FlowingState => {
     const waiting = [...s.lazyNext].map((s) => [s,v] as [MergedStream<any>,any]);
-    if(!STREAM_PROP_RELATIONS.has(s)) return [[], [], waiting];
+    if(!STREAM_PROP_RELATIONS.has(s)) return [[], waiting];
     const p = STREAM_PROP_RELATIONS.get(s)!;
-    const observers = p.map((p)=>PROP_OBSERVERS.has(p) ? ()=>[...PROP_OBSERVERS.get(p)!].forEach((o)=>o(v,p())) : ()=>{});
-    const update   = p.map((p)=>PROP_UPDATE.has(p) ? ()=>PROP_UPDATE.get(p)!(v) : ()=>{});
-    return [update,observers,waiting];
+    const created = Date.now();
+    const effect: Effect = p.map((prop)=>({
+        prop,
+        created,
+        nextValue: v,
+        update: PROP_UPDATE.has(prop) ? ()=>PROP_UPDATE.get(prop)!(v) : ()=>{}
+    }));
+    return [effect,waiting];
 }
-/**
- * 二つのフロー状態を結合して単一のフロー状態とする
- * @param a 
- * @param b 
- * @returns 
- */
-const concatFlowingState = (a:FlowingState, b:FlowingState) => [
-    a[0].concat(b[0]),
-    a[1].concat(b[1]),
-    a[2].concat(b[2])
-] as FlowingState;
+
+const concatTuple = <T extends any[][]>(a: T, b: T): T => a.map((x, i) => x.concat(b[i])) as T;
 
 /**
  * 時変値を受け取って指定のストリームからフローを開始、開始されたフロー状態を返す。
@@ -319,11 +286,11 @@ const flow = <A>(v:A) => (s:Stream<A>) : FlowingState => {
         const next = [...s.next].filter((s)=> !("filterFn" in s) || s.filterFn(v));
         return next.length
             ? next.map((_s) => flow("mapFn" in _s ? _s.mapFn(v) : v)(_s))
-              .reduce(concatFlowingState, streamToFlowingState(v)(s))
-            : [[],[],[]];
+              .reduce(concatTuple, streamToFlowingState(v)(s))
+            : [[],[]];
     } catch (error) {
         console.error('Error in flow function:', error);
-        return [[],[],[]]; // エラー時のデフォルト状態を返す
+        return [[],[]]; // エラー時のデフォルト状態を返す
     }
 }
 
@@ -334,7 +301,7 @@ const flow = <A>(v:A) => (s:Stream<A>) : FlowingState => {
  */
 const flowLazy = <A>(v:A) => (s:Stream<A>) : FlowingState => {
     const r = flow(v)(s);
-    const [updates,observers,waiting] = r;
+    const [updates,waiting] = r;
     // マージされたストリームとはつながっていない
     if(!waiting.length) return r;
     // マージされたストリーム毎に、到着した値をリスト化する
@@ -343,7 +310,7 @@ const flowLazy = <A>(v:A) => (s:Stream<A>) : FlowingState => {
         return m;
     }, new Map<MergedStream<any>,any[]>());
     // ストリーム毎のreducerを呼んだ上で通常のstreamとしてflowする
-    return [...m].map(([s,v])=>flowLazy(v.reduce(s.reducerFn))(s)).reduce(concatFlowingState, [updates,observers,[]]);
+    return [...m].map(([s,v])=>flowLazy(v.reduce(s.reducerFn))(s)).reduce(concatTuple, [updates,[]]);
 }
 
 
@@ -352,10 +319,7 @@ const flowLazy = <A>(v:A) => (s:Stream<A>) : FlowingState => {
  * @param s 
  * @returns 
  */
-const drip = <A>(v:A) => (d:DripperStream<A>) : Effect => {
-    const [observers,updates] = flowLazy(v)(d);
-    return {observers,updates,created:Date.now()};
-};
+const drip = <A>(v:A) => (d:DripperStream<A>) : Effect => flowLazy(v)(d)![0];
 
 /**
  * イベントストリームからプロパティを作る
@@ -366,7 +330,6 @@ const hold = <A>(v:A) => (s:Stream<A>): Prop<A> => {
     const p = (() => v) as Prop<A>;
     PROP_FROM.set(p, s);
     PROP_UPDATE.set(p, (_v) => v = _v);
-    PROP_OBSERVERS.set(p, new Set());
     STREAM_PROP_RELATIONS.set(s, STREAM_PROP_RELATIONS.has(s) ? [...STREAM_PROP_RELATIONS.get(s)!,p] : [p]);
     cleanupRegistry.register(p, new WeakRef(p));
     return p;
@@ -402,18 +365,46 @@ const lift = <A>(f: (values: any[]) => A) => (props: Prop<any>[]) : Prop<A> => {
   return hold(valueFn())(transformed);
 };
 
+const NotThen = Symbol("NotThen");
+interface PromisedProp<T> extends PromiseLike<T> {
+    () : T|typeof NotThen
+};
+
+const when = <A>(predicate: (v: A) => boolean) => (p: Prop<A>): PromisedProp<A> => {
+    // 1. まず現在の値で条件をチェックする
+    const current = p();
+    if (predicate(current))
+        return Object.assign(()=>current, { then(onfulfilled) { onfulfilled!(current) } } as PromiseLike<A>);
+    // 2. Propの源流となるStreamを`PROP_FROM`から取得
+    const source = PROP_FROM.get(p);
+    if (!source) return Object.assign(()=>NotThen, { then(){} } as PromiseLike<A>); 
+    // 3. 解決されうるPromisedPropを生成する
+    let thenOrNotThen : A|typeof NotThen = NotThen;
+    const _s = filter(predicate)(source);
+    const _p = (()=>thenOrNotThen) as PromisedProp<A>;
+    STREAM_PROP_RELATIONS.set(_s,[_p]);
+    cleanupRegistry.register(_p,new WeakRef(_p));
+    const promise = new Promise<A>((resolve)=>PROP_UPDATE.set(_p,resolve));
+    promise.then(()=>clear(_s));
+    promise.then((_v)=>thenOrNotThen=_v);
+    _p.then = promise.then.bind(promise);
+    return _p;
+};
 
 /**
- * Propにオブザーバーを登録する
+ * Streamからは次の値を、Propからは現在の値を取得し、それを解決するPromiseを返す。
+ * whenのショートコードで、次回分のみのPromiseを取得する
+ * @param source 取得元となるStreamまたはProp
  */
-const listen = <A>(f:(v:A,s?:A)=>void, options?: { immediate?: A }) => (p:Prop<A>) => {
-    if(!PROP_OBSERVERS.has(p)) return ()=>{};
-    const observers = PROP_OBSERVERS.get(p)!;
-    observers.add((v:A)=>f(v,p()));
-    const unsubscribe = observers.delete.bind(observers, f);
-    if(options && "immediate" in options) f(p(), options.immediate);
-    return unsubscribe;
-};
+export function resolve<A>(source: Stream<A> | PromisedProp<A> | Prop<A>): PromiseLike<A> {
+  // typeofでProp（関数）かStream（オブジェクト）かを判別
+  if (typeof source === 'function') return "then" in source ? source : Promise.resolve(source());
+  const prop=(()=>{}) as Prop<A>;
+  STREAM_PROP_RELATIONS.set(source,STREAM_PROP_RELATIONS.has(source) ? STREAM_PROP_RELATIONS.get(source)!.concat(prop) : [prop]);
+  return new Promise(resolvePromise => PROP_UPDATE.set(prop,resolvePromise));
+}
+
+
 
 /**
  * moments.framecountのファンクタに渡される状態変数。
@@ -502,9 +493,10 @@ const moments = {} as moments; {
     const globalTickStream = stream<number>();
     const tick = (t:number) => {
         if(!hasReferences(globalTickStream)) return;
-        const [observers,updates] = flowLazy(t)(globalTickStream);
-        observers.forEach(f => f());
-        updates.forEach(f => f());
+        const [effects] = flowLazy(t)(globalTickStream);
+        effects.forEach((effect)=>{
+            effect.update(effect.nextValue);
+        });
         if(hasReferences(globalTickStream))
             requestAnimationFrame(tick);
     };
@@ -512,7 +504,7 @@ const moments = {} as moments; {
     moments.timeout = (ms:number = 0) => {
         if(!hasReferences(globalTickStream)) requestAnimationFrame(tick);
         const s = tickStateStream(({elapsed})=>ms <= elapsed);
-        listen(STREAM_PROP_RELATIONS.get(s)![0])(s.disconnect);
+        resolve(s).then(s.disconnect);
         return s;
     };
 
@@ -520,9 +512,7 @@ const moments = {} as moments; {
         if(!hasReferences(globalTickStream)) requestAnimationFrame(tick);
         const s = tickStateStream(({deltaTime})=>deltaTime >= ms);
         const c = countReferences(s,true)() + 1;
-        listen(STREAM_PROP_RELATIONS.get(s)![0])(()=>{
-            if(!hasReferences(s,c)) s.disconnect();
-        });
+        when(()=>!hasReferences(s,c))(STREAM_PROP_RELATIONS.get(s)![0]).then(s.disconnect);
         return s;
     };
 
@@ -530,12 +520,12 @@ const moments = {} as moments; {
         ? (limit: number = Infinity) => {
             if(!hasReferences(globalTickStream)) requestAnimationFrame(tick);
             const s = tickStateStream(limit === Infinity ? undefined : ({count})=>count<=limit);
-            if(limit) listen(({count}:{count:number})=>{ if(count===limit) s.disconnect(); })(STREAM_PROP_RELATIONS.get(s)![0]);
+            if(limit) when(({count}:MomentState)=>count===limit)(STREAM_PROP_RELATIONS.get(s)![0]).then(s.disconnect);
             return s;
         }
         : (_:number) => {throw new Error('moments.framecount function need "requestAnimationFrame" function')};
 
 }
 
-export {drip,stream,isStream,countReferences,hasReferences,clear,hold,accum,lift,merge,map,remap,filter,listen, shed,moments};
+export {drip,stream,isStream,countReferences,hasReferences,clear,hold,accum,merge,map,filter,lift,remap,when,moments};
 export type {Stream,FilterStream,MappedStream,MergedStream,DripperStream,MomentState,MomentStream,Prop,Effect};
