@@ -1,6 +1,6 @@
 // blooky-effect.ts
 import type { Prop, Stream } from "./blooky";
-import { drip, hold, listen } from "./blooky";
+import { drip, hold, resolve, when } from "./blooky";
 
 //
 // 型定義
@@ -135,30 +135,8 @@ export function createCancelToken(): CancelToken {
   };
 }
 
-
 export function* run(node: FxNode): Generator<FxNode, void, any> {
-  switch (node.type) {
-    case "none":
-      break;
-    case 'sequence':
-      for (const step of node.steps) {
-        yield* run(step); // yield*で別のGeneratorに処理を委譲
-      }
-      break;
-    default:
-/* 
-    case 'condition':
-    case 'call':
-    case 'delay':
-    case 'drip':
-    case 'switch':
-    case 'take':
-    case "parallel":
-    case "race":
-*/
-      yield node; // executeの必要なノードはそのままyieldする
-      break;
-  }
+  yield node; // executeの必要なノードはそのままyieldする
 }
 
 export type FxHandlerArg<K extends FxNode["type"]> = {
@@ -205,19 +183,8 @@ export const fxHandlers: FxHandlerMap = {
       racers.forEach(r => r.cancel());
     }
   },
-  take: async ({ node, token }) => {
-    return await new Promise(resolve => {
-      const uninitiarized = Symbol("uninit");
-      const p = hold<any|typeof uninitiarized>(node.stream)(uninitiarized);
-      const unsub = listen(p)(val => {
-        unsub();
-        resolve(val);
-      });
-      if (token.cancelled()) {
-        unsub();
-        resolve(undefined);
-      }
-    });
+  take: async ({ node }) => {
+    await resolve(node.stream);
   },
   condition: async ({ node, context, token, execute, run }) => {
     const branch = node.if() ? node.then : node.else;
@@ -241,9 +208,10 @@ export const fxHandlers: FxHandlerMap = {
   none: async () => {},
   sequence: async ({ node, context, token, execute, run }) => {
     for (const step of node.steps) {
+      if (token.cancelled()) break;
       await execute(run(step), context, token);
     }
-  },
+  },  
 };
 
 export async function execute(
