@@ -222,6 +222,14 @@ const isStream = <A>(v:unknown) : v is Stream<A> =>
     v != null && typeof v === "object" && "next" in v && "lazyNext" in v;
 
 /**
+ * 引数がドリッパーであるかを判別する。
+ * @param v 
+ * @returns 
+ */
+const isDripperStream = <A>(v:unknown) : v is DripperStream<A> =>
+    isStream<A>(v) && v[IS_DRIPPER] === IS_DRIPPER;
+
+/**
  * ストリームがオブザーバかプロパティによってどれだけ参照されているかを調べる
  * @param s 
  * @returns 
@@ -541,5 +549,5 @@ const moments = {} as moments; {
 
 }
 
-export {drip,stream,isStream,countReferences,hasReferences,clear,hold,accum,merge,map,filter,lift,remap,when,resolve,clock,moments};
+export {drip,stream,isStream,isDripperStream,countReferences,hasReferences,clear,hold,accum,merge,map,filter,lift,remap,when,resolve,clock,moments};
 export type {Stream,FilterStream,MappedStream,MergedStream,DripperStream,MomentState,MomentStream,Prop,Effect};

@@ -16,7 +16,7 @@ type T_ATTRSET =
 const PROP_OBSERVERS = new WeakMap<Prop<any>,Set<(next:any,prev:any)=>void>>();
 
 // effectの発動時にlistenerを組み込んだ上で即時dripする
-const dripper = <A>(d: DripperStream<A>) => (v: A) => {
+const into = <A>(d: DripperStream<A>) => (v: A) => {
     drip(v)(d).forEach(({update,nextValue,prop})=>{
         if(PROP_OBSERVERS.has(prop)) PROP_OBSERVERS.get(prop)!.forEach((f)=>f(nextValue, prop()));
         update(nextValue);
@@ -273,7 +273,7 @@ jshtml.$ = (attrs: JSHTMLAttributeMapSource) => new EmptyElementAttributeMapSour
  */
 const mutations = (n: Node) => (init: MutationObserverInit) : [Stream<MutationRecord[]>,()=>void] => {
     const s = stream<MutationRecord[]>();
-    const o = new MutationObserver(dripper(s));
+    const o = new MutationObserver(into(s));
     o.observe(n, init);
     return [s, o.disconnect.bind(o)];
 };
@@ -285,7 +285,7 @@ const mutations = (n: Node) => (init: MutationObserverInit) : [Stream<MutationRe
  */
 const events = (target:EventTarget) => <T extends string, E = T extends keyof HTMLElementEventMap ? HTMLElementEventMap[T] : Event>(t: T) : [Stream<E>,()=>void] => {
     const s = stream<E>();
-    const l = dripper(s) as EventListener;
+    const l = into(s) as EventListener;
     target.addEventListener(t, l, false);
     return [s, target.removeEventListener.bind(target,t,l,false)];
 }
@@ -319,6 +319,6 @@ const jshtmlWithPrefixAuto = (prefix: string) => (node: JSHTMLNodeSource): Node 
     return jshtml(mappedNode);
 };
 
-export {dripper, jshtml, mutations, events, jshtmlWithPrefixAuto};
+export {into, jshtml, mutations, events, jshtmlWithPrefixAuto};
 
 

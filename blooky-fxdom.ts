@@ -1,6 +1,6 @@
 // blooky-fxdom.ts
 
-import { isStream, type Prop, type Stream } from "./blooky";
+import { isDripperStream, isStream, type Prop, type Stream } from "./blooky";
 import { jshtml } from "./blooky-dom";
 import { execute, fx, run, type FxDispatchOptions, type FxNode, type IEffectContext } from "./blooky-effect"; // assume effect-core exists
 
@@ -292,7 +292,7 @@ class FxDrip extends EffectElement {
 
     // 2. コンテキストから指定されたStreamを探す
     const stream = this.resolveContextValue(streamKey);
-    if (!isStream(stream)) {
+    if (!isDripperStream(stream)) {
         console.warn(`Stream with key "${streamKey}" not found in context.`);
         return fx.none();
     }
@@ -309,7 +309,7 @@ class FxDrip extends EffectElement {
       }
     }
     // 4. fx.effectノードを返す
-    return fx.drip(stream, value);
+    return fx.drip(value, stream);
   }
 
 }

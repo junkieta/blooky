@@ -1,6 +1,6 @@
 // blooky-effect.ts
-import type { Prop, Stream } from "./blooky";
-import { drip, hold, resolve, when } from "./blooky";
+import type { DripperStream, Prop, Stream } from "./blooky";
+import { drip, resolve, when } from "./blooky";
 
 //
 // 型定義
@@ -19,7 +19,7 @@ export type FxNode =
       cases: Map<string | number | symbol, FxNode>, // 分岐先のMap
       default?: FxNode // defaultの分岐先
     }
-  | { type: "drip", stream: Stream<any>, value: any }
+  | { type: "drip", stream: DripperStream<any>, value: any, mode: "saga"|"atomic" }
   | { type: "take", stream: Stream<any> }
 
 export type FxDispatchOptions = {
@@ -66,10 +66,11 @@ export const fx = {
     cases,
     default: defaultNode,
   }),  
-  drip: <T>(stream: Stream<T>, value: T): FxNode => ({
+  drip: <T>(value: T, stream: DripperStream<T>, mode : "saga"|"atomic" = "saga"): FxNode => ({
     type: "drip",
     stream,
     value,
+    mode
   }),
   take: <T>(stream: Stream<T>) : FxNode =>({
     type: "take",
@@ -157,8 +158,12 @@ export const fxHandlers: FxHandlerMap = {
   wait: async ({ node }) => {
     await new Promise(res => setTimeout(res, node.ms));
   },
-  drip: async ({ node }) => {
-    drip(node.stream)(node.value);
+  drip: async ({ node,context,run,execute,token }) => {
+    const effect = drip(node.value)(node.stream);
+    const _fx = node.mode === "atomic"
+      ? fx.call(()=>effect.forEach(({update,nextValue})=>update(nextValue)))
+      : fx.parallel(effect.map(({update,nextValue})=>()=>update(nextValue)).map(fx.call));
+    await execute(run(_fx), context, token);
   },
   parallel: async ({ node, context, token, execute, run }) => {
     await Promise.all(node.steps.map(step =>
@@ -244,3 +249,5 @@ export function yieldToMainThread(): Promise<void> {
     queueMicrotask(resolve);
   });
 }
+
+
