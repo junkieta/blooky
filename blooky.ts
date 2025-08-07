@@ -443,6 +443,7 @@ type MomentStream = Stream<MomentState> & { disconnect: ()=>void };
 /**
  * 時間の更新をイベントストリームとして取得する。
  */
+// --- 時間のレシピ集 (The Recipe Book for Time) ---
 type moments = {
     /**
      * 一定時間後、一回きりのタイムイベントを取得する
@@ -464,9 +465,44 @@ type moments = {
     framecount(limit:number) : Stream<MomentState>
 }
 
+
+// --- 時間の源泉 (The Fountain of Time) ---
+
+// 1. 内部に、RAFを動力源とする非公開のStreamを持つ
+const _globalTickStream = stream<number>();
+
+// 2. 「現在の時間」という状態を、公開された単一のPropとして提供する
+const now = hold(performance.now())(_globalTickStream);
+
+// 3. momentsは、now Prop (とその源流Stream) を使って、
+//    便利なイベントStreamを生成するファクトリになる
 const moments = {} as moments; {
 
-    const now: Prop<number> = performance.now.bind(performance);
+    // --- 時間のレシピ集 (The Recipe Book for Time) ---
+    moments.timeout = (ms:number = 0) => {
+        if(!hasReferences(_globalTickStream, 1)) requestAnimationFrame(tick);
+        const s = tickStateStream(({elapsed})=>ms <= elapsed);
+        resolve(s).then(s.disconnect);
+        return s;
+    };
+
+    moments.interval = (ms: number = 0) => {
+        if(!hasReferences(_globalTickStream, 1)) requestAnimationFrame(tick);
+        const s = tickStateStream(({deltaTime})=>deltaTime >= ms);
+        const c = countReferences(s,true)() + 1;
+        when(()=>!hasReferences(s,c))(STREAM_PROP_RELATIONS.get(s)![0]).then(s.disconnect);
+        return s;
+    };
+
+    moments.framecount = typeof window.requestAnimationFrame === "function"
+        ? (limit: number = Infinity) => {
+            if(!hasReferences(_globalTickStream, 1)) requestAnimationFrame(tick);
+            const s = tickStateStream(limit === Infinity ? undefined : ({count})=>count<=limit);
+            if(limit) when(({count}:MomentState)=>count===limit)(STREAM_PROP_RELATIONS.get(s)![0]).then(s.disconnect);
+            return s;
+        }
+        : (_:number) => {throw new Error('moments.framecount function need "requestAnimationFrame" function')};
+
     const nextState = (s:MomentState) => (n:number) : MomentState => 
     ({
         now: n,
@@ -475,9 +511,10 @@ const moments = {} as moments; {
         deltaTime: n - s.now,
         count: s.count + 1
     });
+    
     const tickStateStream = (f?:(s:MomentState)=>boolean): MomentStream => {
         const started = now();
-        const s = map((n:number): MomentState => nextState(p())(n))(globalTickStream);
+        const s = map((n:number): MomentState => nextState(p())(n))(_globalTickStream);
         const _s = (f ? filter(f)(s) : s) as Stream<MomentState> as MomentStream;
         const p = hold({
             started,
@@ -487,51 +524,26 @@ const moments = {} as moments; {
             count: 0
         })(_s);
         _s[STREAM_CLEANER] = ()=>{
-            globalTickStream.next.delete(s);
+            _globalTickStream.next.delete(s);
         }
         _s.disconnect = ()=>{
             clear(s, true);
-            globalTickStream.next.delete(s);
+            _globalTickStream.next.delete(s);
         };
         return _s;
     }
 
-    const globalTickStream = stream<number>();
     const tick = (t:number) => {
-        if(!hasReferences(globalTickStream)) return;
-        const [effects] = flowLazy(t)(globalTickStream);
+        if(!hasReferences(_globalTickStream, 1)) return;
+        const [effects] = flowLazy(t)(_globalTickStream);
         effects.forEach((effect)=>{
             effect.update(effect.nextValue);
         });
-        if(hasReferences(globalTickStream))
+        if(hasReferences(_globalTickStream, 1))
             requestAnimationFrame(tick);
     };
 
-    moments.timeout = (ms:number = 0) => {
-        if(!hasReferences(globalTickStream)) requestAnimationFrame(tick);
-        const s = tickStateStream(({elapsed})=>ms <= elapsed);
-        resolve(s).then(s.disconnect);
-        return s;
-    };
-
-    moments.interval = (ms: number = 0) => {
-        if(!hasReferences(globalTickStream)) requestAnimationFrame(tick);
-        const s = tickStateStream(({deltaTime})=>deltaTime >= ms);
-        const c = countReferences(s,true)() + 1;
-        when(()=>!hasReferences(s,c))(STREAM_PROP_RELATIONS.get(s)![0]).then(s.disconnect);
-        return s;
-    };
-
-    moments.framecount = typeof window.requestAnimationFrame === "function"
-        ? (limit: number = Infinity) => {
-            if(!hasReferences(globalTickStream)) requestAnimationFrame(tick);
-            const s = tickStateStream(limit === Infinity ? undefined : ({count})=>count<=limit);
-            if(limit) when(({count}:MomentState)=>count===limit)(STREAM_PROP_RELATIONS.get(s)![0]).then(s.disconnect);
-            return s;
-        }
-        : (_:number) => {throw new Error('moments.framecount function need "requestAnimationFrame" function')};
-
 }
 
-export {drip,stream,isStream,countReferences,hasReferences,clear,hold,accum,merge,map,filter,lift,remap,when,moments};
+export {drip,stream,isStream,countReferences,hasReferences,clear,hold,accum,merge,map,filter,lift,remap,when,now,moments};
 export type {Stream,FilterStream,MappedStream,MergedStream,DripperStream,MomentState,MomentStream,Prop,Effect};
