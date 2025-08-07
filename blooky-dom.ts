@@ -4,7 +4,7 @@
  * 簡易な仕様でDOMを構築しつつ、Streamを利用した更新管理も行う。
  */
 import type { V_DATASET, V_STYLE, V_CLASSLIST, V_EVENTLISTENER, V_STRING, WritableCSSProperty, JSHTMLElementSource, JSHTMLAttrSource, JSHTMLNodeSource, JSHTMLAttributeMapSource } from "./blooky-dom-types";
-import { type Stream, listen, type Prop, stream, drip } from "./blooky";
+import { type Stream, type Prop, type DripperStream, stream, drip } from "./blooky";
 
 type T_ATTRSET = 
     ["dataset", V_DATASET]|
@@ -12,6 +12,16 @@ type T_ATTRSET =
     ["classList", V_CLASSLIST]|
     [`on${string}`, V_EVENTLISTENER]|
     [string, V_STRING];
+
+const PROP_OBSERVERS = new WeakMap<Prop<any>,Set<(next:any,prev:any)=>void>>();
+
+// effectの発動時にlistenerを組み込んだ上で即時dripする
+const dripper = <A>(d: DripperStream<A>) => (v: A) => {
+    drip(v)(d).forEach(({update,nextValue,prop})=>{
+        if(PROP_OBSERVERS.has(prop)) PROP_OBSERVERS.get(prop)!.forEach((f)=>f(nextValue, prop()));
+        update(nextValue);
+    });
+}
 
 /**
  * tag指定がjshtmlの仕様に沿わなかった場合に生成される要素の定義。
@@ -119,15 +129,17 @@ const extractElementSource = (s:JSHTMLElementSource) : JSHTMLExtractedElementSou
 
 /**
  * ノードとストリームのバインディングを行う。
- * @param s 
+ * @param prop 
  * @returns 
  */
-const bind_node_prop = <T extends JSHTMLNodeSource>(s:Prop<T>) => function f(p:[Node,Node]) {
-    const unlisten = listen(s)((v) => {
+const bind_node_prop = <T extends JSHTMLNodeSource>(prop:Prop<T>) => function f(p:[Node,Node]) {
+    if(!PROP_OBSERVERS.has(prop))
+        PROP_OBSERVERS.set(prop, new Set());
+    PROP_OBSERVERS.get(prop)!.add(function _(v:T) {
         if(p.every((n)=>n.isConnected))
             f(update_range(p)(v));
         else
-            unlisten();
+            PROP_OBSERVERS.get(prop)?.delete(_);
     });
 }
 
@@ -136,27 +148,31 @@ const bind_node_prop = <T extends JSHTMLNodeSource>(s:Prop<T>) => function f(p:[
  * @param s 
  * @returns 
  */
-const bind_attr_prop = (p:Prop<JSHTMLAttrSource>) => ([e,n]:[HTMLElement,string]) => {
-    const unlisten = listen(p)((v) => {
+const bind_attr_prop = (prop:Prop<JSHTMLAttrSource>) => ([e,n]:[HTMLElement,string]) => {
+    if(!PROP_OBSERVERS.has(prop))
+        PROP_OBSERVERS.set(prop, new Set());
+    PROP_OBSERVERS.get(prop)!.add(function _(v) {
         if(e.isConnected) {
             update_attr(e)([n,v] as T_ATTRSET);
         } else {
-            unlisten();
+            PROP_OBSERVERS.get(prop)?.delete(_);
         }
     });
 }
 
 /**
  * スタイル属性値とストリームをバインディングする
- * @param s 
+ * @param prop 
  * @returns 
  */
-const bind_style_prop = (s:Prop<V_STRING>) => ([e,p]:[HTMLElement, WritableCSSProperty]) => {
-    const unlisten = listen(s)((v) => {
+const bind_style_prop = (prop:Prop<V_STRING>) => ([e,p]:[HTMLElement, WritableCSSProperty]) => {
+    if(!PROP_OBSERVERS.has(prop))
+        PROP_OBSERVERS.set(prop, new Set());
+    PROP_OBSERVERS.get(prop)!.add(function _(v) {
         if(e.isConnected) {
             e.style[p] = v + "";
         } else {
-            unlisten();
+            PROP_OBSERVERS.get(prop)?.delete(_);
         }
     });
 }
@@ -257,7 +273,7 @@ jshtml.$ = (attrs: JSHTMLAttributeMapSource) => new EmptyElementAttributeMapSour
  */
 const mutations = (n: Node) => (init: MutationObserverInit) : [Stream<MutationRecord[]>,()=>void] => {
     const s = stream<MutationRecord[]>();
-    const o = new MutationObserver(drip(s));
+    const o = new MutationObserver(dripper(s));
     o.observe(n, init);
     return [s, o.disconnect.bind(o)];
 };
@@ -269,7 +285,7 @@ const mutations = (n: Node) => (init: MutationObserverInit) : [Stream<MutationRe
  */
 const events = (target:EventTarget) => <T extends string, E = T extends keyof HTMLElementEventMap ? HTMLElementEventMap[T] : Event>(t: T) : [Stream<E>,()=>void] => {
     const s = stream<E>();
-    const l = drip(s) as unknown as EventListener;
+    const l = dripper(s) as EventListener;
     target.addEventListener(t, l, false);
     return [s, target.removeEventListener.bind(target,t,l,false)];
 }
@@ -303,6 +319,6 @@ const jshtmlWithPrefixAuto = (prefix: string) => (node: JSHTMLNodeSource): Node 
     return jshtml(mappedNode);
 };
 
-export {jshtml, mutations, events, jshtmlWithPrefixAuto};
+export {dripper, jshtml, mutations, events, jshtmlWithPrefixAuto};
 
 
