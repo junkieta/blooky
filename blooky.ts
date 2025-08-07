@@ -349,7 +349,6 @@ const remap = <A,B>(f:(v:B,p?:B)=>A) => (p:Prop<B>) : Prop<A> =>
         ? hold(f(p()))(PROP_FROM.get(p)!)
         : ()=>f(p());
 
-
 /**
  * 時変値に関数を適用して新しい時変値を作る
  * @param c 
@@ -402,7 +401,7 @@ const when = <A>(predicate: (v: A) => boolean) => (p: Prop<A>): PromisedProp<A> 
  * whenのショートコードで、次回分のみのPromiseを取得する
  * @param source 取得元となるStreamまたはProp
  */
-export function resolve<A>(source: Stream<A> | PromisedProp<A> | Prop<A>): PromiseLike<A> {
+function resolve<A>(source: Stream<A> | PromisedProp<A> | Prop<A>): PromiseLike<A> {
   // typeofでProp（関数）かStream（オブジェクト）かを判別
   if (typeof source === 'function') return "then" in source ? source : Promise.resolve(source());
   const prop=(()=>{}) as Prop<A>;
@@ -413,7 +412,7 @@ export function resolve<A>(source: Stream<A> | PromisedProp<A> | Prop<A>): Promi
 
 
 /**
- * moments.framecountのファンクタに渡される状態変数。
+ * momentsで渡される状態変数。
  */
 type MomentState = {
     /**
@@ -471,8 +470,8 @@ type moments = {
 // 1. 内部に、RAFを動力源とする非公開のStreamを持つ
 const _globalTickStream = stream<number>();
 
-// 2. 「現在の時間」という状態を、公開された単一のPropとして提供する
-const now = hold(performance.now())(_globalTickStream);
+// 2. 「フレームごとの時間」という状態を、`clock`という名前の公開Propとして提供する
+const clock = hold(performance.now())(_globalTickStream);
 
 // 3. momentsは、now Prop (とその源流Stream) を使って、
 //    便利なイベントStreamを生成するファクトリになる
@@ -513,7 +512,7 @@ const moments = {} as moments; {
     });
     
     const tickStateStream = (f?:(s:MomentState)=>boolean): MomentStream => {
-        const started = now();
+        const started = clock();
         const s = map((n:number): MomentState => nextState(p())(n))(_globalTickStream);
         const _s = (f ? filter(f)(s) : s) as Stream<MomentState> as MomentStream;
         const p = hold({
@@ -533,17 +532,14 @@ const moments = {} as moments; {
         return _s;
     }
 
+    // tickStreamにdripする。clock以外のPropが紐づいていれば自動呼出しする。
     const tick = (t:number) => {
         if(!hasReferences(_globalTickStream, 1)) return;
-        const [effects] = flowLazy(t)(_globalTickStream);
-        effects.forEach((effect)=>{
-            effect.update(effect.nextValue);
-        });
-        if(hasReferences(_globalTickStream, 1))
-            requestAnimationFrame(tick);
+        drip(t)(_globalTickStream).forEach(({update,nextValue}) => update(nextValue));
+        if(hasReferences(_globalTickStream, 1)) requestAnimationFrame(tick);
     };
 
 }
 
-export {drip,stream,isStream,countReferences,hasReferences,clear,hold,accum,merge,map,filter,lift,remap,when,now,moments};
+export {drip,stream,isStream,countReferences,hasReferences,clear,hold,accum,merge,map,filter,lift,remap,when,resolve,clock,moments};
 export type {Stream,FilterStream,MappedStream,MergedStream,DripperStream,MomentState,MomentStream,Prop,Effect};
