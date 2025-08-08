@@ -7,11 +7,10 @@ import { drip, resolve, when } from "./blooky";
 //
 export type FxNode =
   | { type: "none" }
-  | { type: "call", action: () => unknown }
   | { type: "sequence", steps: FxNode[] }
   | { type: "parallel", steps: FxNode[] }
-  | { type: "wait", ms: number }
   | { type: "race", steps: FxNode[] }
+  | { type: "wait", ms: number }
   | { type: "loop", cond: Prop<boolean>, body: FxNode }
   | { type: "condition", if: Prop<boolean>, then: FxNode, else?: FxNode }
   | { type: "switch",
@@ -19,7 +18,16 @@ export type FxNode =
       cases: Map<string | number | symbol, FxNode>, // 分岐先のMap
       default?: FxNode // defaultの分岐先
     }
-  | { type: "drip", stream: DripperStream<any>, value: any, mode: "saga"|"atomic" }
+  | { type: "call",
+      action: () => unknown,
+      catcher?: (error:Error) => unknown
+    }
+  | { type: "drip",
+      stream: DripperStream<any>,
+      value: any,
+      catcher?: (v:Error) => unknown,
+      mode: "saga"|"atomic",
+    }
   | { type: "take", stream: Stream<any> }
 
 export type FxDispatchOptions = {
@@ -40,7 +48,7 @@ export type FxResolvable = Prop<any> | Stream<any>;
 
 export const fx = {
   none: (): FxNode => ({ type: "none" }),
-  call: (action: () => unknown): FxNode => ({ type: "call", action }),
+  call: (action: () => unknown, catcher?: (v:Error) => unknown): FxNode => ({ type: "call", action, catcher }),
   sequence: (steps: FxNode[]): FxNode => ({ type: "sequence", steps }),
   parallel: (steps: FxNode[]): FxNode => ({ type: "parallel", steps }),
   race: (steps: FxNode[]): FxNode => ({ type: "race", steps }),
@@ -66,10 +74,11 @@ export const fx = {
     cases,
     default: defaultNode,
   }),  
-  drip: <T>(value: T, stream: DripperStream<T>, mode : "saga"|"atomic" = "saga"): FxNode => ({
+  drip: <T>(value: T, stream: DripperStream<T>, catcher?: (v:Error) => unknown, mode : "saga"|"atomic" = "saga"): FxNode => ({
     type: "drip",
     stream,
     value,
+    catcher,
     mode
   }),
   take: <T>(stream: Stream<T>) : FxNode =>({
@@ -159,10 +168,11 @@ export const fxHandlers: FxHandlerMap = {
     await new Promise(res => setTimeout(res, node.ms));
   },
   drip: async ({ node,context,run,execute,token }) => {
+    const catcher = node.catcher;
     const effect = drip(node.value)(node.stream);
     const _fx = node.mode === "atomic"
-      ? fx.call(()=>effect.forEach(({update,nextValue})=>update(nextValue)))
-      : fx.parallel(effect.map(({update,nextValue})=>()=>update(nextValue)).map(fx.call));
+      ? fx.call(()=>effect.forEach(({update,nextValue})=>update(nextValue)), catcher)
+      : fx.parallel(effect.map(({update,nextValue})=>fx.call(()=>update(nextValue), catcher)));
     await execute(run(_fx), context, token);
   },
   parallel: async ({ node, context, token, execute, run }) => {
@@ -232,7 +242,21 @@ export async function execute(
     const node = result.value;
     const handler = fxHandlers[node.type] as (o:FxHandlerArg<typeof node.type>)=>void;
     if (!handler) throw new Error(`Unhandled FxNode type: ${node.type}`);
-    const nextValue = await handler({ node, context, token, execute, run });
+    let nextValue: unknown;
+    try {
+      nextValue = await handler({ node, context, token, execute, run });
+    } catch(err) {
+      const catcher = (node as any).catcher;
+      if(typeof catcher === 'function') {
+          // ハンドラに処理を移譲
+          console.warn(`[fx-effect] Action failed, but was handled by context.`, catcher);
+          nextValue = catcher(err); // ハンドラの戻り値を、成功時の値としてフローに復帰させる
+      } else {
+        // ハンドラが見つからない場合は、エラーを再スローしてフローを停止
+        console.error(`[fx-effect] Unhandled error: Catch handler not found in context.`);
+        throw err;
+      }
+    }
     context.setRuntimeState({ lastResult: nextValue });
     await yieldToMainThread();
     result = generator.next(nextValue);
@@ -249,5 +273,6 @@ export function yieldToMainThread(): Promise<void> {
     queueMicrotask(resolve);
   });
 }
+
 
 

@@ -34,16 +34,24 @@ DebEffectElementStyleSheet.replaceSync(`
   box-shadow: 0 0 5px var(--fx-running-shadow-color, rgba(0, 123, 255, 0.5));
 }
 
-:host(.is-completed) {
-  opacity: 0.6;
-  border-left: 5px solid var(--fx-completed-border-color, #28a745);
-}
 :host(.is-paused) {
   border-style: dashed;
   border-color: var(--fx-paused-border-color, #ffc107);
 }
 :host(.is-paused)::before {
   content: attr(data-fx-type) "(paused)";
+}
+:host(.is-completed) {
+  opacity: 0.6;
+  border-left: 5px solid var(--fx-completed-border-color, #28a745);
+}
+/* is-completed と is-recovered が両方付いた場合のスタイル */
+:host(.is-completed.is-recovered) {
+  border-left-color: var(--fx-completed-border-color, #28a745);
+  box-shadow: 0 0 5px var(--fx-paused-border-color, #ffc107);
+}
+:host(.is-completed.is-recovered)::before {
+  content: attr(data-fx-type) " (recovered)";
 }
 
 :host([slot])::before {
@@ -83,18 +91,51 @@ async function execute(
   while (!result.done) {
     const node = result.value;
     // --- 実行前のUI更新 ---
-    const element = FxNodeMap.get(node)!;
-    if(element)
-      element.classList.add('is-running');
+    const element = FxNodeMap.get(node);
+    element?.classList.add('is-running');
 
     const handler = fxHandlers[node.type] as (o:FxHandlerArg<typeof node.type>)=>void;
     if (!handler) throw new Error(`Unhandled FxNode type: ${node.type}`);
-    const nextValue = await handler({ node, context, token, execute, run });
+
+    let nextValue: unknown;
+    try {
+      nextValue = await handler({ node, context, token, execute, run });
+    } catch (err) {
+      // ① 失敗した要素に、まず永続的な失敗クラスを付与
+      element?.classList.add('is-failed');
+
+      const catcher = (node as any).catcher;
+      if (typeof catcher === 'function') {
+        console.warn(`[fx-effect] Action failed, but was handled by context.`, catcher);
+        nextValue = catcher(err); // ② 値が回復される
+        // is-failedはこの後のis-completedで上書きされるので、ここでは消さない
+      } else if (!element || element.dispatchEvent(new CustomEvent("throw", {
+          cancelable: true,
+          bubbles: true,
+          composed: true,
+          detail: {
+            error: err,
+            failedNode: node,
+            context
+          }
+        }))) {
+        console.error(`[fx-effect] Unhandled error: Catch handler not found in context.`);
+        throw err; // ③ 回復不能なエラー。is-failedは残ったままフローが停止する
+      }
+      // 回復された場合は、catchブロックから抜けて正常系の処理に戻る
+    }
 
     // --- 実行後のUI更新 ---
-    if(element) {
+    if (element) {
       element.classList.remove('is-running');
-      element.classList.add('is-completed');
+      // 正常に完了、またはエラーから回復した場合
+      if (!token.cancelled()) {
+        if(element.classList.contains("is-failed")) {
+          element.classList.remove('is-failed'); // 失敗していた場合は回復した印として消す
+          element.classList.add('is-recovered');
+        }
+        element.classList.add('is-completed');
+      }
     }
 
     context.setRuntimeState({ lastResult: nextValue });

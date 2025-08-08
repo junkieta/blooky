@@ -1,25 +1,25 @@
 
 // --- 1. アプリケーションの状態定義 (Props and Streams) ---
 
-import { stream, accum, merge, hold, drip, pipe } from "./blooky";
-import { jshtml } from "./blooky-dom";
+import { stream, accum, merge, hold, map, remap } from "./blooky";
+import { into, jshtml } from "./blooky-dom";
 import type { FxEffect } from "./blooky-fxdom";
 import { fxdom,EffectElementTagNameMap } from "./blooky-fxdom-debugger";
 
 // debuggerとしてdefine
 fxdom.defineEffectElements(EffectElementTagNameMap);
 
-const increment$ = stream<void>();
-const decrement$ = stream<void>();
-const save$ = stream<void>();
+const increment$ = stream();
+const decrement$ = stream();
+const save$ = stream();
 const confirmation$ = stream<'yes' | 'no'>();
 
 const count = accum(
-  merge([pipe(increment$)(() => 1), pipe(decrement$)(() => -1)])((a,b)=>a+b)
+  merge<number>((a,b)=>a+b)([map(() => 1)(increment$), map(() => -1)(decrement$)])
 )((current, val) => current + val, 0);
 
 const statusMessageStream = stream<string>();
-const statusMessage = hold(statusMessageStream)('Ready.');
+const statusMessage = hold('Ready.')(statusMessageStream);
 
 // --- 2. UIの定義 (jshtml) ---
 
@@ -30,9 +30,9 @@ const AppUI = jshtml({
     
     // イベントをStreamに接続
     //【修正】 `_`プロパティを廃止し、テキストコンテンツをキーの値として直接指定
-    { button: "+", $: { onclick: drip(increment$) } },
-    { button: "-", $: { onclick: drip(decrement$) } },
-    { button: "Save", $: { onclick: drip(save$), style: { marginLeft: '1em' } } },
+    { button: "+", $: { onclick: into(increment$) } },
+    { button: "-", $: { onclick: into(decrement$) } },
+    { button: "Save", $: { onclick: into(save$), style: { marginLeft: '1em' } } },
     
     // 副作用の状態を表示
     { div: statusMessage, $: { id: "status" } },
@@ -40,8 +40,8 @@ const AppUI = jshtml({
     // 確認用のボタン
     { div: [
         "Confirm here: ",
-        { button: "Yes", $: { onclick: () => drip(confirmation$)('yes') } },
-        { button: "No", $: { onclick: () => drip(confirmation$)('no') } },
+        { button: "Yes", $: { onclick: () => into(confirmation$)('yes') } },
+        { button: "No", $: { onclick: () => into(confirmation$)('no') } },
       ],
       $: { style: { marginTop: '1em' } }
     }
@@ -55,21 +55,16 @@ const rootContext = {
     statusMessageStream,
     confirmationStream: confirmation$,
     countProp: count,
-    saveFinalMessage: () => {
-        // 状態(Prop)の現在値を取得してメッセージを組み立てる
-        const finalMessage = `Saved count: ${count()}`;
-        // statusMessageStreamに直接dripする
-        drip(statusMessageStream)(finalMessage);
-    }
+    finalMessage: remap((v) => `Saved Count:${v}`)(count)
 };
 
 
 // --- 副作用フローの宣言的な定義 (fxdom) ---
 const fxEffectElement = jshtml({
     $: {
-        use: "statusMessageStream, confirmationStream, countProp, saveFinalMessage, log",
+        use: "statusMessageStream, confirmationStream, countProp, finalMessage, log",
         // <fx-effect>のイベントハンドラ
-        "onsave": drip(save$),
+        "onsave": into(save$),
     },
     "fx-effect": 
     [
@@ -91,8 +86,8 @@ const fxEffectElement = jshtml({
                     $: { "stream-key": "statusMessageStream", value: '"Saving..."' } },
                 { "fx-wait": null,
                     $: { ms: "1500" } },
-                { "fx-call": null,
-                    $: { fn: "saveFinalMessage" } },
+                { "fx-drip": null,
+                    $: { "stream-key": "statusMessageStream", value: 'finalMessage' } },
                 { "fx-dispatch": null,
                     $: { name: "save" }
                 }

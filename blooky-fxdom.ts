@@ -69,9 +69,11 @@ class FxCall extends EffectElement {
             throw new Error(`Invalid arg value: ${raw}`);
           }
         });
-
+      
+      const catcherKey = this.getAttribute("catcher");
+      const catchFunc = catcherKey ? this.resolveContextValue(catcherKey, true) as (v:Error)=>void : undefined;
       if (typeof funcFromContext === "function") {
-        return fx.call(() => funcFromContext(...args));
+        return fx.call(() => funcFromContext(...args), typeof catchFunc === "function" ? catchFunc : undefined);
       }
 
       // どちらにも見つからない場合
@@ -297,15 +299,20 @@ class FxDrip extends EffectElement {
         return fx.none();
     }
 
-    // 3. 値を属性から取得する（既存のロジックと同じ）
+    // 3. 値を属性から取得する
     let value: any;
     const valueAttr = this.getAttribute("value");
     if (valueAttr !== null) {
-      try {
-        value = JSON.parse(valueAttr);
-      } catch (e) {
-        console.warn("[fx-drip] Invalid JSON in value attribute.", e);
-        value = valueAttr; // パース失敗時は文字列として扱う
+      const ctxValue = this.resolveContextValue(value);
+      if(typeof ctxValue === "function") {
+        value = ctxValue();
+      } else {
+        try {
+          value = JSON.parse(valueAttr);
+        } catch (e) {
+          console.warn("[fx-drip] Invalid JSON in value attribute.", e);
+          value = valueAttr; // パース失敗時は文字列として扱う
+        }
       }
     }
     // 4. fx.effectノードを返す
@@ -336,8 +343,6 @@ class FxTake extends EffectElement {
   }
 
 }
-
-
 
 class FxContext extends EffectElement implements IEffectContext {
 
