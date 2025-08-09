@@ -48,8 +48,16 @@ export type V_DATASET = { [key: string]: V_STRING };
 export type V_STYLE = { [key in WritableCSSProperty]?: V_STRING | Prop<V_STRING> };
 export type V_EVENTLISTENER = EventListenerOrEventListenerObject | GlobalEventHandlers[HTMLEventHandlers];
 
+export type T_ATTRSET = 
+    ["dataset", V_DATASET]|
+    ["style", V_STYLE]|
+    ["classList", V_CLASSLIST]|
+    [`on${string}`, V_EVENTLISTENER]|
+    [string, V_STRING];
+
 // --- 属性セット型
 export type JSHTMLAttrSource = V_STRING | V_CLASSLIST | V_DATASET | V_STYLE | V_EVENTLISTENER;
+
 
 // --- 属性マップ型：補完あり＋カスタム属性許容
 export type JSHTMLAttributeMapSource =
