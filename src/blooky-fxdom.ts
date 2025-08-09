@@ -1,8 +1,8 @@
 // blooky-fxdom.ts
 
-import { isDripperStream, isStream, type Prop, type Stream } from "./blooky";
+import { isChainedProp, isDripperStream, isStream, type Prop, type Stream } from "./blooky";
 import { jshtml } from "./blooky-dom";
-import { createCancelToken, execute, fx, FxMiddleware, run, type FxDispatchOptions, type FxNode, type IEffectContext } from "./blooky-effect"; // assume effect-core exists
+import { createCancelToken, execute, fx, FxMiddleware, run, type FxDispatchSettings, type FxNode, type IEffectContext } from "./blooky-effect"; // assume effect-core exists
 
 type FxResolvable = Prop<any> | Stream<any> | Function | any;
 
@@ -252,32 +252,31 @@ class FxLoop extends EffectElement {
   }
 }
 class FxDispatch extends EffectElement {
+  
   toFxNode(): FxNode {
     const name = this.getAttribute("name");
     if (!name) return fx.none();
 
-    let detail : any = {};
+    let detail : Prop<unknown>;
     if(this.hasAttribute("detail")) {
       const detailAttr = this.getAttribute("detail")!;
       const p = this.resolveContextValue(detailAttr) as Prop<any>;
-      detail = p ? p() : {};
+      detail = typeof p !== "function" ? ()=>detailAttr : p;
     }
+    else
+      detail = ()=>null;
 
     const target_attr = this.getAttribute("target") || "_self";
     const target = target_attr === "_self" ? this : target_attr;
-
-    const options: FxDispatchOptions = {
-      name,
-      detail,
+    const settings: FxDispatchSettings<ReturnType<typeof detail>> = {
       target,
+      detail,
       bubbles: this.getAttribute("bubbles") !== "none",
       composed: this.getAttribute("composed") !== "none",
       cancelable: this.hasAttribute("cancelable")
     };
-
     const childrenFx = this.childrenToFxNodes()[0] ?? fx.none();
-
-    return fx.dispatch(options, childrenFx);
+    return fx.dispatch(name, settings, childrenFx);
   }
 }
 
@@ -299,24 +298,26 @@ class FxDrip extends EffectElement {
         return fx.none();
     }
 
-    // 3. 値を属性から取得する
-    let value: any;
+    // 3. fx.effectノードを返す
+    return fx.drip(this.resolveValueAttr(), stream);
+  }
+
+  resolveValueAttr() : Prop<unknown> {
     const valueAttr = this.getAttribute("value");
-    if (valueAttr !== null) {
-      const ctxValue = this.resolveContextValue(valueAttr);
-      if(typeof ctxValue === "function") {
-        value = ctxValue();
-      } else {
-        try {
-          value = JSON.parse(valueAttr);
-        } catch (e) {
-          console.warn("[fx-drip] Invalid JSON in value attribute.", valueAttr, e);
-          value = valueAttr; // パース失敗時は文字列として扱う
-        }
-      }
+    if (valueAttr === null) return ()=>null;
+    const ctxValue = this.resolveContextValue(valueAttr);
+    if(typeof ctxValue === "function")
+      return ctxValue as Prop<any>;
+    if(ctxValue !== undefined)
+      return ()=>ctxValue;
+    let v : unknown;
+    try {
+      v = JSON.parse(valueAttr);
+    } catch (e) {
+      console.warn("[fx-drip] Invalid JSON in value attribute.", valueAttr, e);
+      v = valueAttr; // パース失敗時は文字列として扱う
     }
-    // 4. fx.effectノードを返す
-    return fx.drip(value, stream);
+    return () => v;
   }
 
 }
@@ -387,7 +388,10 @@ class FxContext extends EffectElement implements IEffectContext {
 
   // use属性値をホワイトリストとして利用
   containedUseAttr(key: string) {
-    const useList = this.getAttribute("use")?.replace(/\s+/g,"").split(",");
+    if(!this.hasAttribute("use")) return false;
+    const useAttr = this.getAttribute("use")!;
+    if(useAttr === "*") return true;
+    const useList = useAttr.replace(/\s+/g,"").split(",");
     return useList && useList.includes(key);
   }
 
@@ -419,9 +423,7 @@ class FxEffect extends FxContext {
   private _cancel?: () => void;
   private _hasRun = false; // 再実行制御用フラグ
 
-  // デバッガークラスで差し替えできるようにする
-  protected executer: typeof execute = execute;
-  protected runner: typeof run = run;
+  // 継承先で差し替えできるようにする
   protected middleWares: FxMiddleware[];
 
   connectedCallback() {
@@ -443,14 +445,12 @@ class FxEffect extends FxContext {
     this._hasRun = false; // 再実行を許可するためにfalseに戻す
   }
 
-// blooky-fxdom-debugger.ts 内のデバッグ用 FxEffect クラス
-
   async run() {
     // すでに走っていたらキャンセル
     this._cancel?.();
     // デバッグ用Middlewareを注入してexecuterを呼び出す
-    const { cancel } = await this.executer(
-      this.runner(this.toFxNode()),
+    const { cancel } = await execute(
+      run(this.toFxNode(), this),
       this,
       createCancelToken(), // 新しいtokenを生成
       this.middleWares
@@ -458,16 +458,6 @@ class FxEffect extends FxContext {
     this._cancel = cancel;
     this._hasRun = true;
   }
-
-  /*
-  async run() {
-    // すでに走っていたらキャンセル
-    this._cancel?.();
-    const { cancel } = await this.executer(this.runner(this.toFxNode()),this);
-    this._cancel = cancel;
-    this._hasRun = true;
-  }
-    */
 
   runWith(other: Map<string, FxResolvable>) {
     const temp = this.context;

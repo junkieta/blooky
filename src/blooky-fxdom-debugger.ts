@@ -12,7 +12,7 @@ DebEffectElementStyleSheet.replaceSync(`
   margin: 0.75em 0 0.75em 16px; /* ネストを表現 */
   padding: 1em;
   border: 1px solid var(--fx-border-color, #ccc);
-  border-radius: var(--fx-border-radius, 4px);;
+  border-radius: var(--fx-border-radius, 4px);
   position: relative;
   transition: all 0.3s ease;
 }
@@ -42,7 +42,6 @@ DebEffectElementStyleSheet.replaceSync(`
   content: attr(data-fx-type) "(paused)";
 }
 :host(.is-completed) {
-  opacity: 0.6;
   border-left: 5px solid var(--fx-completed-border-color, #28a745);
 }
 /* is-completed と is-recovered が両方付いた場合のスタイル */
@@ -59,48 +58,22 @@ DebEffectElementStyleSheet.replaceSync(`
 }
 `);
 
-
-function createPropertyDescriptorForFxHandler(key: "wait"|"take"): PropertyDescriptor {
-  const method = defaultFxHandlers[key]!;
-  return {
-    async value(this:FxHandlerMap,arg:any) {
-      const element = FxNodeMap.get(arg.node);
-      element?.classList.add('is-paused');
-      const result = await method(arg);
-      element?.classList.remove('is-paused');
-      return result;
-    }
-  }
-}
-
-// fxNodeの処理時、参照を残したEffectElementに処理状況を示すclassを設定する
-const fxHandlers:FxHandlerMap = Object.create(defaultFxHandlers, {
-  wait: createPropertyDescriptorForFxHandler("wait"),
-  take: createPropertyDescriptorForFxHandler("take")
-});
-
 const debugMiddleware: FxMiddleware = async (ctx, next) => {
   const { node } = ctx;
   const element = FxNodeMap.get(node);
 
-  // --- 前処理 ---
-  element?.classList.add('is-running');
-
+  let result: any = null;
   try {
     // --- 内側の処理（次のMiddlewareまたはコア）を呼び出す ---
-    const result = await next();
-    // --- 後処理（成功時） ---
-    if (element) {
-      element.classList.remove('is-running');
-      element.classList.add('is-completed');
-      // ... is-recovered のクラス付け替え ...
+    if(node.type === "wait" || node.type === "take") {
+      element?.classList.add("is-paused");
+      result = await next();
+      element?.classList.remove("is-paused");
+    } else {
+      result = await next();
     }
-    return result;
-
   } catch (err) {
     // --- 後処理（エラー時） ---
-    element?.classList.add('is-failed');
-    // ... dispatchEventによるエラー通知 ...
     if(!element || element.dispatchEvent(new CustomEvent("throw", {
         cancelable: true,
         bubbles: true,
@@ -111,81 +84,16 @@ const debugMiddleware: FxMiddleware = async (ctx, next) => {
           ctx
         }
       }))) {
-        console.error(`[fx-effect] Unhandled error: Catch handler not found in context.`);
-        throw err; // ③ 回復不能なエラー。is-failedは残ったままフローが停止する
-      }
+        // ... dispatchEventによるエラー通知がキャンセルされなければ、停止 ...
+        console.error(`[fx-effect] Unhandled error: Catch handler not found in context.`, err);
+        throw err; // 回復不能なエラー。is-failedは残ったままフローが停止する
+    }
     // 回復された場合は、catchブロックから抜けて正常系の処理に戻る
-    // この後、エラーを再スローするか、catcherで回復させるかを決定
-    throw err; // or handle error
+    element?.classList.add("is-recovered");
   }
+  return result;
 };
 
-/*
-async function execute(
-  generator: Generator<FxNode, void, any>,
-  context: IEffectContext = {
-    getContextValue:(key:string)=>context.hasOwnProperty(key) ? (context as IEffectContext & { [key:string]: any })[key] : undefined,
-    setRuntimeState:(state)=>Object.assign(context,state)
-  } as IEffectContext & { [key:string]: any },
-  token: CancelToken = createCancelToken()
-) {
-  let result = generator.next();
-  while (!result.done) {
-    const node = result.value;
-    // --- 実行前のUI更新 ---
-    const element = FxNodeMap.get(node);
-    element?.classList.add('is-running');
-
-    const handler = fxHandlers[node.type] as (o:FxHandlerArg<typeof node.type>)=>void;
-    if (!handler) throw new Error(`Unhandled FxNode type: ${node.type}`);
-
-    let nextValue: unknown;
-    try {
-      nextValue = await handler({ node, context, token, execute, run });
-    } catch (err) {
-      // ① 失敗した要素に、まず永続的な失敗クラスを付与
-      element?.classList.add('is-failed');
-
-      const catcher = (node as any).catcher;
-      if (typeof catcher === 'function') {
-        console.warn(`[fx-effect] Action failed, but was handled by context.`, catcher);
-        nextValue = catcher(err); // ② 値が回復される
-        // is-failedはこの後のis-completedで上書きされるので、ここでは消さない
-      } else if (!element || element.dispatchEvent(new CustomEvent("throw", {
-          cancelable: true,
-          bubbles: true,
-          composed: true,
-          detail: {
-            error: err,
-            failedNode: node,
-            context
-          }
-        }))) {
-        console.error(`[fx-effect] Unhandled error: Catch handler not found in context.`);
-        throw err; // ③ 回復不能なエラー。is-failedは残ったままフローが停止する
-      }
-      // 回復された場合は、catchブロックから抜けて正常系の処理に戻る
-    }
-
-    // --- 実行後のUI更新 ---
-    if (element) {
-      element.classList.remove('is-running');
-      // 正常に完了、またはエラーから回復した場合
-      if (!token.cancelled()) {
-        if(element.classList.contains("is-failed")) {
-          element.classList.remove('is-failed'); // 失敗していた場合は回復した印として消す
-          element.classList.add('is-recovered');
-        }
-        element.classList.add('is-completed');
-      }
-    }
-
-    context.setRuntimeState({ lastResult: nextValue });
-    await yieldToMainThread();
-    result = generator.next(nextValue);
-  }
-  return { context, cancel: token.cancel };
-}*/
 
 // EffectElementを全て動的にデバッグ用途にextendsさせる
 const EffectElementTagNameMap = Object.fromEntries(new Map(Object.entries(DefaultEffectElementTagNameMap)));
@@ -226,7 +134,25 @@ EffectElementTagNameMap["fx-switch"] = class extends (EffectElementTagNameMap["f
 
 // effectはルートでテーマ変数をstyleに追加
 EffectElementTagNameMap["fx-effect"] = class extends (EffectElementTagNameMap["fx-effect"] as typeof ConcreteEffectElementConstructor) {
+  
   protected middleWares: FxMiddleware[] = [debugMiddleware];
+  
+  onNodeEnter(node: FxNode): void {
+    const element = FxNodeMap.get(node);
+    element?.classList.add('is-running');
+  }
+
+  onNodeExit(node: FxNode, result?: any, error?: any): void {
+    const element = FxNodeMap.get(node);
+    if(!element) return;
+    element.classList.remove('is-running');
+    if (error) {
+      element.classList.add('is-failed');
+    } else {
+      element.classList.add("is-completed");
+    }
+  }
+
   connectedCallback(): void {
     super.connectedCallback();
     this.shadowRoot!.querySelector("style")!.textContent += `
@@ -244,5 +170,4 @@ EffectElementTagNameMap["fx-effect"] = class extends (EffectElementTagNameMap["f
 }
 
 // 呼び出し元で fxdom.defineEffectElements(EffectElmentTagNameMap) すること。
-
-export {fxdom,EffectElementTagNameMap,fxHandlers,debugMiddleware};
+export {fxdom,EffectElementTagNameMap,debugMiddleware};

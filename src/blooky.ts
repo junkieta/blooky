@@ -20,10 +20,9 @@ const PROP_FROM = new WeakMap<Prop<any>, Stream<any>>();
 const PROP_UPDATE = new WeakMap<Prop<any>, (v:any)=>void>();
 
 /**
- * ストリームの状態定義。
- * ファンクタをベースに生成し、対応する時変値の更新と次のストリームへの接続用情報を保持する。
+ * ストリームの状態定義。次のストリームへの接続用情報を保持する。
  */
-type Stream<A> = {
+type StreamBase<A,T> = {
     /**
      * ガベージコレクション
      * @returns 
@@ -37,28 +36,33 @@ type Stream<A> = {
      * 連結先のうち、マージされる可能性のあるストリーム
      */
     lazyNext: Set<MergedStream<A>>
-};
-
+} & T;
 
 const IS_DRIPPER = Symbol("IS_DRIPPER");
 
-type DripperStream<A> = Stream<A> & {
+type DripperStream<A> = StreamBase<A, {
     [IS_DRIPPER]: typeof IS_DRIPPER
-}
-type MergedStream<A> = Stream<A> & {
-    reducerFn: (a:A,b:A)=>A
-};
-type MappedStream<A,B> = Stream<A> & {
+}>
+type MergedStream<A> = StreamBase<A,{
+    reduceFn: (a:A,b:A)=>A
+}>
+type MappedStream<A,B=any> = StreamBase<A, {
     mapFn: (v:B)=>A
-};
-type FilterStream<A> = Stream<A> & { 
+}>;
+type FilterStream<A> = StreamBase<A,{ 
     /**
      * フィルタ。受け入れられる値かを判断する。
      * @param v 
      * @returns 
      */
     filterFn: (v:A)=>boolean 
-}
+}>
+
+type Stream<A> = 
+   | DripperStream<A>
+   | MappedStream<A>
+   | MergedStream<A>
+   | FilterStream<A>
 
 /**
  * 連結したストリームを辿り、受け取った時変値の処理関数をまとめる
@@ -165,7 +169,7 @@ const merge = <A> (f?:(a:A,b:A)=>A) => (s:Stream<A>[]) : MergedStream<A> => {
     const _s : MergedStream<A> = {
         next: new Set(),
         lazyNext: new Set(),
-        reducerFn: f || ((_,v) => v),
+        reduceFn: f || ((_,v) => v),
         [STREAM_CLEANER]: () => {
             s.forEach((s)=>s.lazyNext.delete(_s));
         }
@@ -231,6 +235,11 @@ const isStream = <A>(v:unknown) : v is Stream<A> =>
  */
 const isDripperStream = <A>(v:unknown) : v is DripperStream<A> =>
     isStream<A>(v) && v[IS_DRIPPER] === IS_DRIPPER;
+
+function isChainedProp<A>(v: unknown): v is Prop<A> {
+  return PROP_UPDATE.has(v as Prop<A>);
+}
+
 
 /**
  * ストリームがオブザーバかプロパティによってどれだけ参照されているかを調べる
@@ -325,7 +334,7 @@ const flowLazy = <A>(v:A) => (s:Stream<A>) : FlowingState => {
         return m;
     }, new Map<MergedStream<any>,any[]>());
     // ストリーム毎のreducerを呼んだ上で通常のstreamとしてflowする
-    return [...m].map(([s,v])=>flowLazy(v.reduce(s.reducerFn))(s)).reduce(concatTuple, [updates,[]]);
+    return [...m].map(([s,v])=>flowLazy(v.reduce(s.reduceFn))(s)).reduce(concatTuple, [updates,[]]);
 }
 
 /**
@@ -572,8 +581,8 @@ const moments = {} as moments; {
 
 }
 
-export {drip,stream,isStream,isDripperStream,countReferences,hasReferences,clear,hold,accum,merge,map,filter,lift,remap,when,resolve,clock,moments};
-export type {Stream,FilterStream,MappedStream,MergedStream,DripperStream,MomentState,MomentStream,Prop,Effect};
+export {drip,stream,isStream,isDripperStream,isChainedProp,countReferences,hasReferences,clear,hold,accum,merge,map,filter,lift,remap,when,resolve,clock,moments};
+export type {Stream,FilterStream,MappedStream,MergedStream,DripperStream,MomentState,MomentStream,Prop,PromisedProp,Effect};
 
 // 簡易的な追跡関数
 function dumpGraphDOT(entries: Record<string, Stream<any> | Prop<any>>): string {
@@ -589,35 +598,50 @@ function dumpGraphDOT(entries: Record<string, Stream<any> | Prop<any>>): string 
     return id;
   }
 
+  function getShape(node: Stream<any>|Prop<any>) {
+    if(isChainedProp(node))
+        return "box";
+    if(IS_DRIPPER in node)
+        return "ellipse";
+    if("mapFn" in node)
+        return "diamond";
+    if("filterFn" in node)
+        return "triangle";
+    if("reduceFn" in node)
+        return "hexagon";
+    return "plain";
+  }
+
   function visit(obj: any, label: string) {
     if (visited.has(obj)) return visited.get(obj)!;
 
+    const shape = getShape(obj);
     let id: string;
     if (isStream(obj)) {
-      id = addNode(label, "ellipse");
+      id = addNode(label, shape);
       visited.set(obj, id);
 
       for (const relType of ["next", "lazyNext"]) {
         const set = obj[relType] as Set<any>;
         if (!set) continue;
         for (const target of set) {
-          const targetLabel = names.get(target) || (isProp(target) ? "Prop" : "Stream");
+          const targetLabel = names.get(target) || (isChainedProp(target) ? "Prop" : "Stream");
           const targetId = visit(target, targetLabel);
           edges.push(`${id} -> ${targetId}`);
         }
       }
-    } else if (isProp(obj)) {
-      id = addNode(label, "box");
+    } else if (isChainedProp(obj)) {
+      id = addNode(label, shape);
       visited.set(obj, id);
 
-      const source = PROP_FROM.get(obj) as Stream<any> & { name?: string };
+      const source = PROP_FROM.get(obj) as Stream<any>;
       if (source) {
         const srcLabel = names.get(source) || "Stream";
         const srcId = visit(source, srcLabel);
         edges.push(`${srcId} -> ${id}`);
       }
     } else {
-      id = addNode(label);
+      id = addNode(label, shape);
       visited.set(obj, id);
     }
 
@@ -630,11 +654,5 @@ function dumpGraphDOT(entries: Record<string, Stream<any> | Prop<any>>): string 
 
   return `digraph BlookyGraph {\nrankdir=LR;\n${nodes.join("\n")}\n${edges.join("\n")}\n}`;
 }
-
-
-function isProp<A>(v: unknown): v is Prop<A> {
-  return typeof v === "function";
-}
-
 
 export {dumpGraphDOT, flow,flowLazy};

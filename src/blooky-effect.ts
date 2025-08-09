@@ -36,30 +36,26 @@ export type FxNode =
     }>
   | FxNodeBase<"drip", {
       stream: DripperStream<any>,
-      value: any,
+      value: Prop<any>,
       catcher?: (error: Error) => unknown,
       mode: "saga" | "atomic"
+    }>
+  | FxNodeBase<"dispatch", {
+      name: string,
+      settings: FxDispatchSettings<any>,
+      child?: FxNode
     }>
   | FxNodeBase<"take", {
       stream: Stream<any>
     }>
 
-    export type FxDispatchOptions = {
-  name: string;
+export type FxDispatchSettings<A> = CustomEventInit<Prop<A>> & {
   target: string|EventTarget;
-  detail?: any;
-  bubbles?: boolean;
-  composed?: boolean;
-  cancelable?: boolean;
 };
-
-export type FxResolvable = Prop<any> | Stream<any>;
-
 
 //
 // DSL（ファクトリ）
 //
-
 export const fx = {
   none: (): FxNode => ({ type: "none" }),
   call: (action: () => unknown, catcher?: (v:Error) => unknown): FxNode => ({ type: "call", action, catcher }),
@@ -88,7 +84,7 @@ export const fx = {
     cases,
     default: defaultNode,
   }),  
-  drip: <T>(value: T, stream: DripperStream<T>, catcher?: (v:Error) => unknown, mode : "saga"|"atomic" = "saga"): FxNode => ({
+  drip: <T>(value: Prop<T>, stream: DripperStream<T>, catcher?: (v:Error) => unknown, mode : "saga"|"atomic" = "saga"): FxNode => ({
     type: "drip",
     stream,
     value,
@@ -99,37 +95,13 @@ export const fx = {
     type: "take",
     stream
   }),
-  dispatch: (options: FxDispatchOptions, child?: FxNode): FxNode => {
-    return fx.condition(() => {
-      const e = new CustomEvent(options.name, {
-        detail: options.detail ?? null,
-        bubbles: options.bubbles ?? true,
-        composed: options.composed ?? true,
-        cancelable: options.cancelable ?? false
-      });
-
-      let target : EventTarget | null;
-
-      if(options.target instanceof EventTarget) {
-        target = options.target;
-      }
-      else switch(options.target) {
-        case undefined:
-        case null:
-        case "_document":
-          target = document; break;
-        case "_window":
-          target = window; break;
-        default:
-          target = document.getElementById(options.target);
-          break;
-      }
-
-      if(!target) {
-        throw new Error("not found fx-dispatch target");
-      }
-      return target.dispatchEvent(e); // ← キャンセルされていない場合 true
-    }, child ?? fx.none());
+  dispatch: <T>(name:string, settings: FxDispatchSettings<T>, child?: FxNode): FxNode => {
+    return {
+      type: "dispatch",
+      name,
+      settings,
+      child
+    };
   },
 };
 
@@ -137,6 +109,7 @@ export const fx = {
  * エフェクト実行エンジンが要求するコンテキストの機能。
  */
 export interface IEffectContext {
+
   /**
    * 実行時の状態を書き込むためのメソッド。
    * @param state 実行状態を表すオブジェクト
@@ -148,6 +121,10 @@ export interface IEffectContext {
    * @param key 取得したい値のキー
    */
   getContextValue(key: string): any;
+
+  onNodeEnter?: (node: FxNode) => void
+  onNodeExit?: (node: FxNode, result?: any, error?: Error) => void
+
 }
 
 export type CancelToken = { cancel: () => void; cancelled: () => boolean };
@@ -159,46 +136,6 @@ export function createCancelToken(): CancelToken {
   };
 }
 
-export function* run(node: FxNode): Generator<FxNode, void, any> {
-  switch (node.type) {
-    case 'sequence':
-      for (const step of node.steps) {
-        yield* run(step);
-      }
-      break;
-
-    case 'loop':
-      // ループのロジックをrunが担当する
-      while (node.cond()) {
-        yield* run(node.body);
-      }
-      break;
-    
-    case 'condition':
-      if (node.if()) {
-        yield* run(node.then);
-      } else if (node.else) {
-        yield* run(node.else);
-      }
-      break;
-
-    case 'switch':
-      const key = node.by();
-      const branch = node.cases.get(key) ?? node.default;
-      if (branch) {
-        yield* run(branch);
-      }
-      break;
-
-    case 'none':
-      break;
-
-    default:
-      // call, wait, take などのプリミティブな命令は、そのままexecuteに渡す
-      yield node;
-      break;
-  }
-}
 
 export type FxHandlerArg<K extends FxNode["type"]> = {
   node: Extract<FxNode, { type: K }>
@@ -207,96 +144,55 @@ export type FxHandlerArg<K extends FxNode["type"]> = {
   execute: typeof execute
   run: typeof run
 }
+
 export type FxHandlerMap = {
   [K in FxNode["type"]]?: (args: FxHandlerArg<K>) => Promise<any>
 }
 
-/*
-export const fxHandlers: FxHandlerMap = {
-  call: async ({ node }) => {
-    return await node.action();
-  },
-  wait: async ({ node }) => {
-    await new Promise(res => setTimeout(res, node.ms));
-  },
-  drip: async ({ node,context,run,execute,token }) => {
-    const catcher = node.catcher;
-    const effect = drip(node.value)(node.stream);
-    const _fx = node.mode === "atomic"
-      ? fx.call(()=>effect.forEach(({update,nextValue})=>update(nextValue)), catcher)
-      : fx.parallel(effect.map(({update,nextValue})=>fx.call(()=>update(nextValue), catcher)));
-    await execute(run(_fx), context, token);
-  },
-  parallel: async ({ node, context, token, execute, run }) => {
-    await Promise.all(node.steps.map(step =>
-      execute(run(step), context, token)
-    ));
-  },
-  race: async ({ node, context, token, execute, run }) => {
-    const racers = node.steps.map(step => {
-      const racerToken = createCancelToken();
-      const combinedToken = {
-        cancelled: () => token.cancelled() || racerToken.cancelled(),
-        cancel: () => { token.cancel(); racerToken.cancel(); },
-      };
-      return {
-        promise: execute(run(step), context, combinedToken),
-        cancel: racerToken.cancel,
-      };
-    });
-    try {
-      await Promise.race(racers.map(r => r.promise));
-    } finally {
-      racers.forEach(r => r.cancel());
-    }
-  },
-  take: async ({ node }) => {
-    await resolve(node.stream);
-  },
-  condition: async ({ node, context, token, execute, run }) => {
-    const branch = node.if() ? node.then : node.else;
-    if (branch) {
-      await execute(run(branch), context, token);
-    }
-  },
-  loop: async ({ node, context, token, execute, run }) => {
-    while (!token.cancelled() && node.cond()) {
-      await execute(run(node.body), context, token);
-      await yieldToMainThread();
-    }
-  },
-  switch: async ({ node, context, token, execute, run }) => {
-    const key = node.by();
-    const branch = node.cases.get(key) ?? node.default;
-    if (branch) {
-      await execute(run(branch), context, token);
-    }
-  },
-  none: async () => {},
-  sequence: async ({ node, context, token, execute, run }) => {
-    for (const step of node.steps) {
-      if (token.cancelled()) break;
-      await execute(run(step), context, token);
-    }
-  },  
-};
-*/
 export const fxHandlers: FxHandlerMap = {
   call: async ({ node }) => await node.action(),
   wait: async ({ node }) => await new Promise(res => setTimeout(res, node.ms)),
   drip: async ({ node,context,run,execute,token }) => {
     const catcher = node.catcher;
-    const effect = drip(node.value)(node.stream);
+    const effect = drip(node.value())(node.stream);
     const _fx = node.mode === "atomic"
       ? fx.call(()=>effect.forEach(({update,nextValue})=>update(nextValue)), catcher)
       : fx.parallel(effect.map(({update,nextValue})=>fx.call(()=>update(nextValue), catcher)));
-    await execute(run(_fx), context, token);
+    await execute(run(_fx, context), context, token);
+  },
+  dispatch: async ({node,context,execute,run,token}) => {
+    const settings = node.settings;
+    const e = new CustomEvent(node.name, settings);
+
+    let target : EventTarget;
+    if(settings.target instanceof EventTarget) {
+      target = settings.target;
+    }
+    else switch(settings.target) {
+      case undefined:
+      case null:
+      case "_document":
+        target = document; break;
+      case "_window":
+        target = window; break;
+      default:
+        const element = document.getElementById(settings.target);
+        if(element) {
+          target = element;
+        } else {
+          console.warn("not found fx-dispatch target");
+          target = document;
+        }
+        break;
+    }
+    if(target.dispatchEvent(e) && node.child)
+        await execute(run(node.child, context), context, token);
   },
   take: async ({ node }) => await resolve(node.stream),
   parallel: async ({ node, context, token, execute, run }) => {
     // node.stepsに含まれる各フローに対して、executeを並列で実行する
     await Promise.all(
-      node.steps.map(step => execute(run(step), context, token))
+      node.steps.map(step => execute(run(step, context), context, token))
     );
   },
   race: async ({ node, context, token, execute, run }) => {
@@ -309,7 +205,7 @@ export const fxHandlers: FxHandlerMap = {
         cancel: () => { token.cancel(); racerToken.cancel(); },
       };
       return {
-        promise: execute(run(step), context, combinedToken),
+        promise: execute(run(step, context), context, combinedToken),
         cancel: racerToken.cancel,
       };
     });
@@ -324,43 +220,6 @@ export const fxHandlers: FxHandlerMap = {
   },  
 };
 
-/*
-
-export async function execute(
-  generator: Generator<FxNode, void, any>,
-  context: IEffectContext = {
-    getContextValue:(key:string)=>context.hasOwnProperty(key) ? (context as IEffectContext & { [key:string]: any })[key] : undefined,
-    setRuntimeState:(state)=>Object.assign(context,state)
-  } as IEffectContext & { [key:string]: any },
-  token: CancelToken = createCancelToken()
-) {
-  let result = generator.next();
-  while (!result.done) {
-    const node = result.value;
-    const handler = fxHandlers[node.type] as (o:FxHandlerArg<typeof node.type>)=>void;
-    if (!handler) throw new Error(`Unhandled FxNode type: ${node.type}`);
-    let nextValue: unknown;
-    try {
-      nextValue = await handler({ node, context, token, execute, run });
-    } catch(err) {
-      const catcher = (node as any).catcher;
-      if(typeof catcher === 'function') {
-          // ハンドラに処理を移譲
-          console.warn(`[fx-effect] Action failed, but was handled by context.`, catcher);
-          nextValue = catcher(err); // ハンドラの戻り値を、成功時の値としてフローに復帰させる
-      } else {
-        // ハンドラが見つからない場合は、エラーを再スローしてフローを停止
-        console.error(`[fx-effect] Unhandled error: Catch handler not found in context.`);
-        throw err;
-      }
-    }
-    context.setRuntimeState({ lastResult: nextValue });
-    await yieldToMainThread();
-    result = generator.next(nextValue);
-  }
-  return { context, cancel: token.cancel };
-}
-*/
 
 /**
  * 現在の処理を一旦中断し、後続の処理を新しいマイクロタスクとして予約するPromiseを返す。
@@ -390,6 +249,55 @@ export type FxMiddleware = (
   next: () => Promise<any> // 次のMiddlewareを呼び出すための関数
 ) => Promise<any>;
 
+export function* run(node: FxNode, context: IEffectContext): Generator<FxNode, void, any> {
+  context.onNodeEnter?.(node);
+  try {
+    switch (node.type) {
+      case 'sequence':
+        for (const step of node.steps) {
+          yield* run(step, context);
+        }
+        break;
+
+      case 'loop':
+        while (node.cond()) {
+          yield* run(node.body, context);
+        }
+        break;
+      
+      case 'condition':
+        if (node.if()) {
+          yield* run(node.then, context);
+        } else if (node.else) {
+          yield* run(node.else, context);
+        }
+        break;
+
+      case 'switch':
+        const key = node.by();
+        const branch = node.cases.get(key) ?? node.default;
+        if (branch) {
+          yield* run(branch, context);
+        }
+        break;
+
+      case 'none':
+        break;
+
+      default:
+        // call, wait, take などのプリミティブな命令は、そのままexecuteに渡す
+        yield node;
+        break;
+    }
+    context.onNodeExit?.(node);
+  } catch(err) {
+    // エラーで完了した場合、 onNodeExit フックにエラー情報を渡す
+    context.onNodeExit?.(node, undefined, err);
+    throw err; // エラーは再スローする
+  }
+}
+
+
 export async function execute(
   generator: Generator<FxNode, void, any>,
   context: IEffectContext,
@@ -417,15 +325,15 @@ export async function execute(
     const execCtx: FxExecutionContext = { node, context, token, run, execute, handler };
 
     // Middlewareパイプラインの実行を開始
-    const dispatch = async (i: number): Promise<any> => {
+    const runNextMiddleware = async (i: number): Promise<any> => {
       const middleware = allMiddlewares[i];
       if (!middleware) return; // パイプラインの終端
       // 次のMiddlewareを呼び出すための`next`関数を生成して渡す
-      return await middleware(execCtx, () => dispatch(i + 1));
+      return await middleware(execCtx, () => runNextMiddleware(i + 1));
     };
 
     try {
-      nextValue = await dispatch(0);
+      nextValue = await runNextMiddleware(0);
     } catch (err) {
       const catcher = (node as any).catcher;
       if(typeof catcher === 'function') {
