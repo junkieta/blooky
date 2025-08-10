@@ -2,7 +2,7 @@
 
 import { isChainedProp, isDripperStream, isStream, type Prop, type Stream } from "./blooky";
 import { jshtml } from "./blooky-dom";
-import { createCancelToken, execute, fx, FxMiddleware, run, type FxDispatchSettings, type FxNode, type IEffectContext } from "./blooky-effect"; // assume effect-core exists
+import { createCancelToken, execute, fx, FxMiddleware, run, type FxDispatchSettings, type FxNode, type IEffectContext } from "./blooky-fx"; // assume effect-core exists
 
 type FxResolvable = Prop<any> | Stream<any> | Function | any;
 
