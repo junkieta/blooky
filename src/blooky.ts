@@ -47,7 +47,7 @@ type MergedStream<A> = StreamBase<A,{
     reduceFn: (a:A,b:A)=>A
 }>
 type MappedStream<A,B=any> = StreamBase<A, {
-    mapFn: (v:B)=>A
+    mapFn: (v:B)=>A|Promise<A>
 }>;
 type FilterStream<A> = StreamBase<A,{ 
     /**
@@ -70,7 +70,7 @@ type Stream<A> =
 type FlowingState = [PropEffect<unknown>[], [MergedStream<any>,any][]];
 
 // 副作用の集合体
-type Effect = PropEffect<unknown>[];
+type DripperEffect = PropEffect<unknown>[];
 
 type PropEffect<A> = {
     created: number
@@ -291,7 +291,7 @@ const streamToFlowingState = <A>(v:A) => (s:Stream<A>) : FlowingState => {
     if(!STREAM_PROP_RELATIONS.has(s)) return [[], waiting];
     const p = STREAM_PROP_RELATIONS.get(s)!;
     const created = Date.now();
-    const effect: Effect = p.map((prop)=>({
+    const effect: DripperEffect = p.map((prop)=>({
         prop,
         created,
         nextValue: v,
@@ -307,11 +307,14 @@ const concatTuple = <T extends any[][]>(a: T, b: T): T => a.map((x, i) => x.conc
  * @param v 
  * @returns 
  */
-const flow = <A>(v:A) => (s:Stream<A>) : FlowingState => {
+const flow = <A>(v:A, allowPromise: boolean) => (s:Stream<A>) : FlowingState => {
+    if(v instanceof Promise && !allowPromise)
+        // 同期フローのPromiseは明示的に許可されなければエラーを投げる
+        throw new Error("Asynchronous function was used in a synchronous stream. Check DripOption.acceptPromise to execute this flow.");
     const state = streamToFlowingState(v)(s);
     const next = [...s.next].filter((s)=> !("filterFn" in s) || s.filterFn(v));
     return next.length
-        ? next.map((_s) => flow("mapFn" in _s ? _s.mapFn(v) : v)(_s)).reduce(concatTuple, state)
+        ? next.map((_s) => flow("mapFn" in _s ? _s.mapFn(v) : v, allowPromise)(_s)).reduce(concatTuple, state)
         : state;
 }
 
@@ -320,8 +323,8 @@ const flow = <A>(v:A) => (s:Stream<A>) : FlowingState => {
  * @param v 
  * @returns 
  */
-const flowLazy = <A>(v:A) => (s:Stream<A>) : FlowingState => {
-    const r = flow(v)(s);
+const flowLazy = <A>(v:A, allowPromise = false) => (s:Stream<A>) : FlowingState => {
+    const r = flow(v, allowPromise)(s);
     const [updates,waiting] = r;
     // マージされたストリームとはつながっていない
     if(!waiting.length) return r;
@@ -337,23 +340,135 @@ const flowLazy = <A>(v:A) => (s:Stream<A>) : FlowingState => {
     return [...m].map(([s,v])=>flowLazy(v.reduce(s.reduceFn))(s)).reduce(concatTuple, [updates,[]]);
 }
 
+// blooky.ts
+
+// 戻り値の型を定義
+type AsyncFlowState = {
+  effects: DripperEffect,
+  waiting: [MergedStream<any>, any][]
+};
+
+/**
+ * 【内部用】非同期でグラフを走査し、Effectと待機リストを収集する
+ */
+const collectFlowStateAsync = async <A>(v: A, s: Stream<A>): Promise<AsyncFlowState> => {
+  // streamToFlowingStateは同期的
+  const [initialEffects, initialWaiting] = streamToFlowingState(v)(s);
+  
+  const finalEffects = [...initialEffects];
+  const finalWaiting = [...initialWaiting];
+
+  // s.next を非同期で処理
+  for (const child of s.next) {
+    if ("filterFn" in child && !child.filterFn(v)) continue;
+    
+    let nextValue: any = v;
+    if ("mapFn" in child) {
+      const result = child.mapFn(v);
+      nextValue = result instanceof Promise ? await result : result;
+    }
+    
+    // 再帰的に収集
+    const { effects, waiting } = await collectFlowStateAsync(nextValue, child);
+    finalEffects.push(...effects);
+    finalWaiting.push(...waiting);
+  }
+
+  // s.lazyNext はここでは処理せず、そのまま待機リストに追加
+  for (const child of s.lazyNext) {
+    finalWaiting.push([child, v]);
+  }
+
+  return { effects: finalEffects, waiting: finalWaiting };
+};
+
+// blooky.ts
+
+/**
+ * 非同期版のflow。AsyncMappedStreamとlazyNextを処理できる。
+ */
+async function* flowAsync<A>(v: A, s: Stream<A>): AsyncGenerator<PropEffect<unknown>> {
+  // --- フェーズ0：Promiseは即await 
+  if(v instanceof Promise) return flowAsync(await v, s);
+
+  // --- フェーズ1：収集 ---
+  // ヘルパーを呼び出し、グラフ全体の実行計画を一度に収集する
+  const { effects, waiting } = await collectFlowStateAsync(v, s);
+
+  // --- フェーズ2：実行と遅延処理 ---
+  // 1. まず、直接の副作用（Propの更新）を全てyieldする
+  for (const effect of effects) {
+    yield effect;
+  }
+  // 2. lazyNextの処理を行う
+  if (waiting.length === 0) {
+    return; // 遅延処理がなければ終了
+  }
+  // 2a. 待機リストを、合流先のMergedStreamごとにグループ化する
+  const waitingMap = waiting.reduce((map, [stream, value]) => {
+    map.set(stream, (map.get(stream) || []).concat(value));
+    return map;
+  }, new Map<MergedStream<any>, any[]>());
+
+  // 2b. グループごとにreducerを適用し、flowAsyncを再帰的に呼び出す
+  for (const [mergedStream, values] of waitingMap.entries()) {
+    if (values.length > 0) {
+      const reducedValue = values.reduce(mergedStream.reduceFn);
+      // 解決した値で、再びflowAsyncの実行を委譲する
+      yield* flowAsync(reducedValue, mergedStream);
+    }
+  }
+}
+
+type DripOptions = {
+    acceptPromise?: 'deny'|'allow'|'await'
+}
+
 /**
  * エンハンサーの登録用Set
  */
 const EFFECT_ENHANCERS = new Set<(e:PropEffect<any>)=>PropEffect<any>>();
+
+
+// --- オーバーロード定義 ---
+// 1. optionsがない、またはdeny/allowの場合 (同期的なEffectを返す)
+function drip<A>(v: A, options?: { acceptPromise?: 'deny' | 'allow' } ): (d: DripperStream<A>) => DripperEffect;
+// 2. awaitモードが明示された場合 (非同期的なPromise<Effect>を返す)
+function drip<A>(v: A, options: { acceptPromise: 'await' }): (d: DripperStream<A>) => Promise<DripperEffect>;
 /**
  * 起点となるストリームに時変値を流し込み、関連するオブザーバの呼び出しと時変値で構成されたEffectを返す。
  * @param s 
  * @returns 
  */
-const drip = <A>(v:A) => (d:DripperStream<A>) : Effect => {
-    try {
-        return flowLazy(v)(d)![0].map((e)=>[...EFFECT_ENHANCERS].reduce((e,f)=>f(e), e));
-    } catch (error) {
-        console.error('Error in flow function:', error);
-        throw error; // 副作用の存在しないはずの場所でエラーが起きているのでuncaught
-    }
+function drip<A>(v:A, options?: DripOptions) {
+    // デフォルトは最も安全な 'deny'
+    const mode = options?.acceptPromise ?? 'deny';
+    return mode === 'await'
+        // "await"モードの場合は、非同期エンジンを呼び出し、Promise<Effect>を返す
+        ? (d:DripperStream<A>) : Promise<DripperEffect> => dripAsync(v)(d)
+        // "deny" または "allow" の場合は、同期的エンジンを呼び出し、Effectを返す
+        : (d:DripperStream<A>) : DripperEffect => dripSync(v, mode === 'allow')(d);
 }
+
+/**
+ * 同期的なdrip。最速だが、Promiseの扱いに注意。
+ */
+const dripSync = <A>(v:A, allowPromise = false) => (d:DripperStream<A>) => 
+    flowLazy(v, allowPromise)(d)![0].map((e)=>[...EFFECT_ENHANCERS].reduce((e,f)=>f(e), e));
+
+/**
+ * 非同期版のdrip。flowAsyncを呼び出し、EffectのPromiseを返す。
+ */
+const dripAsync = <A>(v: A) => async (d: DripperStream<A>): Promise<DripperEffect> => {
+  const effectList: DripperEffect = [];
+  // for await...of で非同期ジェネレータを処理する
+  for await (const effect of flowAsync(v, d)) {
+    effectList.push(effect);
+  }
+  // エンハンサーの適用などはsyncと同じ
+  return effectList.map(e => [...EFFECT_ENHANCERS].reduce((e, f) => f(e), e));
+};
+
 /**
  * サブモジュールからEffectの生成をupgradeするためのエンハンサー登録/登録解除関数。
  */
@@ -582,7 +697,7 @@ const moments = {} as moments; {
 }
 
 export {drip,stream,isStream,isDripperStream,isChainedProp,countReferences,hasReferences,clear,hold,accum,merge,map,filter,lift,remap,when,resolve,clock,moments};
-export type {Stream,FilterStream,MappedStream,MergedStream,DripperStream,MomentState,MomentStream,Prop,PromisedProp,Effect};
+export type {Stream,FilterStream,MappedStream,MergedStream,DripperStream,MomentState,MomentStream,Prop,PromisedProp,DripperEffect as Effect};
 
 // 簡易的な追跡関数
 function dumpGraphDOT(entries: Record<string, Stream<any> | Prop<any>>): string {
