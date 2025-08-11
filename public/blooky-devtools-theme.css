@@ -1,0 +1,10 @@
+:host {
+  /* デバッグUIのテーマ変数をここで一元管理 */
+  --fx-border-color: #ccc;
+  --fx-border-radius: 4px;
+  --fx-label-color: #666;
+  --fx-running-border-color: #007bff;
+  --fx-running-shadow-color: rgba(0, 123, 255, 0.5);
+  --fx-completed-border-color: #28a745;
+  --fx-paused-border-color: #9a760bff;
+}

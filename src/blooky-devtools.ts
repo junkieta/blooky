@@ -1,4 +1,4 @@
-// blooky-fxdom-debbuger.ts
+import { isChainedProp, isDripperStream, isStream, Prop, Stream, blookyInternals } from "./blooky";
 import { type FxNode, FxMiddleware } from "./blooky-fx";
 import { EffectElementTagNameMap as DefaultEffectElementTagNameMap, EffectElement, FxEffect as ConcreteEffectElementConstructor, fxdom } from "./blooky-fxdom";
 
@@ -52,11 +52,14 @@ DebEffectElementStyleSheet.replaceSync(`
 :host(.is-completed.is-recovered)::before {
   content: attr(data-fx-type) " (recovered)";
 }
-
 :host([slot])::before {
   content: attr(data-fx-type) "(slot=[" attr(slot) "])";
 }
 `);
+
+const sheet = new CSSStyleSheet();
+sheet.replaceSync(".is-emitting { transition: fill 0.1s; fill: red; }");
+document.adoptedStyleSheets.push(sheet);
 
 const debugMiddleware: FxMiddleware = async (ctx, next) => {
   const { node } = ctx;
@@ -132,10 +135,30 @@ EffectElementTagNameMap["fx-switch"] = class extends (EffectElementTagNameMap["f
   }
 }
 
+
+// dripはターゲットのStreamのグラフと紐づける
+EffectElementTagNameMap["fx-drip"] = class extends (EffectElementTagNameMap["fx-drip"] as typeof ConcreteEffectElementConstructor) {
+  static observedAttributes = ["class"];
+  attributeChangedCallback(name: string, oldValue: string, newValue: string) {
+    if(name !== "class" || newValue !== "is-running") return;
+    const streamKey = this.getAttribute("stream-key")!; if(!streamKey) return;
+    const nodeElement = document.getElementById(`node-${streamKey}`); if(!nodeElement) return;
+    const stream = this.resolveContextValue(streamKey); if(!stream) return;
+    nodeElement.classList.add('is-emitting');
+    // アニメーションが終わったらclassを削除
+    setTimeout(() => nodeElement.classList.remove('is-emitting'), 1500);
+  }
+}
+
+
 // effectはルートでテーマ変数をstyleに追加
 EffectElementTagNameMap["fx-effect"] = class extends (EffectElementTagNameMap["fx-effect"] as typeof ConcreteEffectElementConstructor) {
   
+  //  デバッグ用ミドルウェアを設定
   protected middleWares: FxMiddleware[] = [debugMiddleware];
+
+  static observedAttributes = ["theme"];
+  private themeCSS? : CSSStyleSheet;
   
   onNodeEnter(node: FxNode): void {
     const element = FxNodeMap.get(node);
@@ -153,21 +176,100 @@ EffectElementTagNameMap["fx-effect"] = class extends (EffectElementTagNameMap["f
     }
   }
 
+  loadTheme(src: string) {
+    if(!src || !this.shadowRoot) return;
+    if(!this.themeCSS) {
+      this.themeCSS = new CSSStyleSheet();
+      this.shadowRoot!.adoptedStyleSheets.push(this.themeCSS);
+    }
+    fetch(src).then((res)=>res.text()).then((text)=>this.themeCSS!.replace(text));
+  }
+
+  attributeChangedCallback(name: string, oldValue: string, newValue: string) {
+    if(name === "theme" && oldValue !== newValue)
+      this.loadTheme(newValue);
+  }
+
   connectedCallback(): void {
     super.connectedCallback();
-    this.shadowRoot!.querySelector("style")!.textContent += `
-:host {
-  /* デバッグUIのテーマ変数をここで一元管理 */
-  --fx-border-color: #ccc;
-  --fx-border-radius: 4px;
-  --fx-label-color: #666;
-  --fx-running-border-color: #007bff;
-  --fx-running-shadow-color: rgba(0, 123, 255, 0.5);
-  --fx-completed-border-color: #28a745;
-  --fx-paused-border-color: #9a760bff;
-}`;
+    if(this.hasAttribute("theme")) this.loadTheme(this.getAttribute("theme")!);
   }
 }
 
 // 呼び出し元で fxdom.defineEffectElements(EffectElmentTagNameMap) すること。
 export {fxdom,EffectElementTagNameMap,debugMiddleware};
+
+// グラフ描画
+function dumpGraphDOT(entries: Record<string, Stream<any> | Prop<any>>): string {
+  const names = new WeakMap(Object.entries(entries).map(([k,v])=>[v,k]));
+  const visited = new WeakMap<any, string>(); // obj → nodeId
+  const edges: string[] = [];
+  const nodes: string[] = [];
+  let counter = 0;
+
+  function addNode(label: string, shape = "ellipse") {
+    const id = `n${counter++}`;
+    nodes.push(`${id} [label="${label}", shape=${shape}, id="node-${label}"]`);
+    return id;
+  }
+
+  function getShape(node: Stream<any>|Prop<any>) {
+    if(isChainedProp(node))
+        return "box";
+    if(isDripperStream(node))
+        return "ellipse";
+    if("mapFn" in node)
+        return "diamond";
+    if("filterFn" in node)
+        return "triangle";
+    if("reduceFn" in node)
+        return "hexagon";
+    return "plain";
+  }
+
+  function visit(obj: any, label: string) {
+    if (visited.has(obj)) return visited.get(obj)!;
+
+    const shape = getShape(obj);
+    let id: string;
+    if (isStream(obj)) {
+      id = addNode(label, shape);
+      visited.set(obj, id);
+
+      for (const relType of ["next", "lazyNext"]) {
+        const set = obj[relType] as Set<any>;
+        if (!set) continue;
+        for (const target of set) {
+          const targetLabel = names.get(target) || (isChainedProp(target) ? "Prop" : "Stream");
+          const targetId = visit(target, targetLabel);
+          edges.push(`${id} -> ${targetId}`);
+        }
+      }
+    } else if (isChainedProp(obj)) {
+      id = addNode(label, shape);
+      visited.set(obj, id);
+
+      const source = blookyInternals.PROP_FROM.get(obj) as Stream<any>;
+      if (source) {
+        const srcLabel = names.get(source) || "Stream";
+        const srcId = visit(source, srcLabel);
+        edges.push(`${srcId} -> ${id}`);
+      }
+
+    } else {
+      id = addNode(label, shape);
+      visited.set(obj, id);
+    }
+
+    return id;
+  }
+
+  Object.entries(entries).forEach(([name,stream]) => {
+    visit(stream, name);
+  })
+
+  return `digraph BlookyGraph {\nrankdir=LR;\n${nodes.join("\n")}\n${edges.join("\n")}\n}`;
+}
+
+
+export {dumpGraphDOT};

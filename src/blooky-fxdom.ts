@@ -24,6 +24,9 @@ export abstract class EffectElement extends HTMLElement {
   
 }
 
+// ---- Helpers ----
+const singleOrSequence = (n: FxNode[]) => n.length > 1 ? fx.sequence(n) : n[0] ?? fx.none();
+
 // ---- Core Elements ----
 
 
@@ -73,7 +76,7 @@ class FxCall extends EffectElement {
       const catcherKey = this.getAttribute("catcher");
       const catchFunc = catcherKey ? this.resolveContextValue(catcherKey, true) as (v:Error)=>void : undefined;
       if (typeof funcFromContext === "function") {
-        return fx.call(() => funcFromContext(...args), typeof catchFunc === "function" ? catchFunc : undefined);
+        return fx.call(() => funcFromContext(...args), typeof catchFunc === "function" ? catchFunc : undefined, this.id);
       }
 
       // どちらにも見つからない場合
@@ -95,18 +98,19 @@ class FxCall extends EffectElement {
 const flowTemplateCache = new Map<string, HTMLTemplateElement>();
 
 
-// blooky-fxdom.ts
-
 class FxInclude extends EffectElement { // FxFlowからFxIncludeにリネーム
 
   // 'src'属性の変更を監視対象に含める
   static get observedAttributes() {
     return ['src'];
   }
-
-  // toFxNodeは変更なし
+  
   toFxNode(): FxNode {
-    return fx.sequence(this.childrenToFxNodes());
+    const children = this.childrenToFxNodes();
+    const node = children.length > 1
+      ? fx.sequence(children)
+      : children[0] ?? fx.none();
+    return this.id ? { ...node, id: this.id } : node;
   }
 
   connectedCallback() {
@@ -340,7 +344,7 @@ class FxTake extends EffectElement {
     }
 
     // 3. fx.takeノードを返す
-    return fx.take(stream);
+    return fx.take(stream, this.id);
   }
 
 }
@@ -382,8 +386,13 @@ class FxContext extends EffectElement implements IEffectContext {
     Object.entries(ctx).forEach(([k, v]) => this.context.set(k, v));
   }
 
-  setRuntimeState({lastResult}: { lastResult: any }): void {
-    this.lastResult = lastResult;
+  setRuntimeState(state: { lastResult: any }): void {
+    Object.entries(state).forEach(([k,v])=>{
+      if(k === "lastResult")
+        this.lastResult = v;
+      else
+        this.setContext({ [k]:v })
+    })
   }
 
   // use属性値をホワイトリストとして利用

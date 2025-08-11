@@ -58,7 +58,7 @@ export type FxDispatchSettings<A> = CustomEventInit<Prop<A>> & {
 //
 export const fx = {
   none: (): FxNode => ({ type: "none" }),
-  call: (action: () => unknown, catcher?: (v:Error) => unknown): FxNode => ({ type: "call", action, catcher }),
+  call: (action: () => unknown, catcher?: (v:Error) => unknown, id?: string): FxNode => ({ type: "call", action, catcher, id }),
   sequence: (steps: FxNode[]): FxNode => ({ type: "sequence", steps }),
   parallel: (steps: FxNode[]): FxNode => ({ type: "parallel", steps }),
   race: (steps: FxNode[]): FxNode => ({ type: "race", steps }),
@@ -91,9 +91,10 @@ export const fx = {
     catcher,
     mode
   }),
-  take: <T>(stream: Stream<T>) : FxNode =>({
+  take: <T>(stream: Stream<T>, id?: string) : FxNode =>({
     type: "take",
-    stream
+    stream,
+    id
   }),
   dispatch: <T>(name:string, settings: FxDispatchSettings<T>, child?: FxNode): FxNode => {
     return {
@@ -114,7 +115,7 @@ export interface IEffectContext {
    * 実行時の状態を書き込むためのメソッド。
    * @param state 実行状態を表すオブジェクト
    */
-  setRuntimeState(state: { lastResult: any }): void;
+  setRuntimeState(state: { [key:string]: any, lastResult: any }): void;
 
   /**
    * コンテキストから値を取得するためのメソッド。
@@ -347,7 +348,14 @@ export async function execute(
       }
     }
     
-    context.setRuntimeState({ lastResult: nextValue });
+    const state = {
+      lastResult: nextValue
+    };
+    if(node.id) {
+      state[node.id] = nextValue;
+    }
+    context.setRuntimeState(state);
+
     await yieldToMainThread();
     result = generator.next(nextValue);
   }

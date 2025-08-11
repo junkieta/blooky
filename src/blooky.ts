@@ -84,10 +84,6 @@ type PropEffect<A> = {
  */
 type Prop<A> = ()=>A;
 
-const parrot = <A>(v:A) => v;
-const compose = <A,B>(a:(v:A)=>B) => <C>(b:(v:B)=>C) => (v:A) => b(a(v));
-export {parrot,compose};
-
 /**
  * ストリーム/プロパティのメモリを解放する。ガベージコレクトの補助。
  * @param s 
@@ -184,32 +180,48 @@ const merge = <A> (f?:(a:A,b:A)=>A) => (s:Stream<A>[]) : MergedStream<A> => {
  * @param s 
  * @returns 
  */
-const filter = <A>(f:(v:A)=>boolean) => (s:Stream<A>) : FilterStream<A> => {
-    const _s: FilterStream<A> = {
-        filterFn: f,
-        next: new Set(),
-        lazyNext: new Set(),
-    };
-    s.next.add(_s);
-    _s[STREAM_CLEANER] = () => s.next.delete(_s);
-    cleanupRegistry.register(_s, new WeakRef(_s));
-    return _s;
-}
+const filter = <A>(f:((v:A)=>boolean)|RegExp|A) => typeof f !== "function"
+    ? (filter(f instanceof RegExp ? (v:A)=>f.test(String(v)) : (v:A) => v === f))
+    : (s:Stream<A>) : FilterStream<A> => {
+        const _s: FilterStream<A> = {
+            filterFn: f as (v:A)=>boolean,
+            next: new Set(),
+            lazyNext: new Set(),
+        };
+        s.next.add(_s);
+        _s[STREAM_CLEANER] = () => s.next.delete(_s);
+        cleanupRegistry.register(_s, new WeakRef(_s));
+        return _s;
+    }
 
 /**
  * ストリームを別の流れに変換する
  */
-const map = <A,B>(f:(v:B)=>A) => (s:Stream<B>) : MappedStream<A,B> => {
-    const _s: MappedStream<A,B> = {
-        mapFn: f,
-        next: new Set(),
-        lazyNext: new Set()
+const map = <A,B>(f:((v:B)=>A)|Prop<A>|A): ((s:Stream<B>)=>MappedStream<A,B>) =>
+    typeof f !== "function"
+    ? map<A,B>(() => f)
+    : (s:Stream<B>) : MappedStream<A,B> => {
+        const _s: MappedStream<A,B> = {
+            mapFn: f as (v:B)=>A,
+            next: new Set(),
+            lazyNext: new Set()
+        };
+        s.next.add(_s);
+        _s[STREAM_CLEANER] = () => s.next.delete(_s);
+        cleanupRegistry.register(_s, new WeakRef(_s));
+        return _s;
     };
-    s.next.add(_s);
-    _s[STREAM_CLEANER] = () => s.next.delete(_s);
-    cleanupRegistry.register(_s, new WeakRef(_s));
-    return _s;
-};
+
+const junction = <A,B>(records: Map<B,Stream<A>>|Record<string,Stream<A>>) => {
+    if(!(records instanceof Map)) return junction(new Map(Object.entries(records)));
+    return (p:Prop<B>) => {
+        const streams = [...records.entries()].map(([k,s]:[B,Stream<A>])=>filter(()=>p()===k)(s));
+        const merged = merge()(streams);
+        merged[STREAM_CLEANER] = () => streams.forEach((s)=>clear(s));
+        return merged;
+    };
+}
+    
 
 /**
  * イベントストリームから一つの値を計算する
@@ -340,8 +352,6 @@ const flowLazy = <A>(v:A, allowPromise = false) => (s:Stream<A>) : FlowingState 
     return [...m].map(([s,v])=>flowLazy(v.reduce(s.reduceFn))(s)).reduce(concatTuple, [updates,[]]);
 }
 
-// blooky.ts
-
 // 戻り値の型を定義
 type AsyncFlowState = {
   effects: DripperEffect,
@@ -381,8 +391,6 @@ const collectFlowStateAsync = async <A>(v: A, s: Stream<A>): Promise<AsyncFlowSt
 
   return { effects: finalEffects, waiting: finalWaiting };
 };
-
-// blooky.ts
 
 /**
  * 非同期版のflow。AsyncMappedStreamとlazyNextを処理できる。
@@ -424,11 +432,6 @@ type DripOptions = {
     acceptPromise?: 'deny'|'allow'|'await'
 }
 
-/**
- * エンハンサーの登録用Set
- */
-const EFFECT_ENHANCERS = new Set<(e:PropEffect<any>)=>PropEffect<any>>();
-
 
 // --- オーバーロード定義 ---
 // 1. optionsがない、またはdeny/allowの場合 (同期的なEffectを返す)
@@ -454,7 +457,7 @@ function drip<A>(v:A, options?: DripOptions) {
  * 同期的なdrip。最速だが、Promiseの扱いに注意。
  */
 const dripSync = <A>(v:A, allowPromise = false) => (d:DripperStream<A>) => 
-    flowLazy(v, allowPromise)(d)![0].map((e)=>[...EFFECT_ENHANCERS].reduce((e,f)=>f(e), e));
+    [...EFFECT_ENHANCERS].reduce((e,f)=>f(e), flowLazy(v, allowPromise)(d)![0]);
 
 /**
  * 非同期版のdrip。flowAsyncを呼び出し、EffectのPromiseを返す。
@@ -466,16 +469,21 @@ const dripAsync = <A>(v: A) => async (d: DripperStream<A>): Promise<DripperEffec
     effectList.push(effect);
   }
   // エンハンサーの適用などはsyncと同じ
-  return effectList.map(e => [...EFFECT_ENHANCERS].reduce((e, f) => f(e), e));
+  return [...EFFECT_ENHANCERS].reduce((e, f) => f(e), effectList);
 };
+
+/**
+ * エンハンサーの登録用Set
+ */
+const EFFECT_ENHANCERS = new Set<(e:DripperEffect)=>DripperEffect>();
 
 /**
  * サブモジュールからEffectの生成をupgradeするためのエンハンサー登録/登録解除関数。
  */
-drip.registerEnhancer = <A extends PropEffect<any>>(f:(e:PropEffect<any>)=>A) => {
+drip.registerEnhancer = (f:(e:DripperEffect)=>DripperEffect) => {
     EFFECT_ENHANCERS.add(f);
 };
-drip.unregisterEnhancer = <A extends PropEffect<any>>(f:(e:PropEffect<any>)=>A) => {
+drip.unregisterEnhancer = (f:(e:DripperEffect)=>DripperEffect) => {
     EFFECT_ENHANCERS.delete(f);
 };
 
@@ -696,78 +704,27 @@ const moments = {} as moments; {
 
 }
 
-export {drip,stream,isStream,isDripperStream,isChainedProp,countReferences,hasReferences,clear,hold,accum,merge,map,filter,lift,remap,when,resolve,clock,moments};
-export type {Stream,FilterStream,MappedStream,MergedStream,DripperStream,MomentState,MomentStream,Prop,PromisedProp,DripperEffect as Effect};
+export const blookyInternals = {
+    IS_DRIPPER,
+    PROP_FROM,
+    PROP_UPDATE,
+    STREAM_CLEANER,
+    STREAM_PROP_RELATIONS
+};
 
-// 簡易的な追跡関数
-function dumpGraphDOT(entries: Record<string, Stream<any> | Prop<any>>): string {
-  const names = new WeakMap(Object.entries(entries).map(([k,v])=>[v,k]));
-  const visited = new WeakMap<any, string>(); // obj → nodeId
-  const edges: string[] = [];
-  const nodes: string[] = [];
-  let counter = 0;
+export {
+    drip,stream,
+    isStream,isDripperStream,isChainedProp,
+    countReferences,hasReferences,clear,
+    merge,junction,map,filter,
+    hold,accum,lift,remap,when,resolve,
+    clock,moments
+};
 
-  function addNode(label: string, shape = "ellipse") {
-    const id = `n${counter++}`;
-    nodes.push(`${id} [label="${label}", shape=${shape}]`);
-    return id;
-  }
+export type {
+    Stream,FilterStream,MappedStream,MergedStream,DripperStream,
+    Prop,PromisedProp,
+    PropEffect,DripperEffect,
+    MomentStream,MomentState,
+};
 
-  function getShape(node: Stream<any>|Prop<any>) {
-    if(isChainedProp(node))
-        return "box";
-    if(IS_DRIPPER in node)
-        return "ellipse";
-    if("mapFn" in node)
-        return "diamond";
-    if("filterFn" in node)
-        return "triangle";
-    if("reduceFn" in node)
-        return "hexagon";
-    return "plain";
-  }
-
-  function visit(obj: any, label: string) {
-    if (visited.has(obj)) return visited.get(obj)!;
-
-    const shape = getShape(obj);
-    let id: string;
-    if (isStream(obj)) {
-      id = addNode(label, shape);
-      visited.set(obj, id);
-
-      for (const relType of ["next", "lazyNext"]) {
-        const set = obj[relType] as Set<any>;
-        if (!set) continue;
-        for (const target of set) {
-          const targetLabel = names.get(target) || (isChainedProp(target) ? "Prop" : "Stream");
-          const targetId = visit(target, targetLabel);
-          edges.push(`${id} -> ${targetId}`);
-        }
-      }
-    } else if (isChainedProp(obj)) {
-      id = addNode(label, shape);
-      visited.set(obj, id);
-
-      const source = PROP_FROM.get(obj) as Stream<any>;
-      if (source) {
-        const srcLabel = names.get(source) || "Stream";
-        const srcId = visit(source, srcLabel);
-        edges.push(`${srcId} -> ${id}`);
-      }
-    } else {
-      id = addNode(label, shape);
-      visited.set(obj, id);
-    }
-
-    return id;
-  }
-
-  Object.entries(entries).forEach(([name,stream]) => {
-    visit(stream, name);
-  })
-
-  return `digraph BlookyGraph {\nrankdir=LR;\n${nodes.join("\n")}\n${edges.join("\n")}\n}`;
-}
-
-export {dumpGraphDOT, flow,flowLazy};

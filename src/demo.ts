@@ -1,8 +1,11 @@
 // -- 0. 事前ロード ---
-import { stream, accum, merge, hold, map, remap, dumpGraphDOT } from "./blooky";
+import { stream, accum, merge, hold, map, remap } from "./blooky";
 import { into, jshtml } from "./blooky-dom";
 import type { FxEffect } from "./blooky-fxdom";
-import { fxdom,EffectElementTagNameMap } from "./blooky-fxdom-debugger";
+import { fxdom,EffectElementTagNameMap, dumpGraphDOT } from "./blooky-devtools";
+// dot視覚化用にviz
+import { instance as viz_instance } from "@viz-js/viz";
+
 // debuggerとしてdefine
 fxdom.defineEffectElements(EffectElementTagNameMap);
 
@@ -62,37 +65,31 @@ const useKeys = Object.keys(rootContext);
 const fxEffectElement = jshtml({
     $: {
         use: useKeys.join(),
+        theme: "./blooky-devtools-theme.css",
         "onsave": into(save$),
     },
     "fx-effect": 
     [
-        { "fx-take": null,
-            $: { "stream-key": "save$" } },
+        { "fx-take": jshtml.$({ "stream-key": "save$" }) },
         // 1. 確認メッセージを表示
-        { "fx-drip": null, 
-            $: { "stream-key": "statusMessageStream$", value: '"Confirmation needed: Save this count? (Click Yes/No)"' } },
+        { "fx-drip": jshtml.$({ "stream-key": "statusMessageStream$", value: '"Confirmation needed: Save this count? (Click Yes/No)"' }) },
         // 2. confirmationStreamから値が流れてくるのを待つ
-        { "fx-take": null,
-            $: { "stream-key": "confirmation$" } },
+        { "fx-take": jshtml.$({ "stream-key": "confirmation$" }) },
         // 3. 結果に応じて処理を分岐
         { "fx-switch": [
             // "yes"の場合のフロー
             { "fx-sequence": [
-                { "fx-drip": null,
-                    $: { "stream-key": "statusMessageStream$", value: '"Saving..."' } },
-                { "fx-wait": null,
-                    $: { ms: "1500" } },
-                { "fx-drip": null,
-                    $: { "stream-key": "statusMessageStream$", value: '$finalMessage' } },
-                { "fx-dispatch": { "fx-call": { arg: '"save complete"' }, $: { fn: "log" } },
+                { "fx-drip": jshtml.$({ "stream-key": "statusMessageStream$", value: '"Saving..."' }) },
+                { "fx-wait": jshtml.$({ ms: "1500" }) },
+                { "fx-drip": jshtml.$({ "stream-key": "statusMessageStream$", value: '$finalMessage' }) },
+                { "fx-dispatch":
+                    { "fx-call": { arg: '"save complete"' }, $: { fn: "log" } },
                     $: { name: "save" } }
                 ], 
                 $: { slot: "yes" }
             },
             // "no"またはdefaultの場合のフロー
-            { "fx-drip": null, 
-                $: { slot: "default", "stream-key": "statusMessageStream$", value: '"Save cancelled."' }
-            }
+            { "fx-drip": jshtml.$({ slot: "default", "stream-key": "statusMessageStream$", value: '"Save cancelled."' }) }
             ],
             $: { by: "lastResult" }
         }
@@ -100,17 +97,21 @@ const fxEffectElement = jshtml({
 }) as FxEffect;
 
 // Stream/Prop構造のdot
-const dot = jshtml({
-    pre: dumpGraphDOT({
-        increment$,
-        decrement$,
-        changeCountStream,
-        $count,
-        statusMessageStream$,
-        $statusMessage,
-        $finalMessage
-    }), $: { class : "dot" }
+const dot = dumpGraphDOT({
+    increment$,
+    decrement$,
+    changeCountStream,
+    $count,
+    statusMessageStream$,
+    $statusMessage,
+    $finalMessage
 });
+
+
+const renderDot = async (dot: string) => {
+    const viz = await viz_instance();
+    return viz.renderSVGElement(dot);
+}
 
 // --- 3. アプリケーションのマウントとコンテキスト設定 ---
 
@@ -118,4 +119,5 @@ const dot = jshtml({
 fxEffectElement.setContext(rootContext);
 
 // UIをDOMにマウントする
-document.body.append(AppUI, fxEffectElement, dot);
+document.body.append(AppUI, fxEffectElement, jshtml(renderDot(dot)));
+
