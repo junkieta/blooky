@@ -1,0 +1,9 @@
+{
+  "devDependencies": {
+    "vite": "^6.3.5"
+  },
+  "dependencies": {
+    "@viz-js/viz": "^3.16.0",
+    "viz.js": "^2.1.2"
+  }
+}

@@ -1,6 +1,7 @@
 // blooky-dom-types.d.ts
 
-import type { Prop } from "./blooky"; // Prop/Stream 型に合わせて
+import type { DripperStream, Prop } from "./blooky"; // Prop/Stream 型に合わせて
+import type { EmptyElementAttributeMapSource } from "./blooky-dom"; // この行を追加
 
 // --- HTML属性名一覧
 export type HTMLAttrName =
@@ -43,13 +44,24 @@ export type HTMLEventHandlers = Extract<keyof GlobalEventHandlers, `on${string}`
 
 // --- 値型バリアント
 export type V_STRING = string | number | boolean | undefined | null;
-export type V_CLASSLIST = string[] | { [key: string]: boolean };
-export type V_DATASET = { [key: string]: V_STRING };
+export type V_CLASSLIST = string[] | Record<string,boolean>;
+export type V_DATASET = Record<string,V_STRING|Prop<V_STRING>>;
 export type V_STYLE = { [key in WritableCSSProperty]?: V_STRING | Prop<V_STRING> };
-export type V_EVENTLISTENER = EventListenerOrEventListenerObject | GlobalEventHandlers[HTMLEventHandlers];
+export type V_EVENTLISTENER = 
+  DripperStream<any> |
+  EventListenerOrEventListenerObject |
+  GlobalEventHandlers[HTMLEventHandlers];
+
+export type T_ATTRSET = 
+    ["dataset", V_DATASET]|
+    ["style", V_STYLE]|
+    ["classList", V_CLASSLIST]|
+    [`on${string}`, V_EVENTLISTENER|Prop<V_EVENTLISTENER>]|
+    [string, V_STRING];
 
 // --- 属性セット型
 export type JSHTMLAttrSource = V_STRING | V_CLASSLIST | V_DATASET | V_STYLE | V_EVENTLISTENER;
+
 
 // --- 属性マップ型：補完あり＋カスタム属性許容
 export type JSHTMLAttributeMapSource =
@@ -74,15 +86,16 @@ export type JSHTMLNodeSource =
   | JSHTMLElementSource
   | JSHTMLTextSource
   | JSHTMLFragmentSource
+  | Promise<JSHTMLNodeSource | Node>
   | Prop<JSHTMLElementSource | JSHTMLTextSource | JSHTMLFragmentSource>;
 
 // --- 要素本体型（補完付きタグ名＋カスタム要素名OK）
 export type JSHTMLElementSource = (
   {
-    [K in keyof HTMLElementTagNameMap]?: JSHTMLNodeSource;
+    [K in keyof HTMLElementTagNameMap]?: JSHTMLNodeSource | EmptyElementAttributeMapSource
   } & {
-    [customTag: string]: JSHTMLNodeSource | JSHTMLAttributeMapSource | undefined;
-    $?: JSHTMLAttributeMapSource;
+    [customTag: string]: JSHTMLNodeSource | EmptyElementAttributeMapSource | JSHTMLAttributeMapSource | undefined 
+    $?: JSHTMLAttributeMapSource | EmptyElementAttributeMapSource
   }
 );
 
@@ -91,5 +104,5 @@ export type FxTag = "call" | "delay" | "sequence" | "parallel" | "cancel" | "rep
 
 // --- fxdom
 export type JSHTMLEffectElementSource = {
-  [K in FxTag]?: JSHTMLEffectElementSource | JSHTMLNodeSource | null;
+  [K in FxTag]?: JSHTMLEffectElementSource | JSHTMLAttributeMapSource | JSHTMLNodeSource | null;
 } & { $?: JSHTMLAttributeMapSource };
