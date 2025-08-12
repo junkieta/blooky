@@ -436,8 +436,10 @@ type DripOptions = {
 // --- オーバーロード定義 ---
 // 1. optionsがない、またはdeny/allowの場合 (同期的なEffectを返す)
 function drip<A>(v: A, options?: { acceptPromise?: 'deny' | 'allow' } ): (d: DripperStream<A>) => DripperEffect;
+
 // 2. awaitモードが明示された場合 (非同期的なPromise<Effect>を返す)
 function drip<A>(v: A, options: { acceptPromise: 'await' }): (d: DripperStream<A>) => Promise<DripperEffect>;
+
 /**
  * 起点となるストリームに時変値を流し込み、関連するオブザーバの呼び出しと時変値で構成されたEffectを返す。
  * @param s 
@@ -457,7 +459,7 @@ function drip<A>(v:A, options?: DripOptions) {
  * 同期的なdrip。最速だが、Promiseの扱いに注意。
  */
 const dripSync = <A>(v:A, allowPromise = false) => (d:DripperStream<A>) => 
-    [...EFFECT_ENHANCERS].reduce((e,f)=>f(e), flowLazy(v, allowPromise)(d)![0]);
+    [...EFFECT_ENHANCERS].reduce((e,f)=>f(e), flowLazy(v, allowPromise)(d)[0]);
 
 /**
  * 非同期版のdrip。flowAsyncを呼び出し、EffectのPromiseを返す。
@@ -572,6 +574,45 @@ function resolve<A>(source: Stream<A> | PromisedProp<A> | Prop<A>): PromiseLike<
   const prop=(()=>{}) as Prop<A>;
   STREAM_PROP_RELATIONS.set(source,STREAM_PROP_RELATIONS.has(source) ? STREAM_PROP_RELATIONS.get(source)!.concat(prop) : [prop]);
   return new Promise(resolvePromise => PROP_UPDATE.set(prop,resolvePromise));
+}
+
+// blooky.ts 内
+
+// (PROP_UPDATE = new WeakMap<Prop<any>, (v:any)=>void>() は既に定義済み)
+
+/**
+ * 既存オブジェクトのプロパティと同期するStream/Propを生成する。
+ * このPropがblookyのデータフローによって更新されることは元のオブジェクトのプロパティの更新とイコール。
+ * @param obj 対象オブジェクト
+ * @param key プロパティ名
+ */
+function proxy<T, K extends keyof T>(obj: T, key: K): [DripperStream<T[K]>, Prop<T[K]>] {
+  const desc = Object.getOwnPropertyDescriptor(obj, key);
+  if (!desc) {
+    throw new Error(`Property "${String(key)}" does not exist.`);
+  }
+
+  // 1. このgetter関数が、新しいPropそのものになる。
+  const getter: Prop<T[K]> = () => desc.get ? desc.get.call(obj) : obj[key];
+
+  // 2. このPropが更新されるべき時に呼ばれるsetterを定義する。
+  const setter = (newValue: T[K]) => {
+    if (desc.set) {
+      // 元のsetterがあれば、それを正しい`this`で呼び出す
+      desc.set.call(obj, newValue);
+    } else if ('value' in desc) {
+      // valueプロパティなら、直接代入する
+      obj[key] = newValue;
+    }
+  };
+
+  // 3. blookyのコアに、Propとその更新関数を直接登録する
+  PROP_UPDATE.set(getter, setter);
+
+  const dripper = stream<T[K]>();
+  PROP_FROM.set(getter, dripper);
+  
+  return [dripper, getter];
 }
 
 /**
@@ -718,6 +759,7 @@ export {
     countReferences,hasReferences,clear,
     merge,junction,map,filter,
     hold,accum,lift,remap,when,resolve,
+    proxy,
     clock,moments
 };
 

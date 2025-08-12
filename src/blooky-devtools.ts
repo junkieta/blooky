@@ -57,8 +57,23 @@ DebEffectElementStyleSheet.replaceSync(`
 }
 `);
 
+// svg用のスタイル
 const sheet = new CSSStyleSheet();
-sheet.replaceSync(".is-emitting { transition: fill 0.1s; fill: red; }");
+sheet.replaceSync(`
+.is-emitting {
+  transition: fill 0.1s;
+  fill: red;
+}
+/* is-emittingクラスが付与されたらアニメーションを適用 */
+.node.is-emitting {
+  animation: pulse 0.5s ease-out;
+}
+@keyframes pulse {
+  0% { stroke: #333; stroke-width: 1px; }
+  50% { stroke: crimson; stroke-width: 3px; }
+  100% { stroke: #333; stroke-width: 1px; }
+}
+`);
 document.adoptedStyleSheets.push(sheet);
 
 const debugMiddleware: FxMiddleware = async (ctx, next) => {
