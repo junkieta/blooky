@@ -489,16 +489,14 @@ drip.unregisterEnhancer = (f:(e:DripperEffect)=>DripperEffect) => {
     EFFECT_ENHANCERS.delete(f);
 };
 
-const getterAndSetter = <A>(v:A) : [()=>A,(v:A)=>void] => [()=>v,(_v:A)=>v=_v];
-
 /**
  * イベントストリームからプロパティを作る
  * @param s 
  * @returns 
  */
 const hold = <A>(v:A) => (s:Stream<A>): Prop<A> => {
-    const [p,u] = getterAndSetter(v);
-    PROP_UPDATE.set(p, u);
+    const p = () => v;
+    PROP_UPDATE.set(p, (_v)=>v=_v);
     PROP_FROM.set(p, s);
     cleanupRegistry.register(p, new WeakRef(p));
     if(STREAM_PROP_RELATIONS.has(s))
@@ -744,14 +742,6 @@ const moments = {} as moments; {
     };
 
 }
-
-export const blookyInternals = {
-    IS_DRIPPER,
-    PROP_FROM,
-    PROP_UPDATE,
-    STREAM_CLEANER,
-    STREAM_PROP_RELATIONS
-};
 
 export {
     drip,stream,

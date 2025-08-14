@@ -1,4 +1,4 @@
-import { isChainedProp, isDripperStream, isStream, Prop, Stream, blookyInternals } from "./blooky";
+import { isChainedProp, isDripperStream, isStream, Prop, Stream } from "./blooky";
 import { type FxNode, FxMiddleware } from "./blooky-fx";
 import { EffectElementTagNameMap as DefaultEffectElementTagNameMap, EffectElement, FxEffect as ConcreteEffectElementConstructor, fxdom } from "./blooky-fxdom";
 
@@ -260,17 +260,6 @@ function dumpGraphDOT(entries: Record<string, Stream<any> | Prop<any>>): string 
           edges.push(`${id} -> ${targetId}`);
         }
       }
-    } else if (isChainedProp(obj)) {
-      id = addNode(label, shape);
-      visited.set(obj, id);
-
-      const source = blookyInternals.PROP_FROM.get(obj) as Stream<any>;
-      if (source) {
-        const srcLabel = names.get(source) || "Stream";
-        const srcId = visit(source, srcLabel);
-        edges.push(`${srcId} -> ${id}`);
-      }
-
     } else {
       id = addNode(label, shape);
       visited.set(obj, id);
