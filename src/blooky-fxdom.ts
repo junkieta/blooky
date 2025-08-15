@@ -1,8 +1,8 @@
 // blooky-fxdom.ts
 
-import { isChainedProp, isDripperStream, isStream, type Prop, type Stream } from "./blooky";
+import { isDripperStream, isStream, type Prop, type Stream } from "./blooky";
 import { jshtml } from "./blooky-dom";
-import { createCancelToken, execute, fx, FxMiddleware, run, type FxDispatchSettings, type FxNode, type IEffectContext } from "./blooky-fx"; // assume effect-core exists
+import { createCancelToken, ExecContext, execute, fx, FxMiddleware, run, type FxDispatchSettings, type FxNode} from "./blooky-fx";
 
 type FxResolvable = Prop<any> | Stream<any> | Function | any;
 
@@ -62,21 +62,19 @@ class FxCall extends EffectElement {
         throw new Error("<fx-call> requires a 'fn' attribute.");
       }
 
-      const funcFromContext = this.resolveContextValue(fnName, true) as Function;
-      const args = Array.from(this.querySelectorAll("arg"))
-        .map(arg => {
-          const raw = arg.getAttribute("value") ?? arg.textContent ?? "null";
-          try {
-            return JSON.parse(raw);
-          } catch {
-            throw new Error(`Invalid arg value: ${raw}`);
-          }
-        });
-      
+      const funcFromContext = this.resolveContextValue(fnName, true) as (v:any)=>unknown;
+      const argValue = this.getAttribute("arg") ?? this.textContent ?? 'null';
+      let arg;
+      try {
+        arg = JSON.parse(argValue);
+      } catch(err) {
+        arg = this.resolveContextValue(argValue);
+      }
+
       const catcherKey = this.getAttribute("catcher");
-      const catchFunc = catcherKey ? this.resolveContextValue(catcherKey, true) as (v:Error)=>void : undefined;
+      const catcher = catcherKey ? this.resolveContextValue(catcherKey, true) as (v:Error)=>unknown : undefined;
       if (typeof funcFromContext === "function") {
-        return fx.call(() => funcFromContext(...args), typeof catchFunc === "function" ? catchFunc : undefined, this.id);
+        return fx.call(funcFromContext, { arg, catcher, id: this.id });
       }
 
       // どちらにも見つからない場合
@@ -349,7 +347,7 @@ class FxTake extends EffectElement {
 
 }
 
-class FxContext extends EffectElement implements IEffectContext {
+class FxContext extends EffectElement {
 
   static noneResult = Symbol("none")
 
@@ -421,7 +419,7 @@ class FxContext extends EffectElement implements IEffectContext {
     // 3. 親がいなければ（ルートまで到達）、undefinedを返す
     return undefined;
   }
-
+  
 }
 
 
@@ -443,7 +441,6 @@ class FxEffect extends FxContext {
         { slot: null }
       ]));
     }
-
     if (!this._hasRun) {
       this.run();
     }
@@ -457,14 +454,9 @@ class FxEffect extends FxContext {
   async run() {
     // すでに走っていたらキャンセル
     this._cancel?.();
-    // デバッグ用Middlewareを注入してexecuterを呼び出す
-    const { cancel } = await execute(
-      run(this.toFxNode(), this),
-      this,
-      createCancelToken(), // 新しいtokenを生成
-      this.middleWares
-    );
-    this._cancel = cancel;
+    const token = createCancelToken();
+    this._cancel = token.cancel;
+    await execute.call({ cancelToken: token, middleWares: this.middleWares }, run, this.context);
     this._hasRun = true;
   }
 
@@ -475,7 +467,7 @@ class FxEffect extends FxContext {
     this.context = temp;
   }
 
-  /** 明示的にキャンセルするAPIも公開する（任意） */
+  /** 明示的にキャンセルするAPIも公開する */
   public cancel() {
     this._cancel?.();
     this._hasRun = false;

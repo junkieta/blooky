@@ -123,12 +123,6 @@ export interface AppContext {
    */
   setRuntimeState(state: { [key:string]: any, lastResult: any }): void;
 
-  /**
-   * コンテキストから値を取得するためのメソッド。
-   * @param key 取得したい値のキー
-   */
-  getContextValue(key: string): any;
-
 }
 
 export type CancelToken = { cancel: () => void; cancelled: () => boolean };
@@ -149,8 +143,10 @@ export type FxHandlerArg<K extends FxNode["type"]> = {
 };
 
 export type FxHandlerMap = {
-  [K in FxNode["type"]]?: (args: FxHandlerArg<K>) => Promise<any>
-}
+  [K in FxNode["type"]]?: (
+    ctx: FxExecutionContext & { node: Extract<FxNode, { type: K }> }
+  ) => Promise<any>
+};
 
 export const fxHandlers: FxHandlerMap = {
   call: async ({ node }) => {
@@ -159,7 +155,7 @@ export const fxHandlers: FxHandlerMap = {
   wait: async ({ node }) => await new Promise(res => setTimeout(res, node.ms)),
   drip: async ({ node,execute,context }) => {
     const catcher = node.catcher;
-    let effect = await drip(node.value(), { acceptPromise: node.promise ?? "deny" })(node.stream);
+    const effect = await drip(node.value(), { acceptPromise: node.promise ?? "deny" })(node.stream);
     const _fx = node.mode === "atomic"
       ? fx.call(()=>effect.forEach(({update,nextValue})=>update(nextValue)), { catcher })
       : fx.parallel(effect.map(({update,nextValue})=>fx.call(update, { arg: nextValue, catcher })));
@@ -234,11 +230,10 @@ export function yieldToMainThread(): Promise<void> {
   return new Promise(resolve => {
     queueMicrotask(resolve);
   });
-
 }
 
 // 実行全体の設定
-interface ExecContext {
+export interface ExecContext {
   cancelToken: CancelToken;
   middlewares?: FxMiddleware[];
   onNodeEnter?: (node: FxNode) => void;
@@ -248,7 +243,6 @@ interface ExecContext {
 // ミドルウェアに渡される、各ステップの情報
 interface FxExecutionContext {
   node: FxNode;
-  handler: (args: FxHandlerArg<any>) => Promise<any>
   execute: (n:FxNode)=>Promise<ExecContext>
   context: ExecContext
   appContext: AppContext
@@ -323,20 +317,7 @@ export async function execute(
     return execute.call(this, run.call(this, n), appContext);
   }
 
- // coreMiddlewareが、FxExecutionContextからFxHandlerArgを構築して渡す
-  const coreMiddleware: FxMiddleware = async (fxec) => {
-    // ★ ハンドラに渡す引数オブジェクトをここで生成
-    const handlerArg: FxHandlerArg<any> = {
-      node: fxec.node,
-      execute: fxec.execute,
-      context: fxec.context,
-      appContext: fxec.appContext
-    };
-    return await fxec.handler(handlerArg);
-  };
-
-  // コアのfxHandler呼び出し処理をパイプラインの最後に追加
-  const allMiddlewares = middlewares ? [...middlewares, coreMiddleware] : [coreMiddleware];
+  const allMiddlewares = middlewares ? [...middlewares] : [];
 
   let result = generator.next();
   let nextValue: any;
@@ -347,10 +328,11 @@ export async function execute(
     try {
       if(!(node.type in fxHandlers)) throw new Error(`error: "${node.type}" is not unknown node type`);
 
+      const handler = fxHandlers[node.type]!;
+
       // ★各ステップの情報をまとめたFxExecutionContextを生成
       const fxec: FxExecutionContext = {
         node,
-        handler: fxHandlers[node.type]!,
         execute: nestedExecute,
         context: this,
         appContext
@@ -359,8 +341,9 @@ export async function execute(
       // ミドルウェアパイプラインの実行
       const runNextMiddleware = async (i: number): Promise<any> => {
         const middleware = allMiddlewares[i];
-        if (!middleware) return;
-        return await middleware(fxec, () => runNextMiddleware(i + 1));
+        return !middleware
+          ? await handler(fxec as any)
+          : await middleware(fxec, () => runNextMiddleware(i + 1));
       };
       nextValue = await runNextMiddleware(0);
 
@@ -383,7 +366,7 @@ export async function execute(
     if(node.id) {
       state[node.id] = nextValue;
     }
-    appContext.setRuntimeState({ lastResult: nextValue });
+    appContext.setRuntimeState(state);
     await yieldToMainThread();
     result = generator.next(nextValue);
   }
