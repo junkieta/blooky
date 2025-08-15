@@ -115,7 +115,7 @@ export const fx = {
 /**
  * エフェクト実行エンジンが要求するコンテキストの機能。
  */
-export interface IEffectContext {
+export interface AppContext {
 
   /**
    * 実行時の状態を書き込むためのメソッド。
@@ -128,9 +128,6 @@ export interface IEffectContext {
    * @param key 取得したい値のキー
    */
   getContextValue(key: string): any;
-
-  onNodeEnter?: (node: FxNode) => void
-  onNodeExit?: (node: FxNode, result?: any, error?: Error) => void
 
 }
 
@@ -145,12 +142,11 @@ export function createCancelToken(): CancelToken {
 
 
 export type FxHandlerArg<K extends FxNode["type"]> = {
-  node: Extract<FxNode, { type: K }>
-  context: IEffectContext
-  token: CancelToken
-  execute: typeof execute
-  run: typeof run
-}
+  node: Extract<FxNode, { type: K }>;
+  execute: (n: FxNode) => Promise<ExecContext>;
+  context: ExecContext;
+  appContext: AppContext;
+};
 
 export type FxHandlerMap = {
   [K in FxNode["type"]]?: (args: FxHandlerArg<K>) => Promise<any>
@@ -161,15 +157,15 @@ export const fxHandlers: FxHandlerMap = {
     await node.action.call(node.context, node.arg);
   },
   wait: async ({ node }) => await new Promise(res => setTimeout(res, node.ms)),
-  drip: async ({ node,context,run,execute,token }) => {
+  drip: async ({ node,execute,context }) => {
     const catcher = node.catcher;
     let effect = await drip(node.value(), { acceptPromise: node.promise ?? "deny" })(node.stream);
     const _fx = node.mode === "atomic"
       ? fx.call(()=>effect.forEach(({update,nextValue})=>update(nextValue)), { catcher })
       : fx.parallel(effect.map(({update,nextValue})=>fx.call(update, { arg: nextValue, catcher })));
-    await execute(run(_fx, context), context, token);
+    await execute.call(context, _fx);
   },
-  dispatch: async ({node,context,execute,run,token}) => {
+  dispatch: async ({node,execute,context}) => {
     const settings = node.settings;
     const e = new CustomEvent(node.name, settings);
 
@@ -195,26 +191,26 @@ export const fxHandlers: FxHandlerMap = {
         break;
     }
     if(target.dispatchEvent(e) && node.child)
-        await execute(run(node.child, context), context, token);
+        await execute.call(context, node.child);
   },
   take: async ({ node }) => await resolve(node.stream),
-  parallel: async ({ node, context, token, execute, run }) => {
+  parallel: async ({ node, execute }) => {
     // node.stepsに含まれる各フローに対して、executeを並列で実行する
-    await Promise.all(
-      node.steps.map(step => execute(run(step, context), context, token))
-    );
+    await Promise.all(node.steps.map(execute));
   },
-  race: async ({ node, context, token, execute, run }) => {
+  race: async ({ node, context, execute }) => {
     // 各レーサー（ステップ）に、個別にキャンセル可能なトークンを用意する
     const racers = node.steps.map(step => {
       const racerToken = createCancelToken();
       // メインのtokenか、個別tokenのどちらかがキャンセルされたらキャンセルとみなす
-      const combinedToken = {
-        cancelled: () => token.cancelled() || racerToken.cancelled(),
-        cancel: () => { token.cancel(); racerToken.cancel(); },
+      const combinedToken: CancelToken = {
+        cancelled: () => context.cancelToken.cancelled() || racerToken.cancelled(),
+        cancel: () => { context.cancelToken.cancel(); racerToken.cancel(); },
       };
       return {
-        promise: execute(run(step, context), context, combinedToken),
+        promise: execute.call(new Proxy(context, {
+          get: (t,p) => p==="cancelToken" ? combinedToken : Reflect.get(t,p)
+        }), step),
         cancel: racerToken.cancel,
       };
     });
@@ -241,16 +237,22 @@ export function yieldToMainThread(): Promise<void> {
 
 }
 
-// Middlewareに渡されるコンテキスト情報
-export type FxExecutionContext = {
+// 実行全体の設定
+interface ExecContext {
+  cancelToken: CancelToken;
+  middlewares?: FxMiddleware[];
+  onNodeEnter?: (node: FxNode) => void;
+  onNodeExit?: (node: FxNode, result?: any, error?: Error) => void;
+}
+
+// ミドルウェアに渡される、各ステップの情報
+interface FxExecutionContext {
   node: FxNode;
-  context: IEffectContext;
-  token: CancelToken;
-  run: typeof run;
-  execute: typeof execute;
-  // このコンテキストで実行されるべきコアの処理
-  handler: (args: FxHandlerArg<any>) => Promise<any>; 
-};
+  handler: (args: FxHandlerArg<any>) => Promise<any>
+  execute: (n:FxNode)=>Promise<ExecContext>
+  context: ExecContext
+  appContext: AppContext
+}
 
 // Middlewareの関数型
 export type FxMiddleware = (
@@ -258,27 +260,30 @@ export type FxMiddleware = (
   next: () => Promise<any> // 次のMiddlewareを呼び出すための関数
 ) => Promise<any>;
 
-export function* run(node: FxNode, context: IEffectContext): Generator<FxNode, void, any> {
-  context.onNodeEnter?.(node);
+export function* run(
+  this: ExecContext,
+  node: FxNode
+): Generator<FxNode, void, any> {
+  this.onNodeEnter?.(node);
   try {
     switch (node.type) {
       case 'sequence':
         for (const step of node.steps) {
-          yield* run(step, context);
+          yield* run.call(this, step);
         }
         break;
 
       case 'loop':
         while (node.cond()) {
-          yield* run(node.body, context);
+          yield* run.call(this, node.body);
         }
         break;
       
       case 'condition':
         if (node.if()) {
-          yield* run(node.then, context);
+          yield* run.call(this, node.then);
         } else if (node.else) {
-          yield* run(node.else, context);
+          yield* run.call(this, node.else);
         }
         break;
 
@@ -286,7 +291,7 @@ export function* run(node: FxNode, context: IEffectContext): Generator<FxNode, v
         const key = node.by();
         const branch = node.cases.get(key) ?? node.default;
         if (branch) {
-          yield* run(branch, context);
+          yield* run.call(this, branch);
         }
         break;
 
@@ -298,52 +303,68 @@ export function* run(node: FxNode, context: IEffectContext): Generator<FxNode, v
         yield node;
         break;
     }
-    context.onNodeExit?.(node);
+    this.onNodeExit?.(node);
   } catch(err) {
     // エラーで完了した場合、 onNodeExit フックにエラー情報を渡す
-    context.onNodeExit?.(node, undefined, err);
+    this.onNodeExit?.(node, undefined, err);
     throw err; // エラーは再スローする
   }
 }
-
-
 export async function execute(
+  this: ExecContext,
   generator: Generator<FxNode, void, any>,
-  context: IEffectContext,
-  token: CancelToken = createCancelToken(),
-  middlewares: FxMiddleware[] = [] // Middlewareの配列を受け取る
+  appContext: AppContext
 ) {
+  // `this`から実行設定を取得
+  const { cancelToken, middlewares } = this;
 
-  // コアのfxHandler呼び出し処理を、パイプラインの最後の一手として定義
-  const coreMiddleware: FxMiddleware = async (ctx) => {
-    return await ctx.handler({ node: ctx.node, context, token, execute, run });
+  // executeのthisをハンドラで置き換えることがあるので、アロー関数は使わない
+  const nestedExecute = function(n:FxNode) : Promise<ExecContext> {
+    return execute.call(this, run.call(this, n), appContext);
+  }
+
+ // coreMiddlewareが、FxExecutionContextからFxHandlerArgを構築して渡す
+  const coreMiddleware: FxMiddleware = async (fxec) => {
+    // ★ ハンドラに渡す引数オブジェクトをここで生成
+    const handlerArg: FxHandlerArg<any> = {
+      node: fxec.node,
+      execute: fxec.execute,
+      context: fxec.context,
+      appContext: fxec.appContext
+    };
+    return await fxec.handler(handlerArg);
   };
 
-  const allMiddlewares = [...middlewares, coreMiddleware];
+  // コアのfxHandler呼び出し処理をパイプラインの最後に追加
+  const allMiddlewares = middlewares ? [...middlewares, coreMiddleware] : [coreMiddleware];
 
   let result = generator.next();
   let nextValue: any;
 
   while (!result.done) {
-    if (token.cancelled()) break;
+    if (cancelToken.cancelled()) break;
     const node = result.value;
-    const handler = fxHandlers[node.type];
-    if (!handler) throw new Error(`Unhandled FxNode type: ${node.type}`);
-
-    // Middlewareに渡すコンテキストを準備
-    const execCtx: FxExecutionContext = { node, context, token, run, execute, handler };
-
-    // Middlewareパイプラインの実行を開始
-    const runNextMiddleware = async (i: number): Promise<any> => {
-      const middleware = allMiddlewares[i];
-      if (!middleware) return; // パイプラインの終端
-      // 次のMiddlewareを呼び出すための`next`関数を生成して渡す
-      return await middleware(execCtx, () => runNextMiddleware(i + 1));
-    };
-
     try {
+      if(!(node.type in fxHandlers)) throw new Error(`error: "${node.type}" is not unknown node type`);
+
+      // ★各ステップの情報をまとめたFxExecutionContextを生成
+      const fxec: FxExecutionContext = {
+        node,
+        handler: fxHandlers[node.type]!,
+        execute: nestedExecute,
+        context: this,
+        appContext
+      };
+
+      // ミドルウェアパイプラインの実行
+      const runNextMiddleware = async (i: number): Promise<any> => {
+        const middleware = allMiddlewares[i];
+        if (!middleware) return;
+        return await middleware(fxec, () => runNextMiddleware(i + 1));
+      };
       nextValue = await runNextMiddleware(0);
-    } catch (err) {
+
+    } catch(err) {
       const catcher = (node as any).catcher;
       if(typeof catcher === 'function') {
           // ハンドラに処理を移譲
@@ -362,12 +383,11 @@ export async function execute(
     if(node.id) {
       state[node.id] = nextValue;
     }
-    context.setRuntimeState(state);
-
+    appContext.setRuntimeState({ lastResult: nextValue });
     await yieldToMainThread();
     result = generator.next(nextValue);
   }
-  return { context, cancel: token.cancel };
+  return this;
 }
 
 
