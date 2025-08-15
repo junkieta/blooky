@@ -31,14 +31,17 @@ export type FxNode =
       default?: FxNode
     }>
   | FxNodeBase<"call", {
-      action: () => unknown,
+      action: (v:any) => unknown,
+      arg?: any,
+      context?: any,
       catcher?: (error: Error) => unknown
     }>
   | FxNodeBase<"drip", {
       stream: DripperStream<any>,
       value: Prop<any>,
       catcher?: (error: Error) => unknown,
-      mode: "saga" | "atomic"
+      mode?: "saga" | "atomic"
+      promise?: "deny"|"allow"|"await"
     }>
   | FxNodeBase<"dispatch", {
       name: string,
@@ -58,7 +61,11 @@ export type FxDispatchSettings<A> = CustomEventInit<Prop<A>> & {
 //
 export const fx = {
   none: (): FxNode => ({ type: "none" }),
-  call: (action: () => unknown, catcher?: (v:Error) => unknown, id?: string): FxNode => ({ type: "call", action, catcher, id }),
+  call: (action: (v:any) => unknown, options?: { arg?: any, context?: any, catcher?: (v:Error) => unknown, id?: string }): FxNode => ({
+    ...options,
+    type: "call",
+    action,
+  }),
   sequence: (steps: FxNode[]): FxNode => ({ type: "sequence", steps }),
   parallel: (steps: FxNode[]): FxNode => ({ type: "parallel", steps }),
   race: (steps: FxNode[]): FxNode => ({ type: "race", steps }),
@@ -84,12 +91,11 @@ export const fx = {
     cases,
     default: defaultNode,
   }),  
-  drip: <T>(value: Prop<T>, stream: DripperStream<T>, catcher?: (v:Error) => unknown, mode : "saga"|"atomic" = "saga"): FxNode => ({
+  drip: <T>(value: Prop<T>, stream: DripperStream<T>, options?: { promise?: "deny"|"allow"|"await", catcher?: (v:Error) => unknown, mode?: "saga"|"atomic" }): FxNode => ({
+    ...options,
     type: "drip",
     stream,
     value,
-    catcher,
-    mode
   }),
   take: <T>(stream: Stream<T>, id?: string) : FxNode =>({
     type: "take",
@@ -151,14 +157,16 @@ export type FxHandlerMap = {
 }
 
 export const fxHandlers: FxHandlerMap = {
-  call: async ({ node }) => await node.action(),
+  call: async ({ node }) => {
+    await node.action.call(node.context, node.arg);
+  },
   wait: async ({ node }) => await new Promise(res => setTimeout(res, node.ms)),
   drip: async ({ node,context,run,execute,token }) => {
     const catcher = node.catcher;
-    const effect = drip(node.value())(node.stream);
+    let effect = await drip(node.value(), { acceptPromise: node.promise ?? "deny" })(node.stream);
     const _fx = node.mode === "atomic"
-      ? fx.call(()=>effect.forEach(({update,nextValue})=>update(nextValue)), catcher)
-      : fx.parallel(effect.map(({update,nextValue})=>fx.call(()=>update(nextValue), catcher)));
+      ? fx.call(()=>effect.forEach(({update,nextValue})=>update(nextValue)), { catcher })
+      : fx.parallel(effect.map(({update,nextValue})=>fx.call(update, { arg: nextValue, catcher })));
     await execute(run(_fx, context), context, token);
   },
   dispatch: async ({node,context,execute,run,token}) => {

@@ -428,31 +428,27 @@ async function* flowAsync<A>(v: A, s: Stream<A>): AsyncGenerator<PropEffect<unkn
   }
 }
 
-type DripOptions = {
-    acceptPromise?: 'deny'|'allow'|'await'
-}
-
-
-// --- オーバーロード定義 ---
-// 1. optionsがない、またはdeny/allowの場合 (同期的なEffectを返す)
-function drip<A>(v: A, options?: { acceptPromise?: 'deny' | 'allow' } ): (d: DripperStream<A>) => DripperEffect;
-
-// 2. awaitモードが明示された場合 (非同期的なPromise<Effect>を返す)
-function drip<A>(v: A, options: { acceptPromise: 'await' }): (d: DripperStream<A>) => Promise<DripperEffect>;
-
+type DripResult<M> = M extends 'await'
+  ? Promise<DripperEffect>
+  : DripperEffect;
+  
 /**
  * 起点となるストリームに時変値を流し込み、関連するオブザーバの呼び出しと時変値で構成されたEffectを返す。
  * @param s 
  * @returns 
  */
-function drip<A>(v:A, options?: DripOptions) {
+function drip<
+  A,
+  M extends 'deny' | 'allow' | 'await' = 'deny' // モードをジェネリック型Mとして定義
+>(v:A, options?: { acceptPromise?: M }) : (d:DripperStream<A>)=>DripResult<M> {
     // デフォルトは最も安全な 'deny'
     const mode = options?.acceptPromise ?? 'deny';
-    return mode === 'await'
+    return (mode === 'await'
         // "await"モードの場合は、非同期エンジンを呼び出し、Promise<Effect>を返す
         ? (d:DripperStream<A>) : Promise<DripperEffect> => dripAsync(v)(d)
         // "deny" または "allow" の場合は、同期的エンジンを呼び出し、Effectを返す
-        : (d:DripperStream<A>) : DripperEffect => dripSync(v, mode === 'allow')(d);
+        : (d:DripperStream<A>) : DripperEffect => dripSync(v, mode === 'allow')(d)
+    ) as (d:DripperStream<A>) => DripResult<M>;
 }
 
 /**
