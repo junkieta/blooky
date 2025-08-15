@@ -210,7 +210,7 @@ const gen_style_setter =
 
 const set_css_property = (n: WritableCSSProperty|string, v: string) => (d: CSSStyleDeclaration) => {
     if(n.startsWith("--"))
-        d.setProperty("--" + n, v);
+        d.setProperty(n, v);
    else
         d[n] = v;
 }
