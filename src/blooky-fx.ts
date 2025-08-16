@@ -140,13 +140,20 @@ const fx = {
     cases,
     default: defaultNode,
   }),  
-  drip: <T>(value: Prop<T>, stream: DripperStream<T>, options?: { promise?: "deny"|"allow"|"await", catcher?: (v:Error) => unknown, mode?: "saga"|"atomic" }): FxNode => ({
+  drip: <T>(
+    value: FxRef<T>,
+    stream: FxRef<DripperStream<T>>, 
+    options?: {
+      promise?: FxRef<"deny"|"allow"|"await">, 
+      catcher?: FxRef<(v:Error) => unknown>,
+      mode?: FxRef<"saga"|"atomic">
+    }): FxNode => ({
     ...options,
     type: "drip",
     stream,
     value,
   }),
-  take: <T>(stream: Stream<T>, id?: string) : FxNode =>({
+  take: <T>(stream: FxRef<Stream<T>>, id?: string) : FxNode =>({
     type: "take",
     stream,
     id
@@ -715,6 +722,7 @@ async function _internal_execute(
 
 export type {
   FxExecutionContext,
+  ExecutionHandle,
   ExecContext,
   FxNode,
   FxCompiledNode,
@@ -725,9 +733,10 @@ export type {
   CancelToken,
   FxRef,
   FxResult,
-  FxDispatchSettings
+  FxDispatchSettings,
+  AppContext,
 }
 
 export {
-  fx,isFxRef,run,prepare,execute,createCancelToken
+  fx,ref,isFxRef,run,prepare,execute,createCancelToken
 }
