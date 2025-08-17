@@ -1,10 +1,20 @@
-// blooky-fxdom.ts
-
-import { isDripperStream, isStream, type Prop, type Stream } from "./blooky";
+import { DripperStream, isDripperStream, isStream, type Prop, type Stream } from "./blooky";
 import { jshtml } from "./blooky-dom";
-import { createCancelToken, ExecContext, execute, fx, FxMiddleware, run, type FxDispatchSettings, type FxNode} from "./blooky-fx";
-
-type FxResolvable = Prop<any> | Stream<any> | Function | any;
+import { 
+  createCancelToken, 
+  prepare, 
+  execute, 
+  fx, 
+  ref, // ★
+  type FxMiddleware, 
+  type FxDispatchSettings, 
+  type FxNode,
+  type AppContext,
+  type ExecContext,
+  type PreparedFx,
+  ExecutionHandle,
+  FxRef
+} from "./blooky-fx";
 
 // ---- Abstract Base ----
 
@@ -16,74 +26,53 @@ export abstract class EffectElement extends HTMLElement {
       .filter((n): n is EffectElement => n instanceof EffectElement)
       .map((n) => n.toFxNode());
   }
-
-  protected resolveContextValue(key : string, requiredUseAttr = false) : unknown {
-    const provider = this.closest<FxContext>("fx-context,fx-effect");
-    return provider?.getContextValue(key, requiredUseAttr) ?? undefined;
-  }
-  
 }
 
-// ---- Helpers ----
-const singleOrSequence = (n: FxNode[]) => n.length > 1 ? fx.sequence(n) : n[0] ?? fx.none();
-
-// ---- Core Elements ----
-
+// ---- Core Elements (リファクタリング後) ----
 
 class FxSequence extends EffectElement {
   toFxNode(): FxNode {
     return fx.sequence(this.childrenToFxNodes());
   }
 }
-
 class FxParallel extends EffectElement {
   toFxNode(): FxNode {
     return fx.parallel(this.childrenToFxNodes());
   }
 }
-
 class FxRace extends EffectElement {
   toFxNode(): FxNode {
     return fx.race(this.childrenToFxNodes());
   }
 }
+// ... FxParallel, FxRace は変更なし ...
 
 class FxWait extends EffectElement {
   toFxNode(): FxNode {
-    return fx.wait(Number(this.getAttribute("ms") || "0"));
+    // 属性値をそのまま渡す。数値かrefかはprepareが解決する
+    const msAttr = this.getAttribute("ms") || "0";
+    const ms = Number.isNaN(parseInt(msAttr, 10)) ? ref<number>(msAttr) : parseInt(msAttr, 10);
+    return fx.wait(ms);
   }
 }
 
 class FxCall extends EffectElement {
   toFxNode(): FxNode {
-    try {
-      const fnName = this.getAttribute("fn");
-      if (!fnName) {
-        throw new Error("<fx-call> requires a 'fn' attribute.");
-      }
+    const fnAttr = this.getAttribute("fn");
+    if (!fnAttr) return fx.none();
 
-      const funcFromContext = this.resolveContextValue(fnName, true) as (v:any)=>unknown;
-      const argValue = this.getAttribute("arg") ?? this.textContent ?? 'null';
-      let arg;
-      try {
-        arg = JSON.parse(argValue);
-      } catch(err) {
-        arg = this.resolveContextValue(argValue);
-      }
-
-      const catcherKey = this.getAttribute("catcher");
-      const catcher = catcherKey ? this.resolveContextValue(catcherKey, true) as (v:Error)=>unknown : undefined;
-      if (typeof funcFromContext === "function") {
-        return fx.call(funcFromContext, { arg, catcher, id: this.id });
-      }
-
-      // どちらにも見つからない場合
-      throw new Error(`Function '${fnName}' not found in context, and no 'src' was provided.`);
-      
-    } catch(err) {
-      console.error("[fx-call] error occured:" + (err as Error).message);
-      return fx.none();
+    let arg: FxRef<any> = undefined;
+    if(this.hasAttribute("arg")) {
+      arg = ref(this.getAttribute("arg")!);
+    } else if(/\S/.test(this.textContent)) {
+      arg = () => JSON.parse(this.textContent)
     }
+    
+    return fx.call(ref(fnAttr), {
+      arg: arg,
+      catcher: this.hasAttribute("catcher") ? ref(this.getAttribute("catcher")!) : undefined,
+      id: this.id,
+    });
   }
 }
 
@@ -153,124 +142,69 @@ class FxInclude extends EffectElement { // FxFlowからFxIncludeにリネーム
   }
 }
 
+
 class FxIf extends EffectElement {
   toFxNode(): FxNode {
-    const whenKey = this.getAttribute("when");
-    const notKey = this.getAttribute("not");
-
-    if (!whenKey && !notKey) return fx.none();
-
-    let whenProp: Prop<boolean> = () => true;
-    let notProp: Prop<boolean> = () => true;
-
-    if (whenKey) {
-      const resolved = this.resolveContextValue(whenKey);
-      if (typeof resolved === "function") {
-        whenProp = resolved as Prop<boolean>;
-      } else {
-        console.warn(`[fx-if] Prop "${whenKey}" not found or not a function.`);
-      }
-    }
-
-    if (notKey) {
-      const resolved = this.resolveContextValue(notKey);
-      if (typeof resolved === "function") {
-        const p = resolved as Prop<boolean>;
-        notProp = () => !p();
-      } else {
-        console.warn(`[fx-if] Prop "${notKey}" not found or not a function.`);
-      }
-    }
-
-    const condProp = () => whenProp() && notProp();
+    const whenAttr = this.getAttribute("when");
+    if (!whenAttr) return fx.none();
 
     const thenNode = this.querySelector('[slot="then"]') as EffectElement | null;
-    if (!thenNode) {
-      const childrenFx = this.childrenToFxNodes();
-      return fx.condition(condProp, childrenFx.length ? fx.sequence(childrenFx) : fx.none());
-    }
-
     const elseNode = this.querySelector('[slot="else"]') as EffectElement | null;
-    return fx.condition(condProp, thenNode.toFxNode(), elseNode?.toFxNode());
+    
+    // ★ when属性をrefとして渡すだけ
+    const condRef = ref<boolean>(whenAttr);
+
+    if (thenNode) {
+      return fx.condition(condRef, thenNode.toFxNode(), elseNode?.toFxNode());
+    } else {
+      const childrenFx = this.childrenToFxNodes();
+      return fx.condition(condRef, childrenFx.length ? fx.sequence(childrenFx) : fx.none());
+    }
   }
 }
-
-
-// blooky-fxdom.ts
 
 class FxSwitch extends EffectElement {
   toFxNode(): FxNode {
-    const by = this.getAttribute("by");
-    if (!by) return fx.none();
+    const byAttr = this.getAttribute("by");
+    if (!byAttr) return fx.none();
 
-    const condProp = this.resolveContextValue(by) as Prop<string>;
-    if (!condProp || typeof condProp !== "function") {
-      console.warn(`Prop "${by}" not found in context.`);
-      return fx.none();
-    }
-    
-    // 子要素を<slot名, FxNode>のMapに変換
     const cases = new Map(
       Array.from(this.children)
         .filter((e): e is EffectElement => e instanceof EffectElement && e.hasAttribute("slot"))
-        .map(e => [
-          e.getAttribute("slot")!,
-          e.toFxNode() // 分岐先のFxNodeをここで事前に生成しておく
-        ])
+        .map(e => [e.getAttribute("slot")!, e.toFxNode()])
     );
-    if(!cases.size) return fx.none();
-
-    // defaultケースをMapから取り出して別途渡す
+    
     const defaultNode = cases.get("default");
     cases.delete("default");
 
-    // 新しいfx.switchファクトリを呼ぶだけ
-    return fx.switch(condProp, cases, defaultNode);
+    // ★ by属性をrefとして渡すだけ
+    return fx.switch(ref(byAttr), cases, defaultNode);
   }
 }
-
 
 class FxLoop extends EffectElement {
-  toFxNode(): FxNode {
-    const whileKey = this.getAttribute("while");
-    // while属性がある場合
-    if (whileKey) {
-      const condProp = this.resolveContextValue(whileKey) as Prop<boolean>;
-      if (!condProp) {
-        console.warn(`Prop "${whileKey}" not found for fx-repeat.`);
-        return fx.none();
-      }
-      const bodyNode = fx.sequence(this.childrenToFxNodes());
-      return fx.loop(() => condProp(), bodyNode);
+    toFxNode(): FxNode {
+        const whileAttr = this.getAttribute("while");
+        if (!whileAttr) return fx.none();
+        
+        // ★ while属性をrefとして渡すだけ
+        return fx.loop(ref(whileAttr), fx.sequence(this.childrenToFxNodes()));
     }
-    const count = Number(this.getAttribute("count") || "0");
-    // count属性がある場合（従来の処理）
-    if (count > 0) {
-      const each = fx.sequence(this.childrenToFxNodes());
-      return fx.sequence(Array.from({ length: count }, () => each));
-    }
-    
-    return fx.none();
-  }
 }
+
 class FxDispatch extends EffectElement {
   
   toFxNode(): FxNode {
     const name = this.getAttribute("name");
     if (!name) return fx.none();
 
-    let detail : Prop<unknown>;
-    if(this.hasAttribute("detail")) {
-      const detailAttr = this.getAttribute("detail")!;
-      const p = this.resolveContextValue(detailAttr) as Prop<any>;
-      detail = typeof p !== "function" ? ()=>detailAttr : p;
-    }
-    else
-      detail = ()=>null;
+    const detail : FxRef<unknown> = this.hasAttribute("detail")
+      ? ref(this.getAttribute("detail")!)
+      : undefined;
 
     const target_attr = this.getAttribute("target") || "_self";
     const target = target_attr === "_self" ? this : target_attr;
-    const settings: FxDispatchSettings<ReturnType<typeof detail>> = {
+    const settings: FxDispatchSettings<any> = {
       target,
       detail,
       bubbles: this.getAttribute("bubbles") !== "none",
@@ -282,89 +216,57 @@ class FxDispatch extends EffectElement {
   }
 }
 
-
 class FxDrip extends EffectElement {
-
   toFxNode(): FxNode {
-    // 1. どのStreamにdripするかを属性で指定できるようにする
     const streamKey = this.getAttribute("stream-key");
-    if (!streamKey) {
-      console.error("<fx-drip> requires a 'stream-key' attribute.");
-      return fx.none();
-    }
+    if (!streamKey) return fx.none();
 
-    // 2. コンテキストから指定されたStreamを探す
-    const stream = this.resolveContextValue(streamKey);
-    if (!isDripperStream(stream)) {
-        console.warn(`Stream with key "${streamKey}" not found in context.`);
-        return fx.none();
-    }
+    const valueKey = this.getAttribute("value");
+    if(valueKey) return fx.drip(ref<any>(valueKey), ref<DripperStream<any>>(streamKey));
 
-    // 3. fx.effectノードを返す
-    return fx.drip(this.resolveValueAttr(), stream);
-  }
-
-  resolveValueAttr() : Prop<unknown> {
-    const valueAttr = this.getAttribute("value");
-    if (valueAttr === null) return ()=>null;
-    const ctxValue = this.resolveContextValue(valueAttr);
-    if(typeof ctxValue === "function")
-      return ctxValue as Prop<any>;
-    if(ctxValue !== undefined)
-      return ()=>ctxValue;
-    let v : unknown;
+    let data: any;
     try {
-      v = JSON.parse(valueAttr);
-    } catch (e) {
-      console.warn("[fx-drip] Invalid JSON in value attribute.", valueAttr, e);
-      v = valueAttr; // パース失敗時は文字列として扱う
+      data = JSON.parse(this.textContent);
+    } catch(err) {
+      data = this.textContent;
     }
-    return () => v;
+    return fx.drip(data, ref<DripperStream<any>>(streamKey));
   }
-
 }
 
-
 class FxTake extends EffectElement {
-
   toFxNode(): FxNode {
-    // 1. どのStreamにdripするかを属性で指定できるようにする
     const streamKey = this.getAttribute("stream-key");
-    if (!streamKey) {
-      console.error("<fx-take> requires a 'stream-key' attribute.");
+    return streamKey
+      ? fx.take(ref<Stream<any>>(streamKey), this.id)
+      : fx.none();
+  }
+}
+
+class FxYield extends EffectElement {
+  toFxNode(): FxNode {
+    const id = this.id;
+    // idは対話に必須なため、なければエラーを出す
+    if (!id) {
+      console.error("<fx-yield> requires an 'id' attribute.");
       return fx.none();
     }
-    // 2. コンテキストから指定されたStreamを探す
-    const stream = this.resolveContextValue(streamKey);
-    if (!isStream(stream)) {
-        console.warn(`Stream with key "${streamKey}" not found in context.`);
-        return fx.none();
-    }
-
-    // 3. fx.takeノードを返す
-    return fx.take(stream, this.id);
+    const valueAttr = this.getAttribute("value");
+    // value属性をrefとしてfx.yieldファクトリに渡す
+    // valueが指定されていなければ、nullをyieldする
+    return fx.yield(valueAttr ? ref(valueAttr) : null, id);
   }
-
 }
 
 class FxContext extends EffectElement {
 
   static noneResult = Symbol("none")
 
-  protected lastResult = FxContext.noneResult
-  protected context: Map<string, FxResolvable>
+  protected context: Record<string, any>;
 
-  constructor(context?: Map<string, FxResolvable>) {
+  constructor(context?: Record<string, any>) {
     super();
-    this.context = context || new Map();
-    this.context.set("lastResult", () => {
-      let ctx : FxContext | null = this;
-      while(ctx) {
-        if(ctx.lastResult !== FxContext.noneResult) return ctx.lastResult;
-        ctx = ctx.parentContext();
-      }
-      return null;
-    });
+    this.context = context || {};
   }
 
   parentContext() : FxContext | null {
@@ -380,17 +282,16 @@ class FxContext extends EffectElement {
       : fx.sequence(nodes);
   }
 
-  setContext(ctx: Record<string, FxResolvable>) {
-    Object.entries(ctx).forEach(([k, v]) => this.context.set(k, v));
-  }
-
-  setRuntimeState(state: { lastResult: any }): void {
-    Object.entries(state).forEach(([k,v])=>{
-      if(k === "lastResult")
-        this.lastResult = v;
-      else
-        this.setContext({ [k]:v })
-    })
+  // use属性値を最低限必要なキーとして使う
+  setContext(ctx: Record<string, any>) {
+    if(this.hasAttribute("use")) {
+      const useAttr = this.getAttribute("use")!;
+      const useList = useAttr.replace(/\s+/g,"").split(",");
+      const noExist = useList.filter((use)=>!(use in ctx));
+      if(noExist.length)
+        throw new Error(`[fx-context] Invalid context: "${noExist.join()}" is not contained`);
+    }
+    this.context = ctx;
   }
 
   // use属性値をホワイトリストとして利用
@@ -422,58 +323,26 @@ class FxContext extends EffectElement {
   
 }
 
-
-// ---- FxEffect Root Element ----
-
 class FxEffect extends FxContext {
-
-  private _cancel?: () => void;
-  private _hasRun = false; // 再実行制御用フラグ
-
-  // 継承先で差し替えできるようにする
-  protected middleWares: FxMiddleware[];
-
+  protected _execContext?: Partial<ExecContext>
+  protected _preparedFx?: PreparedFx
+  protected _handle?: ExecutionHandle
+  
   connectedCallback() {
-    if (!this.shadowRoot) {
-      this.attachShadow({ mode: 'open' });
-      this.shadowRoot!.replaceChildren(jshtml([
-        { style: ':host { display: none; }' },
-        { slot: null }
-      ]));
-    }
-    if (!this._hasRun) {
-      this.run();
-    }
+    // 1. prepare: 接続時に一度だけフローを準備（コンパイル）する
+    const flow = this.toFxNode();
+    this._preparedFx = prepare(flow, this.context, this._execContext);
+    // 2. execute: 準備したフローを実行
+    this._handle = execute(this._preparedFx);
   }
 
   disconnectedCallback() {
-    this._cancel?.();
-    this._hasRun = false; // 再実行を許可するためにfalseに戻す
+    this._handle?.cancel();
   }
 
-  async run() {
-    // すでに走っていたらキャンセル
-    this._cancel?.();
-    const token = createCancelToken();
-    this._cancel = token.cancel;
-    await execute.call({ cancelToken: token, middleWares: this.middleWares }, run, this.context);
-    this._hasRun = true;
-  }
-
-  runWith(other: Map<string, FxResolvable>) {
-    const temp = this.context;
-    this.context = new Map([...temp,...other]);
-    this.run();
-    this.context = temp;
-  }
-
-  /** 明示的にキャンセルするAPIも公開する */
-  public cancel() {
-    this._cancel?.();
-    this._hasRun = false;
-  }
 }
 
+// ... (EffectElementTagNameMapとfxdomの定義は変更なし) ...
 
 const fxdom = {
 
@@ -497,6 +366,7 @@ const EffectElementTagNameMap = {
   "fx-dispatch":  FxDispatch,
   "fx-drip":  FxDrip,
   "fx-take":  FxTake,
+  "fx-yield": FxYield,
   "fx-context":  FxContext,
   "fx-effect":  FxEffect,
 }

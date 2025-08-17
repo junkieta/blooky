@@ -570,9 +570,6 @@ function resolve<A>(source: Stream<A> | PromisedProp<A> | Prop<A>): PromiseLike<
   return new Promise(resolvePromise => PROP_UPDATE.set(prop,resolvePromise));
 }
 
-// blooky.ts 内
-
-// (PROP_UPDATE = new WeakMap<Prop<any>, (v:any)=>void>() は既に定義済み)
 
 /**
  * 既存オブジェクトのプロパティと同期するStream/Propを生成する。
@@ -585,10 +582,8 @@ function proxy<T, K extends keyof T>(obj: T, key: K): [DripperStream<T[K]>, Prop
   if (!desc) {
     throw new Error(`Property "${String(key)}" does not exist.`);
   }
-
   // 1. このgetter関数が、新しいPropそのものになる。
   const getter: Prop<T[K]> = () => desc.get ? desc.get.call(obj) : obj[key];
-
   // 2. このPropが更新されるべき時に呼ばれるsetterを定義する。
   const setter = (newValue: T[K]) => {
     if (desc.set) {
@@ -599,13 +594,10 @@ function proxy<T, K extends keyof T>(obj: T, key: K): [DripperStream<T[K]>, Prop
       obj[key] = newValue;
     }
   };
-
   // 3. blookyのコアに、Propとその更新関数を直接登録する
   PROP_UPDATE.set(getter, setter);
-
   const dripper = stream<T[K]>();
   PROP_FROM.set(getter, dripper);
-  
   return [dripper, getter];
 }
 
