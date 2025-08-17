@@ -621,7 +621,7 @@ export type {
 }
 
 export {
-  fx,ref,isFxRef,run,prepare,execute,createCancelToken
+  fx,ref,isFxRef,run,prepare,execute,query,createCancelToken
 }
 
 // -- FxNodeの型に応じたコンパイル処理 --
