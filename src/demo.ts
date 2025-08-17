@@ -72,26 +72,28 @@ const fxEffectElement = jshtml({
     [
         { "fx-take": jshtml.$({ "stream-key": "save$" }) },
         // 1. 確認メッセージを表示
-        { "fx-drip": jshtml.$({ "stream-key": "statusMessageStream$", value: '"Confirmation needed: Save this count? (Click Yes/No)"' }) },
+        { "fx-drip": '"Confirmation needed: Save this count? (Click Yes/No)"',
+            $: { "stream-key": "statusMessageStream$" } },
         // 2. confirmationStreamから値が流れてくるのを待つ
-        { "fx-take": jshtml.$({ "stream-key": "confirmation$" }) },
+        { "fx-take": jshtml.$({ "stream-key": "confirmation$", id: "confirmResult" }) },
         // 3. 結果に応じて処理を分岐
         { "fx-switch": [
             // "yes"の場合のフロー
             { "fx-sequence": [
-                { "fx-drip": jshtml.$({ "stream-key": "statusMessageStream$", value: '"Saving..."' }) },
+                { "fx-drip": '"Saving..."', $: { "stream-key": "statusMessageStream$" } },
                 { "fx-wait": jshtml.$({ ms: "1500" }) },
                 { "fx-drip": jshtml.$({ "stream-key": "statusMessageStream$", value: '$finalMessage' }) },
                 { "fx-dispatch":
-                    { "fx-call": { arg: '"save complete"' }, $: { fn: "log" } },
+                    { "fx-call": '"save complete"', $: { fn: "log" } },
                     $: { name: "save" } }
                 ], 
                 $: { slot: "yes" }
             },
             // "no"またはdefaultの場合のフロー
-            { "fx-drip": jshtml.$({ slot: "default", "stream-key": "statusMessageStream$", value: '"Save cancelled."' }) }
+            { "fx-drip": '"Save cancelled."',
+                $: { slot: "default", "stream-key": "statusMessageStream$" } }
             ],
-            $: { by: "lastResult" }
+            $: { by: "#confirmResult" }
         }
     ],
 }) as FxEffect;

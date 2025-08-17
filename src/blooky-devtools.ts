@@ -1,8 +1,9 @@
 import { isChainedProp, isDripperStream, isStream, Prop, Stream } from "./blooky";
-import { type FxNode, FxMiddleware } from "./blooky-fx";
+import { type FxNode, ExecContext, FxCompiledNode, FxMiddleware } from "./blooky-fx";
 import { EffectElementTagNameMap as DefaultEffectElementTagNameMap, EffectElement, FxEffect as ConcreteEffectElementConstructor, fxdom } from "./blooky-fxdom";
 
 const FxNodeMap = new WeakMap<FxNode, EffectElement>();
+const getElementByCompiledNode = (n: FxCompiledNode) : EffectElement | undefined => FxNodeMap.get(Object.getPrototypeOf(n)!);
 
 const DebEffectElementStyleSheet = new CSSStyleSheet();
 DebEffectElementStyleSheet.replaceSync(`
@@ -78,12 +79,13 @@ document.adoptedStyleSheets.push(sheet);
 
 const debugMiddleware: FxMiddleware = async (ctx, next) => {
   const { node } = ctx;
-  const element = FxNodeMap.get(node);
+  const element = getElementByCompiledNode(node);
+  if(!element) return;
 
   let result: any = null;
   try {
     // --- 内側の処理（次のMiddlewareまたはコア）を呼び出す ---
-    if(node.type === "wait" || node.type === "take") {
+    if(node.type === "wait" || node.type === "take" || node.type === "yield") {
       element?.classList.add("is-paused");
       result = await next();
       element?.classList.remove("is-paused");
@@ -142,11 +144,21 @@ EffectElementTagNameMap["fx-switch"] = class extends (EffectElementTagNameMap["f
   connectedCallback(): void {
     super.connectedCallback();
     this.shadowRoot!.querySelector("slot")?.remove();
-    this.shadowRoot!.append(...Array.from(this.querySelectorAll("*[slot]")).map((elm)=>{
-      const slot = document.createElement("slot");  
-      slot.name = elm.slot;
-      return slot;
-    }));
+    this.shadowRoot!.append(
+      new Text("by=["+this.getAttribute("by")!+"]"),
+      ...Array.from(this.querySelectorAll("*[slot]")).map((elm)=>{
+        const slot = document.createElement("slot");  
+        slot.name = elm.slot;
+        return slot;
+      })
+    );
+  }
+}
+
+EffectElementTagNameMap["fx-take"] = class extends (EffectElementTagNameMap["fx-take"] as typeof ConcreteEffectElementConstructor) {
+  connectedCallback(): void {
+    super.connectedCallback();
+    this.append(new Text(`stream-key=["${this.getAttribute("stream-key")}"]`));
   }
 }
 
@@ -158,7 +170,6 @@ EffectElementTagNameMap["fx-drip"] = class extends (EffectElementTagNameMap["fx-
     if(name !== "class" || newValue !== "is-running") return;
     const streamKey = this.getAttribute("stream-key")!; if(!streamKey) return;
     const nodeElement = document.getElementById(`node-${streamKey}`); if(!nodeElement) return;
-    const stream = this.resolveContextValue(streamKey); if(!stream) return;
     nodeElement.classList.add('is-emitting');
     // アニメーションが終わったらclassを削除
     setTimeout(() => nodeElement.classList.remove('is-emitting'), 1500);
@@ -166,22 +177,14 @@ EffectElementTagNameMap["fx-drip"] = class extends (EffectElementTagNameMap["fx-
 }
 
 
-// effectはルートでテーマ変数をstyleに追加
-EffectElementTagNameMap["fx-effect"] = class extends (EffectElementTagNameMap["fx-effect"] as typeof ConcreteEffectElementConstructor) {
-  
-  //  デバッグ用ミドルウェアを設定
-  protected middleWares: FxMiddleware[] = [debugMiddleware];
-
-  static observedAttributes = ["theme"];
-  private themeCSS? : CSSStyleSheet;
-  
-  onNodeEnter(node: FxNode): void {
-    const element = FxNodeMap.get(node);
+const ExecContextForDebug : Partial<ExecContext> = {
+  middlewares: [debugMiddleware],
+  onNodeEnter(node: FxCompiledNode): void {
+    const element = getElementByCompiledNode(node);
     element?.classList.add('is-running');
-  }
-
-  onNodeExit(node: FxNode, result?: any, error?: any): void {
-    const element = FxNodeMap.get(node);
+  },
+  onNodeExit(node: FxCompiledNode, error?: any): void {
+    const element = getElementByCompiledNode(node);
     if(!element) return;
     element.classList.remove('is-running');
     if (error) {
@@ -190,6 +193,15 @@ EffectElementTagNameMap["fx-effect"] = class extends (EffectElementTagNameMap["f
       element.classList.add("is-completed");
     }
   }
+}
+
+// effectはルートでテーマ変数をstyleに追加
+EffectElementTagNameMap["fx-effect"] = class extends (EffectElementTagNameMap["fx-effect"] as typeof ConcreteEffectElementConstructor) {
+  
+  static observedAttributes = ["theme"];
+
+  private themeCSS? : CSSStyleSheet;
+  protected _execContext?: Partial<ExecContext> | undefined = ExecContextForDebug
 
   loadTheme(src: string) {
     if(!src || !this.shadowRoot) return;
@@ -208,7 +220,8 @@ EffectElementTagNameMap["fx-effect"] = class extends (EffectElementTagNameMap["f
   connectedCallback(): void {
     super.connectedCallback();
     if(this.hasAttribute("theme")) this.loadTheme(this.getAttribute("theme")!);
-  }
+  }  
+
 }
 
 // 呼び出し元で fxdom.defineEffectElements(EffectElmentTagNameMap) すること。
@@ -268,8 +281,8 @@ function dumpGraphDOT(entries: Record<string, Stream<any> | Prop<any>>): string 
     return id;
   }
 
-  Object.entries(entries).forEach(([name,stream]) => {
-    visit(stream, name);
+  Object.entries(entries).forEach(([name,streamOrProp]) => {
+    visit(streamOrProp, name);
   })
 
   return `digraph BlookyGraph {\nrankdir=LR;\n${nodes.join("\n")}\n${edges.join("\n")}\n}`;

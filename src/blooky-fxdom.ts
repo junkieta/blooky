@@ -26,8 +26,6 @@ export abstract class EffectElement extends HTMLElement {
       .filter((n): n is EffectElement => n instanceof EffectElement)
       .map((n) => n.toFxNode());
   }
-
-  // ★ resolveContextValueは不要になるため削除
 }
 
 // ---- Core Elements (リファクタリング後) ----
@@ -62,10 +60,16 @@ class FxCall extends EffectElement {
   toFxNode(): FxNode {
     const fnAttr = this.getAttribute("fn");
     if (!fnAttr) return fx.none();
+
+    let arg: FxRef<any> = undefined;
+    if(this.hasAttribute("arg")) {
+      arg = ref(this.getAttribute("arg")!);
+    } else if(/\S/.test(this.textContent)) {
+      arg = () => JSON.parse(this.textContent)
+    }
     
-    // ★ すべての属性をrefとして渡すだけ
     return fx.call(ref(fnAttr), {
-      arg: this.hasAttribute("arg") ? ref(this.getAttribute("arg")!) : undefined,
+      arg: arg,
       catcher: this.hasAttribute("catcher") ? ref(this.getAttribute("catcher")!) : undefined,
       id: this.id,
     });
@@ -215,20 +219,27 @@ class FxDispatch extends EffectElement {
 class FxDrip extends EffectElement {
   toFxNode(): FxNode {
     const streamKey = this.getAttribute("stream-key");
+    if (!streamKey) return fx.none();
+
     const valueKey = this.getAttribute("value");
-    if (!streamKey || !valueKey) return fx.none();
-    
-    // ★ すべてrefとして渡す
-    return fx.drip(ref<any>(valueKey), ref<DripperStream<any>>(streamKey));
+    if(valueKey) return fx.drip(ref<any>(valueKey), ref<DripperStream<any>>(streamKey));
+
+    let data: any;
+    try {
+      data = JSON.parse(this.textContent);
+    } catch(err) {
+      data = this.textContent;
+    }
+    return fx.drip(data, ref<DripperStream<any>>(streamKey));
   }
 }
 
 class FxTake extends EffectElement {
   toFxNode(): FxNode {
     const streamKey = this.getAttribute("stream-key");
-    if (!streamKey) return fx.none();
-    
-    return fx.take(ref<Stream<any>>(streamKey), this.id);
+    return streamKey
+      ? fx.take(ref<Stream<any>>(streamKey), this.id)
+      : fx.none();
   }
 }
 
@@ -277,7 +288,7 @@ class FxContext extends EffectElement {
       const useAttr = this.getAttribute("use")!;
       const useList = useAttr.replace(/\s+/g,"").split(",");
       const noExist = useList.filter((use)=>!(use in ctx));
-      if(!noExist.length)
+      if(noExist.length)
         throw new Error(`[fx-context] Invalid context: "${noExist.join()}" is not contained`);
     }
     this.context = ctx;
@@ -313,12 +324,14 @@ class FxContext extends EffectElement {
 }
 
 class FxEffect extends FxContext {
-  private _preparedFx?: PreparedFx;
-  private _handle?: ExecutionHandle;
+  protected _execContext?: Partial<ExecContext>
+  protected _preparedFx?: PreparedFx
+  protected _handle?: ExecutionHandle
+  
   connectedCallback() {
     // 1. prepare: 接続時に一度だけフローを準備（コンパイル）する
     const flow = this.toFxNode();
-    this._preparedFx = prepare(flow, this.context);
+    this._preparedFx = prepare(flow, this.context, this._execContext);
     // 2. execute: 準備したフローを実行
     this._handle = execute(this._preparedFx);
   }
