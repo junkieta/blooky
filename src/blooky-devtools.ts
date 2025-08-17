@@ -80,7 +80,7 @@ document.adoptedStyleSheets.push(sheet);
 const debugMiddleware: FxMiddleware = async (ctx, next) => {
   const { node } = ctx;
   const element = getElementByCompiledNode(node);
-  if(!element) return;
+  if(!element) return await next();
 
   let result: any = null;
   try {

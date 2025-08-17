@@ -65,7 +65,7 @@ class FxCall extends EffectElement {
     if(this.hasAttribute("arg")) {
       arg = ref(this.getAttribute("arg")!);
     } else if(/\S/.test(this.textContent)) {
-      arg = () => JSON.parse(this.textContent)
+      arg = () => JSON.parse(this.textContent.trim())
     }
     
     return fx.call(ref(fnAttr), {
@@ -225,10 +225,11 @@ class FxDrip extends EffectElement {
     if(valueKey) return fx.drip(ref<any>(valueKey), ref<DripperStream<any>>(streamKey));
 
     let data: any;
+    const raw = this.textContent.trim();
     try {
-      data = JSON.parse(this.textContent);
+      data = JSON.parse(raw);
     } catch(err) {
-      data = this.textContent;
+      data = raw;
     }
     return fx.drip(data, ref<DripperStream<any>>(streamKey));
   }
@@ -306,11 +307,11 @@ class FxContext extends EffectElement {
     // 自分からルートまで値を検索する
   getContextValue(key: string, requiredUseAttr = false) : unknown {
     // 1. まず自分のコンテキストを確認
-    if (this.context.has(key)) {
+    if (key in this.context) {
       if(requiredUseAttr === true && !this.containedUseAttr(key)) {
         throw new Error(`[fx-context] Invalid context key: "${key}" is not contained "use" attribute.`);
       }
-      return this.context.get(key);
+      return this.context[key];
     }
     // 2. なければ、親コンテキストに問い合わせる
     const parent = this.parentContext();

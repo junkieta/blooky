@@ -77,7 +77,7 @@ type FxCompiledNode =
     }>
   | FxCompiledNodeBase<"switch", {
       by: Prop<string | number | symbol>,
-      cases: Map<string | number | symbol, FxNode>,
+      cases: Map<string | number | symbol, FxCompiledNode>,
       default?: FxCompiledNode
     }>
   | FxCompiledNodeBase<"call", {
@@ -204,14 +204,14 @@ type FxHandlerMap = {
 const fxHandlers: FxHandlerMap = {
   call: async ({ node }) => await node.action.call(node.context?.(), node.arg?.()),
   wait: async ({ node }) => await new Promise(res => setTimeout(res, node.ms())),
-  drip: async ({ node,appContext }) => {
+  drip: async ({ node,execute }) => {
     const catcher = node.catcher;
     const effect = await drip(node.value(), { acceptPromise: node.promise?.() ?? "deny" })(node.stream());
     const _fx = node.mode?.() === "atomic"
       ? fx.call(()=>effect.forEach(({update,nextValue})=>update(nextValue)), { catcher })
       : fx.parallel(effect.map(({update,nextValue})=>fx.call(update, { arg: nextValue, catcher }))
       );
-    await query(_fx, appContext);
+    execute(_fx);
   },
   dispatch: async ({node,execute,context}) => {
     const settings = node.settings;
@@ -312,7 +312,7 @@ interface ExecContext {
 // ミドルウェアに渡される、各ステップの情報
 interface FxExecutionContext {
   node: FxCompiledNode;
-  execute: (n:FxNode)=>Promise<ExecContext>
+  execute: (n:FxNode)=>Promise<AppContext>
   context: ExecContext
   appContext: AppContext
 }
@@ -504,7 +504,7 @@ function execute(preparedFx: PreparedFx): ExecutionHandle {
   // 結果を消費するためのプル型インターフェース（非同期ジェネレータ）
   const resultsIterator = (async function* () {
     while (true) {
-      // 1. runtimeState$ に次に流れてくる値を待つ
+      // 1. yieldChannel$ に次に流れてくる値を待つ
       const nextResult = await resolve(execContext.yieldChannel$);
       // 2. for await...of ループに値をyieldして送り出す
       //    同時に、next()で渡される応答を待つ
@@ -539,9 +539,8 @@ async function _internal_execute(
   const ctx = this;
   const { cancelToken, middlewares } = this;
 
-  async function nestedExecute (n:FxNode) : Promise<ExecContext> {
+  async function nestedExecute (n:FxNode) : Promise<AppContext> {
     const compiler = new FxNodeCompiler(appContext);
-    console.log(this || ctx, run.call(this || ctx, compiler.compileNode(n)), appContext);
     return _internal_execute.call(this || ctx, run.call(this || ctx, compiler.compileNode(n)), appContext);
   }
 
@@ -704,9 +703,9 @@ const FxNodeVisitor : {[K in FxNode["type"]]?: (
     return Object.create(node, {
         name: { value: compiler.resolveValue(node.name) },
         settings: {
-          value: {
-            detail: node.settings?.detail ? compiler.resolveValue(node.settings.detail) : undefined
-          }
+          value: Object.create(node.settings, {
+            detail: { value: node.settings?.detail ? compiler.resolveValue(node.settings.detail) : undefined }
+          })
         },
         child: {value: node.child ? compiler.compileNode(node.child) : undefined }
     });
