@@ -255,8 +255,8 @@ type FxFactoryArgs = {
     options?: { arg?: FxRef<any>, context?: FxRef<any>, catcher?: FxRef<(e: Error) => unknown>, id?: string }
   ],
   drip: [
-    stream: FxRef<DripperStream<any>>,
     value: FxRef<any>,
+    stream: FxRef<DripperStream<any>>,
     options?: { catcher?: FxRef<(e: Error) => unknown>, mode?: FxRef<any>, promise?: FxRef<any> }
   ],
   dispatch: [name: FxRef<string>, settings: FxDispatchSettings<FxRef<any>>, child?: FxNode],
