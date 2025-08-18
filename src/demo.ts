@@ -81,7 +81,7 @@ const fxEffectElement = jshtml({
             // "yes"の場合のフロー
             { "fx-sequence": [
                 { "fx-drip": '"Saving..."', $: { "stream-key": "statusMessageStream$" } },
-                { "fx-wait": jshtml.$({ ms: "1500" }) },
+                { "fx-wait": jshtml.$({ ms: 1500 }) },
                 { "fx-drip": jshtml.$({ "stream-key": "statusMessageStream$", value: '$finalMessage' }) },
                 { "fx-dispatch":
                     { "fx-call": '"save complete"', $: { fn: "log" } },

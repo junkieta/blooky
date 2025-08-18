@@ -1,6 +1,6 @@
 import { isChainedProp, isDripperStream, isStream, Prop, Stream } from "./blooky";
-import { type FxNode, ExecContext, FxCompiledNode, FxMiddleware } from "./blooky-fx";
 import { EffectElementTagNameMap as DefaultEffectElementTagNameMap, EffectElement, FxEffect as ConcreteEffectElementConstructor, fxdom } from "./blooky-fxdom";
+import { FxNode, FxCompiledNode, FxMiddleware, ExecContext } from "./fx/types";
 
 const FxNodeMap = new WeakMap<FxNode, EffectElement>();
 const getElementByCompiledNode = (n: FxCompiledNode) : EffectElement | undefined => FxNodeMap.get(Object.getPrototypeOf(n)!);

@@ -1,7 +1,5 @@
-
 //
 // 型定義
-
 import { DripperStream, Prop, Stream } from "../blooky";
 
 
@@ -238,7 +236,50 @@ type YieldRequest = {
   resolve: (response: any) => void;
 }
 
+
+/**
+ * 各ファクトリ関数 (fx.call, fx.sequenceなど) の引数の型を定義するスキーマ
+ * [必須引数1, 必須引数2, オプション引数?, ...] のようにタプルで記述する
+ */
+type FxFactoryArgs = {
+  none: [],
+  sequence: [steps: FxNode[]],
+  parallel: [steps: FxNode[]],
+  race: [steps: FxNode[]],
+  wait: [options: { ms?: FxRef<number>, until?: FxRef<boolean> }],
+  loop: [cond: FxRef<boolean>, body: FxNode],
+  condition: [ifCond: FxRef<boolean>, thenBranch: FxNode, elseBranch?: FxNode],
+  switch: [by: FxRef<any>, cases: Map<any, FxNode>, defaultNode?: FxNode],
+  call: [
+    action: FxRef<(v: any) => unknown>,
+    options?: { arg?: FxRef<any>, context?: FxRef<any>, catcher?: FxRef<(e: Error) => unknown>, id?: string }
+  ],
+  drip: [
+    stream: FxRef<DripperStream<any>>,
+    value: FxRef<any>,
+    options?: { catcher?: FxRef<(e: Error) => unknown>, mode?: FxRef<any>, promise?: FxRef<any> }
+  ],
+  dispatch: [name: FxRef<string>, settings: FxDispatchSettings<FxRef<any>>, child?: FxNode],
+  take: [stream: FxRef<Stream<any>>, id?: string],
+  yield: [options: { for: FxRef<string>, value: FxRef<any>, id?: string }],
+};
+
+/**
+ * FxFactoryArgsスキーマを元に、fxオブジェクトの完全な型を生成する
+ */
+type FxFactory = {
+  // FxFactoryArgs の各キー (none, sequence, call...) をループ処理する
+  [K in keyof FxFactoryArgs]: (
+    // 各キーに対応する引数タプルを展開して、関数の引数リストにする
+    ...args: FxFactoryArgs[K]
+  ) =>
+    // 戻り値の型は、FxNodeの中からtypeがKであるものを抜き出して設定する
+    Extract<FxNode, { type: K }>
+};
+
 export {
+    FxFactoryArgs,
+    FxFactory,
     FxNodeBase,
     FxNode,
     FxNoneNode,

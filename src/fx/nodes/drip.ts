@@ -1,4 +1,4 @@
-import type { INodeDefinition, FxNode, FxRef, FxNodeCompiler, FxExecutionContext, FxCompiledNode } from '../types';
+import type { FxNode, FxRef, FxNodeCompiler, FxExecutionContext, FxCompiledNode } from '../types';
 import { drip, DripperStream } from '../../blooky';
 import { NodeDefinition } from '../NodeDefinition';
 type ThisNode = Extract<FxNode, { type: 'drip' }>;
@@ -7,8 +7,12 @@ type ThisCompiledNode = Extract<FxCompiledNode, { type: 'drip' }>;
 export class DripNodeDefinition extends NodeDefinition<'drip'> {
   public readonly type = 'drip';
 
-  public factory(stream: FxRef<DripperStream<any>>, value: FxRef<any>, options?: object): ThisNode {
-    return { type: 'drip', stream, value, ...options };
+  public factory(value: FxRef<any>, stream: FxRef<DripperStream<any>>, options?: {
+      promise?: FxRef<"deny"|"allow"|"await">, 
+      catcher?: FxRef<(v:Error) => unknown>,
+      mode?: FxRef<"saga"|"atomic">
+    }): ThisNode {
+    return { ...options, type: 'drip', stream, value };
   }
 
   public compile(node: ThisNode, compiler: FxNodeCompiler) {
@@ -24,7 +28,6 @@ export class DripNodeDefinition extends NodeDefinition<'drip'> {
   public async handle({ node, execute }: FxExecutionContext & { node: ThisCompiledNode }) {
     try {
       const effect = await drip(node.value(), { acceptPromise: node.promise ? node.promise() : 'deny' })(node.stream());
-      
       const mode = node.mode ? node.mode() : 'atomic';
       if (mode === 'atomic') {
         effect.forEach(({ update, nextValue }) => update(nextValue));
