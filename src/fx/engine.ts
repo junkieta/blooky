@@ -1,10 +1,6 @@
 import { accum, drip, Prop, resolve, stream } from "../blooky-fp";
 import { nodeDefinitionMap  } from "./nodes";
-<<<<<<< HEAD
 import { FxNode, FxCompiledNode, AppContext, CancelToken, ExecContext, FxExecutionContext, FxResult, YieldRequest, ExecutionHandle, PreparedFx, FxHandlerMap, FxFactoryMap } from "./types";
-=======
-import { FxNode, FxCompiledNode, AppContext, CancelToken, ExecContext, FxExecutionContext, FxResult, YieldRequest, ExecutionHandle, PreparedFx, FxFactory } from "./types";
->>>>>>> ba206c321d00efab36d43ac58fe3135327181708
 
 // 参照オブジェクトの型を定義（ブランド化して、他のオブジェクトと区別する）
 const FxRefSymbol = Symbol("FxRef");
@@ -17,11 +13,7 @@ const ref = <T>(key: string): FxRef<T> => ({ [FxRefSymbol]: true, key });
 const isFxRef = <T>(v:unknown) : v is Extract<FxRef<T>,{ [FxRefSymbol]: true; key: string; }> => v && v[FxRefSymbol];
 
 // --- ファクトリ (fxオブジェクト) の動的構築 ---
-<<<<<<< HEAD
 const fx = {} as FxFactoryMap;
-=======
-const fx = {} as FxFactory;
->>>>>>> ba206c321d00efab36d43ac58fe3135327181708
 nodeDefinitionMap.forEach((def, type) => {
   fx[type] = def.factory.bind(def);
 });
@@ -317,6 +309,6 @@ class FxNodeCompiler {
 export {
   fx,
   FxRef, isFxRef, ref,
-  FxNodeCompiler,fx,
+  FxNodeCompiler,
   run,prepare,execute,query,createCancelToken
 }

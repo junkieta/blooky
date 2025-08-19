@@ -1,8 +1,4 @@
-<<<<<<< HEAD
 import { isChainedProp, isDripperStream, isStream, Prop, Stream } from "./blooky-fp";
-=======
-import { isChainedProp, isDripperStream, isStream, Prop, Stream } from "./blooky";
->>>>>>> ba206c321d00efab36d43ac58fe3135327181708
 import { EffectElementTagNameMap as DefaultEffectElementTagNameMap, EffectElement, FxEffect as ConcreteEffectElementConstructor, fxdom } from "./blooky-fxdom";
 import { FxNode, FxCompiledNode, FxMiddleware, ExecContext } from "./fx/types";
 

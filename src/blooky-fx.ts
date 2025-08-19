@@ -1,3 +1,3 @@
 // 今のところ、fx/engineのエクスポートのみ
-export * from "./fx/engine"
+export * from "./fx/engine";
 

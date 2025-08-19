@@ -1,12 +1,5 @@
-//
 // 型定義
-<<<<<<< HEAD
-
 import { DripperStream, Prop, Stream } from "../blooky-fp";
-=======
-import { DripperStream, Prop, Stream } from "../blooky";
->>>>>>> ba206c321d00efab36d43ac58fe3135327181708
-
 
 // --- 汎用的な型定義 ---
 

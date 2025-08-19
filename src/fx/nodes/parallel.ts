@@ -1,4 +1,4 @@
-import type { INodeDefinition, FxNode, FxNodeCompiler } from '../types';
+import type { FxNode, FxNodeCompiler } from '../types';
 import { NodeDefinition } from '../NodeDefinition';
 type ThisNode = Extract<FxNode, { type: 'parallel' }>;
 

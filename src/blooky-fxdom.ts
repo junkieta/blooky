@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 import { DripperStream, isDripperStream, isStream, type Prop, type Stream } from "./blooky-fp";
 import { jshtml } from "./blooky-dom";
 import { 
@@ -9,12 +8,6 @@ import {
   FxRef
 } from "./blooky-fx";
 import { FxNode, FxDispatchSettings, ExecContext, PreparedFx, ExecutionHandle } from "./fx/types";
-=======
-import { DripperStream, type Prop, type Stream } from "./blooky";
-import { jshtml } from "./blooky-dom";
-import { fx, ref, prepare, execute } from "./fx/engine";
-import { FxNode, FxRef, FxDispatchSettings, ExecContext, PreparedFx, ExecutionHandle } from "./fx/types";
->>>>>>> ba206c321d00efab36d43ac58fe3135327181708
 
 // ---- Abstract Base ----
 
