@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 import { DripperStream, isDripperStream, isStream, type Prop, type Stream } from "./blooky-fp";
 import { jshtml } from "./blooky-dom";
 import { 
@@ -8,6 +9,12 @@ import {
   FxRef
 } from "./blooky-fx";
 import { FxNode, FxDispatchSettings, ExecContext, PreparedFx, ExecutionHandle } from "./fx/types";
+=======
+import { DripperStream, type Prop, type Stream } from "./blooky";
+import { jshtml } from "./blooky-dom";
+import { fx, ref, prepare, execute } from "./fx/engine";
+import { FxNode, FxRef, FxDispatchSettings, ExecContext, PreparedFx, ExecutionHandle } from "./fx/types";
+>>>>>>> ba206c321d00efab36d43ac58fe3135327181708
 
 // ---- Abstract Base ----
 
@@ -28,6 +35,7 @@ class FxSequence extends EffectElement {
     return fx.sequence(this.childrenToFxNodes());
   }
 }
+
 class FxParallel extends EffectElement {
   toFxNode(): FxNode {
     return fx.parallel(this.childrenToFxNodes());
@@ -42,10 +50,17 @@ class FxRace extends EffectElement {
 
 class FxWait extends EffectElement {
   toFxNode(): FxNode {
+    const msAttr = this.getAttribute("ms");
+    let ms : FxRef<number>;
+    if(!msAttr)
+      ms = () => 0;
+    else if(!isNaN(parseInt(msAttr)))
+      ms = () => parseInt(msAttr);
+    else
+      ms = ref<number>(msAttr);
     // 属性値をそのまま渡す。数値かrefかはprepareが解決する
-    const msAttr = this.getAttribute("ms") || "0";
-    const ms = Number.isNaN(parseInt(msAttr, 10)) ? ref<number>(msAttr) : parseInt(msAttr, 10);
-    return fx.wait(ms);
+    const until = this.hasAttribute("until") ? ref<boolean>(this.getAttribute("until")!) : undefined;
+    return fx.wait({ms,until});
   }
 }
 
@@ -179,9 +194,8 @@ class FxLoop extends EffectElement {
     toFxNode(): FxNode {
         const whileAttr = this.getAttribute("while");
         if (!whileAttr) return fx.none();
-        
         // ★ while属性をrefとして渡すだけ
-        return fx.loop(ref(whileAttr), fx.sequence(this.childrenToFxNodes()));
+        return fx.loop(ref<boolean>(whileAttr), fx.sequence(this.childrenToFxNodes()));
     }
 }
 
@@ -240,15 +254,18 @@ class FxTake extends EffectElement {
 class FxYield extends EffectElement {
   toFxNode(): FxNode {
     const id = this.id;
-    // idは対話に必須なため、なければエラーを出す
-    if (!id) {
-      console.error("<fx-yield> requires an 'id' attribute.");
+    const forAttr = this.getAttribute("for");
+    if (!forAttr) {
+      console.error("<fx-yield> requires an 'for' attribute.");
       return fx.none();
     }
-    const valueAttr = this.getAttribute("value");
-    // value属性をrefとしてfx.yieldファクトリに渡す
-    // valueが指定されていなければ、nullをyieldする
-    return fx.yield(valueAttr ? ref(valueAttr) : null, id);
+    let value: undefined | FxRef<any> = undefined;
+    if(this.hasAttribute("value")) {
+      value = ref(this.getAttribute("value")!);
+    } else if(/\S/.test(this.textContent)) {
+      value = JSON.parse(this.textContent.trim());
+    }
+    return fx.yield({ for: ref<string>(forAttr), value, id });
   }
 }
 

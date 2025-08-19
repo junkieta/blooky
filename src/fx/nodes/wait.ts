@@ -7,12 +7,12 @@ export class WaitNodeDefinition extends NodeDefinition<'wait'> {
   public readonly type = 'wait';
 
   public factory(options: { ms?: FxRef<number>, until?: FxRef<boolean> }): ThisNode {
-    return { type: 'wait', ...options };
+    return { ...options, type: 'wait' };
   }
 
   public compile(node: ThisNode, compiler: FxNodeCompiler) {
     return Object.create(node, {
-      ms: { value: node.ms ? compiler.resolveValue(node.ms) : undefined },
+      ms: { value: "ms" in node ? compiler.resolveValue(node.ms) : undefined },
       until: { value: node.until ? compiler.resolveValue(node.until) : undefined },
     });
   }
@@ -21,8 +21,8 @@ export class WaitNodeDefinition extends NodeDefinition<'wait'> {
     if (node.ms) {
       await new Promise(res => setTimeout(res, node.ms()));
     }
+    // until属性で指定されたPropがtrueになるのを待つ
     if (node.until) {
-      // until属性で指定されたPropがtrueになるのを待つ
       await when(p => p === true)(node.until);
     }
   }
