@@ -1,5 +1,5 @@
 import type { FxNode, FxRef, FxNodeCompiler, FxExecutionContext, FxCompiledNode } from '../types';
-import { drip, DripperStream } from '../../blooky';
+import { drip, DripperStream } from '../../blooky-fp';
 import { NodeDefinition } from '../NodeDefinition';
 type ThisNode = Extract<FxNode, { type: 'drip' }>;
 type ThisCompiledNode = Extract<FxCompiledNode, { type: 'drip' }>;
@@ -27,7 +27,7 @@ export class DripNodeDefinition extends NodeDefinition<'drip'> {
 
   public async handle({ node, execute }: FxExecutionContext & { node: ThisCompiledNode }) {
     try {
-      const effect = await drip(node.value(), { acceptPromise: node.promise ? node.promise() : 'deny' })(node.stream());
+      const effect = await drip(node.value(), { acceptPromise: node.promise ? node.promise() : 'deny' })(node.stream()).effects;
       const mode = node.mode ? node.mode() : 'atomic';
       if (mode === 'atomic') {
         effect.forEach(({ update, nextValue }) => update(nextValue));

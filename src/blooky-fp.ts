@@ -3,6 +3,8 @@
  * 関数型のリアクティブプログラミングをtypescriptで行うためのライブラリ。
  */
 
+import { DripTrigger } from "./blooky-types";
+
 // ガベージコレクタの格納プロパティ用シンボル
 const STREAM_CLEANER = Symbol("STREAM_CLEANER");
 
@@ -71,6 +73,7 @@ type FlowingState = [PropEffect<unknown>[], [MergedStream<any>,any][]];
 
 // 副作用の集合体
 type DripperEffect = PropEffect<unknown>[];
+
 
 type PropEffect<A> = {
     created: number
@@ -428,9 +431,9 @@ async function* flowAsync<A>(v: A, s: Stream<A>): AsyncGenerator<PropEffect<unkn
   }
 }
 
-type DripResult<M> = M extends 'await'
-  ? Promise<DripperEffect>
-  : DripperEffect;
+type DripResult<A,M="deny"> = M extends 'await'
+  ? { effects: Promise<DripperEffect>, trigger: DripTrigger<A> }
+  : { effects: DripperEffect, trigger: DripTrigger<A> };
   
 /**
  * 起点となるストリームに時変値を流し込み、関連するオブザーバの呼び出しと時変値で構成されたEffectを返す。
@@ -440,15 +443,21 @@ type DripResult<M> = M extends 'await'
 function drip<
   A,
   M extends 'deny' | 'allow' | 'await' = 'deny' // モードをジェネリック型Mとして定義
->(v:A, options?: { acceptPromise?: M }) : (d:DripperStream<A>)=>DripResult<M> {
+>(value:A, options?: { acceptPromise?: M }) : (d:DripperStream<A>)=>DripResult<A,M> {
     // デフォルトは最も安全な 'deny'
     const mode = options?.acceptPromise ?? 'deny';
     return (mode === 'await'
         // "await"モードの場合は、非同期エンジンを呼び出し、Promise<Effect>を返す
-        ? (d:DripperStream<A>) : Promise<DripperEffect> => dripAsync(v)(d)
+        ? (dripper:DripperStream<A>) => ({
+            effects: dripAsync(value)(dripper),
+            trigger: { value, dripper }
+        })
         // "deny" または "allow" の場合は、同期的エンジンを呼び出し、Effectを返す
-        : (d:DripperStream<A>) : DripperEffect => dripSync(v, mode === 'allow')(d)
-    ) as (d:DripperStream<A>) => DripResult<M>;
+        : (dripper:DripperStream<A>) => ({
+            effects: dripSync(value, mode === 'allow')(dripper),
+            trigger: { value, dripper }
+        })
+    ) as (d:DripperStream<A>) => DripResult<A,M>;
 }
 
 /**
@@ -725,7 +734,7 @@ const moments = {} as moments; {
     // tickStreamにdripする。clock以外のPropが紐づいていれば自動呼出しする。
     const tick = (t:number) => {
         if(!hasReferences(_globalTickStream, 1)) return;
-        drip(t)(_globalTickStream).forEach(({update,nextValue}) => update(nextValue));
+        drip(t)(_globalTickStream).effects.forEach(({update,nextValue}) => update(nextValue));
         if(hasReferences(_globalTickStream, 1)) requestAnimationFrame(tick);
     };
 
@@ -743,6 +752,7 @@ export {
 
 export type {
     Stream,FilterStream,MappedStream,MergedStream,DripperStream,
+    DripResult,
     Prop,PromisedProp,
     PropEffect,DripperEffect,
     MomentStream,MomentState,

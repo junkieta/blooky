@@ -156,7 +156,7 @@ class DatasetPropBridge extends AbstractAttrPropBridge<V_STRING> {
 // 即時dripの短縮呼び出し関数。イベントリスナーとして登録する想定。
 // ex) onclick: into(eventDripperStream)
 const into = <A>(d: DripperStream<A>) => (v: A) => {
-    drip(v)(d).forEach(({update,nextValue})=>update(nextValue));
+    drip(v)(d).effects.forEach(({update,nextValue})=>update(nextValue));
 }
 
 /**

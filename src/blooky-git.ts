@@ -1,89 +1,138 @@
-import type { Prop, DripperEffect } from './blooky-fp';
-import { drip } from './blooky-fp';
-import type { StateSnapshot, Branch, DripTrigger } from './blooky-types';
+// src/blooky-git.ts
 
-export class StateStore {
-  private snapshots = new Map<string, StateSnapshot>();
-  private branches = new Map<string, Branch>();
-  private HEAD: string = 'main';
-  private readonly managedProps: Readonly<Map<Prop<any>, (value: any) => void>>;
+import type { Prop, DripperEffect, DripperStream, DripResult } from './blooky-fp';
+import { drip, clock } from './blooky-fp'; // ★ fpからclockをインポート
+import type { StateSnapshot, Branch, DripTrigger } from './blooky-types'; // git用の型定義
 
-  private constructor(rootSnapshot: StateSnapshot) {
-    this.snapshots.set(rootSnapshot.id, rootSnapshot);
-    this.branches.set('main', { name: 'main', commitId: rootSnapshot.id });
+// --- Module-Scoped State (Internal Implementation) ---
 
-    const propsMap = new Map();
-    rootSnapshot.effects.forEach(({ prop, update }) => {
-      propsMap.set(prop, update);
-    });
-    this.managedProps = propsMap;
-  }
+const snapshots = new Map<string, StateSnapshot>();
+const branches = new Map<string, Branch>();
+let HEAD: string = 'main';
+const managedProps = new Map<Prop<any>, (value: any) => void>();
 
-  public static create(initialEffects: DripperEffect, initialTrigger: DripTrigger<any>): StateStore {
-    const initialState = new Map<Prop<any>, any>();
-    initialEffects.forEach(({ prop, nextValue }) => initialState.set(prop, nextValue));
+// --- Automatic Initialization ---
 
-    const rootSnapshot: StateSnapshot = {
-      id: 'root-' + Math.random().toString(36).substr(2, 9),
-      parent: null,
-      trigger: initialTrigger,
-      effects: initialEffects,
-      fullState: initialState,
-    };
+// ★ モジュールが読み込まれた瞬間に、歴史の創世記が自動的に記録される
+const rootSnapshot: StateSnapshot = (() => {
+  const initialState = new Map<Prop<any>, any>([[clock, clock()]]);
+  const snapshot: StateSnapshot = {
+    id: 'root-' + Math.random().toString(36).substring(2, 9),
+    parent: null,
+    trigger: { dripper: null as any, value: 'initial_state' },
+    effects: [],
+    fullState: initialState,
+  };
+  snapshots.set(snapshot.id, snapshot);
+  branches.set('main', { name: 'main', commitId: snapshot.id });
+  return snapshot;
+})();
 
-    const store = new StateStore(rootSnapshot);
-    initialEffects.forEach(({ update, nextValue }) => update(nextValue));
-    return store;
-  }
 
-  public commit<A>(trigger: DripTrigger<A>): string {
-    const parentId = this.branches.get(this.HEAD)!.commitId;
-    const parentSnapshot = this.snapshots.get(parentId)!;
-    const effects = drip(trigger.value)(trigger.dripper);
-    
-    return this.internalCommit(effects, trigger, [parentSnapshot]);
-  }
+// --- Private Helper Methods ---
 
-  public checkout(branchName: string): void {
-    if (!this.branches.has(branchName)) throw new Error(`Branch "${branchName}" not found.`);
-    const targetCommitId = this.branches.get(branchName)!.commitId;
-    const targetSnapshot = this.snapshots.get(targetCommitId)!;
-
-    this.managedProps.forEach((update, prop) => {
-      const value = targetSnapshot.fullState.get(prop);
-      update(value);
-    });
-
-    this.HEAD = branchName;
-  }
-
-  public branch(branchName: string): void {
-    if (this.branches.has(branchName)) {
-      throw new Error(`Branch "${branchName}" already exists.`);
+function findCommonAncestor(snapA: StateSnapshot, snapB: StateSnapshot): StateSnapshot | null {
+  const historyA = getCommitHistory(snapA);
+  const historyA_ids = new Set(historyA.map(s => s.id));
+  
+  for (const snap of getCommitHistory(snapB)) {
+    if (historyA_ids.has(snap.id)) {
+      return snap;
     }
-    const currentCommitId = this.branches.get(this.HEAD)!.commitId;
-    this.branches.set(branchName, { name: branchName, commitId: currentCommitId });
   }
+  return null;
+}
 
-  public merge(sourceBranchName: string): string | { conflicts: any[] } {
-    if (!this.branches.has(sourceBranchName)) {
-      throw new Error(`Branch "${sourceBranchName}" not found.`);
+function getCommitHistory(start: StateSnapshot, stopAtId?: string): StateSnapshot[] {
+  const history: StateSnapshot[] = [];
+  let current: StateSnapshot | undefined = start;
+  while (current && current.id !== stopAtId) {
+    history.push(current);
+    if (current.parent === null) break;
+    current = snapshots.get(current.parent);
+  }
+  return history;
+}
+
+// --- Public API (Exported Functions) ---
+
+/**
+ * 新しい状態をコミットする
+ */
+export function commit(dripResult: DripResult<any>): string {
+  const { trigger, effects } = dripResult;
+
+  // commitのたびに、未知のPropとそのupdate関数を「学習」する
+  effects.forEach(({ prop, update }) => {
+    if (!managedProps.has(prop)) {
+      managedProps.set(prop, update);
     }
+  });
+  
+  const parentId = branches.get(HEAD)!.commitId;
+  const parentSnapshot = snapshots.get(parentId)!;
 
-    const targetBranch = this.branches.get(this.HEAD)!;
-    const sourceBranch = this.branches.get(sourceBranchName)!;
-    const targetSnapshot = this.snapshots.get(targetBranch.commitId)!;
-    const sourceSnapshot = this.snapshots.get(sourceBranch.commitId)!;
-    const ancestorSnapshot = this.findCommonAncestor(targetSnapshot, sourceSnapshot);
+  const newFullState = new Map(parentSnapshot.fullState);
+  effects.forEach(({ prop, nextValue }) => newFullState.set(prop, nextValue));
 
-    if (!ancestorSnapshot) {
-      throw new Error("Cannot merge branches with no common ancestor.");
-    }
+  const newSnapshot: StateSnapshot = {
+    id: 'snap-' + Math.random().toString(36).substr(2, 9),
+    parent: parentId,
+    trigger: trigger,
+    effects: effects,
+    fullState: newFullState,
+  };
+  snapshots.set(newSnapshot.id, newSnapshot);
+  branches.get(HEAD)!.commitId = newSnapshot.id;
+  
+  effects.forEach(({ update, nextValue }) => update(nextValue));
+  return newSnapshot.id;
+}
 
-    const finalEffects: DripperEffect = [];
-    const conflicts: { prop: Prop<any>, targetValue: any, sourceValue: any }[] = [];
+/**
+ * HEADを指定したブランチに切り替え、アプリケーションの状態を復元する
+ */
+export function checkout(branchName: string): void {
+  if (!branches.has(branchName)) throw new Error(`Branch "${branchName}" not found.`);
 
-    this.managedProps.forEach((update, prop) => {
+  const targetCommitId = branches.get(branchName)!.commitId;
+  const targetSnapshot = snapshots.get(targetCommitId)!;
+
+  managedProps.forEach((update, prop) => {
+    const value = targetSnapshot.fullState.get(prop);
+    update(value);
+  });
+
+  HEAD = branchName;
+}
+
+/**
+ * 現在のHEADから新しいブランチを作成する
+ */
+export function branch(branchName: string): void {
+  if (branches.has(branchName)) {
+    throw new Error(`Branch "${branchName}" already exists.`);
+  }
+  const currentCommitId = branches.get(HEAD)!.commitId;
+  branches.set(branchName, { name: branchName, commitId: currentCommitId });
+}
+
+/**
+ * 指定したブランチの変更を、現在のHEADブランチにマージする
+ */
+export function merge(sourceBranchName: string): string | { conflicts: any[] } {
+  // ... (実装は前回の提案と同じ)
+  const targetSnapshot = snapshots.get(branches.get(HEAD)!.commitId)!;
+  const sourceSnapshot = snapshots.get(branches.get(sourceBranchName)!.commitId)!;
+  const ancestorSnapshot = findCommonAncestor(targetSnapshot, sourceSnapshot);
+  if (!ancestorSnapshot) throw new Error("No common ancestor.");
+  
+  const conflicts: any[] = [];
+  const finalEffects: DripperEffect = [];
+  const allProps = new Set([...managedProps.keys()]);
+  const created = clock();
+
+  allProps.forEach(prop => {
       const ancestorValue = ancestorSnapshot.fullState.get(prop);
       const targetValue = targetSnapshot.fullState.get(prop);
       const sourceValue = sourceSnapshot.fullState.get(prop);
@@ -91,104 +140,43 @@ export class StateStore {
       const targetChanged = ancestorValue !== targetValue;
       const sourceChanged = ancestorValue !== sourceValue;
 
-      if (!sourceChanged) {
-        return; // ソースが変更していない場合はターゲットの変更を維持（何もしない）
-      }
+      if (!sourceChanged) return;
       if (sourceChanged && !targetChanged) {
-        const created = Date.now();
-        finalEffects.push({ created, prop, nextValue: sourceValue, update });
+        finalEffects.push({ created, prop, nextValue: sourceValue, update: managedProps.get(prop)! });
       } else if (targetChanged && sourceChanged && targetValue !== sourceValue) {
         conflicts.push({ prop, targetValue, sourceValue });
       }
-    });
+  });
+  
+  if (conflicts.length > 0) return { conflicts };
 
-    if (conflicts.length > 0) {
-      return { conflicts };
-    }
+  const mergeTrigger = { dripper: null as any, value: `merge ${sourceBranchName} into ${HEAD}` };
+  return commit({ trigger: mergeTrigger, effects: finalEffects });
+}
 
-    const mergeTrigger = { dripper: null as any, value: `merge ${sourceBranchName} into ${this.HEAD}` };
-    return this.internalCommit(finalEffects, mergeTrigger, [targetSnapshot, sourceSnapshot]);
+/**
+ * 現在のブランチの変更を、指定したブランチの先端に付け替える
+ */
+export function rebase(baseBranchName: string): void {
+  const headBranchName = HEAD;
+  if (headBranchName === baseBranchName) return;
+
+  const baseSnapshot = snapshots.get(branches.get(baseBranchName)!.commitId)!;
+  const headSnapshot = snapshots.get(branches.get(headBranchName)!.commitId)!;
+  const ancestorSnapshot = findCommonAncestor(baseSnapshot, headSnapshot);
+  if (!ancestorSnapshot) throw new Error("No common ancestor.");
+
+  const commitsToReplay = getCommitHistory(headSnapshot, ancestorSnapshot.id);
+
+  checkout(baseBranchName);
+  
+  for (const oldCommit of commitsToReplay.reverse()) {
+    if(oldCommit.id === ancestorSnapshot.id) continue;
+    commit(drip(oldCommit.trigger.value)(oldCommit.trigger.dripper));
   }
-
-  public rebase(baseBranchName: string): void {
-    const headBranchName = this.HEAD;
-    if (headBranchName === baseBranchName) return;
-
-    const baseSnapshot = this.snapshots.get(this.branches.get(baseBranchName)!.commitId)!;
-    const headSnapshot = this.snapshots.get(this.branches.get(headBranchName)!.commitId)!;
-    const ancestorSnapshot = this.findCommonAncestor(baseSnapshot, headSnapshot);
-    if (!ancestorSnapshot) throw new Error("No common ancestor to rebase from.");
-
-    const commitsToReplay = this.getCommitHistory(headSnapshot, ancestorSnapshot.id);
-    
-    // 現在のHEADを、リベースの土台となるブランチの先端に一時的に移動
-    this.HEAD = baseBranchName;
-    
-    // コミットを古い順に、新しい土台の上で再生していく
-    for (const oldCommit of commitsToReplay.reverse()) {
-      if(oldCommit.id === ancestorSnapshot.id) continue;
-      // 再dripして新しいeffectsを計算し、それを元に新しいコミットを作成
-      this.commit(oldCommit.trigger);
-    }
-    
-    // 元のブランチ名を、新しく作り直した歴史の先端に付け替える
-    const newCommitId = this.branches.get(this.HEAD)!.commitId;
-    this.branches.set(headBranchName, { name: headBranchName, commitId: newCommitId });
-    
-    // 最後に、HEADを元のブランチに戻す
-    this.HEAD = headBranchName;
-  }
-
-  // --- Private Helper Methods ---
-
-  private internalCommit(effects: DripperEffect, trigger: DripTrigger<any>, parents: StateSnapshot[], updateProps: boolean = true): string {
-    const parentSnapshot = parents[0]; // 簡略化のため最初の親を記録
-    const newFullState = new Map(parentSnapshot.fullState);
-    effects.forEach(({ prop, nextValue }) => newFullState.set(prop, nextValue));
-
-    const newSnapshot: StateSnapshot = {
-      id: this.generateId(parentSnapshot.id),
-      parent: parentSnapshot.id,
-      trigger: trigger,
-      effects: effects,
-      fullState: newFullState,
-    };
-    this.snapshots.set(newSnapshot.id, newSnapshot);
-
-    // 現在のブランチのポインタを新しいスナップショットに進める
-    this.branches.get(this.HEAD)!.commitId = newSnapshot.id;
-
-    if (updateProps) {
-      effects.forEach(({ update, nextValue }) => update(nextValue));
-    }
-
-    return newSnapshot.id;
-  }
-
-  private findCommonAncestor(snapA: StateSnapshot, snapB: StateSnapshot): StateSnapshot | null {
-    const historyA = this.getCommitHistory(snapA);
-    const historyA_ids = new Set(historyA.map(s => s.id));
-    
-    for (const snap of this.getCommitHistory(snapB)) {
-      if (historyA_ids.has(snap.id)) {
-        return snap;
-      }
-    }
-    return null;
-  }
-
-  private getCommitHistory(start: StateSnapshot, stopAtId?: string): StateSnapshot[] {
-    const history: StateSnapshot[] = [];
-    let current: StateSnapshot | undefined = start;
-    while (current && current.id !== stopAtId) {
-      history.push(current);
-      if (current.parent === null) break;
-      current = this.snapshots.get(current.parent);
-    }
-    return history;
-  }
-
-  private generateId(seed: string): string {
-    return 'snap-' + (parseInt(seed.slice(-4), 36) + Math.random()).toString(36).slice(2, 11);
-  }
+  
+  const newCommitId = branches.get(HEAD)!.commitId;
+  branches.set(headBranchName, { name: headBranchName, commitId: newCommitId });
+  
+  checkout(headBranchName);
 }

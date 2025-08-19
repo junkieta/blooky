@@ -245,8 +245,8 @@ async function _internal_execute(
     // nodeにidがあれば、その結果をruntimeState$にdripする
     if (node.id) {
       // このdripは、エンジン内部の通信のため、同期的に実行する必要がある
-      const effect = drip({ id: node.id, value: nextValue })(this.runtimeState$);
-      effect.forEach(e => e.update(e.nextValue));
+      drip({ id: node.id, value: nextValue })(this.runtimeState$)
+        .effects.forEach(e => e.update(e.nextValue));
     }
 
     await yieldToMainThread();
