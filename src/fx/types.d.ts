@@ -2,7 +2,7 @@
 //
 // 型定義
 
-import { DripperStream, Prop, Stream } from "../blooky";
+import { DripperStream, Prop, Stream } from "../blooky-fp";
 
 
 // --- 汎用的な型定義 ---
@@ -157,6 +157,10 @@ type FxHandlerMap = {
   ) => Promise<any>
 };
 
+type FxFactoryMap = {
+  [K in FxNode["type"]]: (...args: any[]) => Extract<FxNode, { type: K }>
+};
+
 
 // 実行全体の設定
 interface ExecContext {
@@ -273,7 +277,7 @@ export {
     FxRef,
     INodeDefinition,
     FxDispatchSettings,
-    FxHandlerMap,FxMiddleware,
+    FxHandlerMap,FxMiddleware,FxFactoryMap,
     PreparedFx,ExecutionHandle,
     FxResult,YieldRequest,
     AppContext,CancelToken,ExecContext,FxExecutionContext,

@@ -1,6 +1,6 @@
 // blooky-dom-types.d.ts
 
-import type { DripperStream, Prop } from "./blooky"; // Prop/Stream 型に合わせて
+import type { DripperStream, Prop } from "./blooky-fp"; // Prop/Stream 型に合わせて
 import type { EmptyElementAttributeMapSource } from "./blooky-dom"; // この行を追加
 
 // --- HTML属性名一覧

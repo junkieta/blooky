@@ -1,20 +1,13 @@
-import { DripperStream, isDripperStream, isStream, type Prop, type Stream } from "./blooky";
+import { DripperStream, isDripperStream, isStream, type Prop, type Stream } from "./blooky-fp";
 import { jshtml } from "./blooky-dom";
 import { 
-  createCancelToken, 
   prepare, 
   execute, 
   fx, 
   ref, // ★
-  type FxMiddleware, 
-  type FxDispatchSettings, 
-  type FxNode,
-  type AppContext,
-  type ExecContext,
-  type PreparedFx,
-  ExecutionHandle,
   FxRef
 } from "./blooky-fx";
+import { FxNode, FxDispatchSettings, ExecContext, PreparedFx, ExecutionHandle } from "./fx/types";
 
 // ---- Abstract Base ----
 

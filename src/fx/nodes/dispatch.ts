@@ -1,4 +1,4 @@
-import type { INodeDefinition, FxNode, FxRef, FxNodeCompiler, FxExecutionContext, FxCompiledNode } from '../types';
+import type { INodeDefinition, FxNode, FxRef, FxNodeCompiler, FxExecutionContext, FxCompiledNode, FxDispatchSettings } from '../types';
 import { NodeDefinition } from '../NodeDefinition';
 
 type ThisNode = Extract<FxNode, { type: 'dispatch' }>;
@@ -7,7 +7,7 @@ type ThisCompiledNode = Extract<FxCompiledNode, { type: 'dispatch' }>;
 export class DispatchNodeDefinition extends NodeDefinition<'dispatch'> {
   public readonly type = 'dispatch';
 
-  public factory(name: FxRef<string>, settings: object, child?: FxNode): ThisNode {
+  public factory(name: FxRef<string>, settings: FxDispatchSettings<any>, child?: FxNode): ThisNode {
     return { type: 'dispatch', name, settings, child };
   }
 

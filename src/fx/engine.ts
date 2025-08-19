@@ -1,6 +1,6 @@
-import { accum, drip, Prop, resolve, stream } from "../blooky";
+import { accum, drip, Prop, resolve, stream } from "../blooky-fp";
 import { nodeDefinitionMap  } from "./nodes";
-import { FxNode, FxCompiledNode, AppContext, CancelToken, ExecContext, FxExecutionContext, FxResult, YieldRequest, ExecutionHandle, PreparedFx } from "./types";
+import { FxNode, FxCompiledNode, AppContext, CancelToken, ExecContext, FxExecutionContext, FxResult, YieldRequest, ExecutionHandle, PreparedFx, FxHandlerMap, FxFactoryMap } from "./types";
 
 // 参照オブジェクトの型を定義（ブランド化して、他のオブジェクトと区別する）
 const FxRefSymbol = Symbol("FxRef");
@@ -13,7 +13,7 @@ const ref = <T>(key: string): FxRef<T> => ({ [FxRefSymbol]: true, key });
 const isFxRef = <T>(v:unknown) : v is Extract<FxRef<T>,{ [FxRefSymbol]: true; key: string; }> => v && v[FxRefSymbol];
 
 // --- ファクトリ (fxオブジェクト) の動的構築 ---
-export const fx = {};
+const fx = {} as FxFactoryMap;
 nodeDefinitionMap.forEach((def, type) => {
   fx[type] = def.factory.bind(def);
 });
@@ -159,7 +159,7 @@ function execute(preparedFx: PreparedFx): ExecutionHandle {
   const resultsIterator = (async function* () {
     while (true) {
       // 1. yieldChannel$ に次に流れてくる値を待つ
-      const nextResult = await resolve(execContext.yieldChannel$);
+      const nextResult : YieldRequest = await resolve(execContext.yieldChannel$);
       // 2. for await...of ループに値をyieldして送り出す
       //    同時に、next()で渡される応答を待つ
       const responseFromConsumer = yield nextResult;
@@ -307,6 +307,7 @@ class FxNodeCompiler {
 }
 
 export {
+  fx,
   FxRef, isFxRef, ref,
   FxNodeCompiler,
   run,prepare,execute,query,createCancelToken

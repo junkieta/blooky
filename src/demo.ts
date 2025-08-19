@@ -1,5 +1,5 @@
 // -- 0. 事前ロード ---
-import { stream, accum, merge, hold, map, remap } from "./blooky";
+import { stream, accum, merge, hold, map, remap } from "./blooky-fp";
 import { into, jshtml } from "./blooky-dom";
 import type { FxEffect } from "./blooky-fxdom";
 import { fxdom,EffectElementTagNameMap, dumpGraphDOT } from "./blooky-devtools";
