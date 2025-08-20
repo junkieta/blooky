@@ -48,7 +48,7 @@ src/main.ts
 
 TypeScript
 
-import { stream, accum, merge, hold, map, remap } from "./blooky";
+import { stream, accum, merge, hold, map, remap } from "./blooky-fp";
 import { into, jshtml, mount } from "./blooky-dom";
 import type { FxEffect } from "./blooky-fxdom";
 

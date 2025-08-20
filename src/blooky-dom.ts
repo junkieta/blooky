@@ -4,7 +4,7 @@
  * 簡易な仕様でDOMを構築しつつ、Streamを利用した更新管理も行う。
  */
 import type { V_DATASET, V_STYLE, V_CLASSLIST, V_EVENTLISTENER, V_STRING, WritableCSSProperty, JSHTMLElementSource, JSHTMLAttrSource, JSHTMLNodeSource, JSHTMLAttributeMapSource, T_ATTRSET } from "./blooky-dom-types";
-import { type Stream, type Prop, type DripperStream, stream, drip, isChainedProp, filter, resolve, isDripperStream, when } from "./blooky";
+import { type Stream, type Prop, type DripperStream, stream, drip, isChainedProp, filter, resolve, isDripperStream, when } from "./blooky-fp";
 
 // dripにDOMオブザーバー呼び出しを追加する
 drip.registerEnhancer((effect) => {
@@ -156,7 +156,7 @@ class DatasetPropBridge extends AbstractAttrPropBridge<V_STRING> {
 // 即時dripの短縮呼び出し関数。イベントリスナーとして登録する想定。
 // ex) onclick: into(eventDripperStream)
 const into = <A>(d: DripperStream<A>) => (v: A) => {
-    drip(v)(d).forEach(({update,nextValue})=>update(nextValue));
+    drip(v)(d).effects.forEach(({update,nextValue})=>update(nextValue));
 }
 
 /**

@@ -1,5 +1,5 @@
 // -- 0. 事前ロード ---
-import { stream, accum, merge, hold, map, remap } from "./blooky";
+import { stream, accum, merge, hold, map, remap } from "./blooky-fp";
 import { into, jshtml } from "./blooky-dom";
 import type { FxEffect } from "./blooky-fxdom";
 import { fxdom,EffectElementTagNameMap, dumpGraphDOT } from "./blooky-devtools";
@@ -81,7 +81,7 @@ const fxEffectElement = jshtml({
             // "yes"の場合のフロー
             { "fx-sequence": [
                 { "fx-drip": '"Saving..."', $: { "stream-key": "statusMessageStream$" } },
-                { "fx-wait": jshtml.$({ ms: "1500" }) },
+                { "fx-wait": jshtml.$({ ms: 1500 }) },
                 { "fx-drip": jshtml.$({ "stream-key": "statusMessageStream$", value: '$finalMessage' }) },
                 { "fx-dispatch":
                     { "fx-call": '"save complete"', $: { fn: "log" } },
