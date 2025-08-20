@@ -9,7 +9,7 @@ import {LoopNodeDefinition} from "./loop";
 import {ConditionNodeDefinition} from "./condition";
 import {SwitchNodeDefinition} from "./switch";
 import {CallNodeDefinition} from "./call";
-import {DripNodeDefinition} from "./drip";
+import {CollapseNodeDefinition} from "./collapse";
 import {DispatchNodeDefinition} from "./dispatch";
 import {TakeNodeDefinition} from "./take";
 import {YieldNodeDefinition} from "./yield";
@@ -24,7 +24,7 @@ export const allNodeDefinitions = [
   new ConditionNodeDefinition(),
   new SwitchNodeDefinition(),
   new CallNodeDefinition(),
-  new DripNodeDefinition(),
+  new CollapseNodeDefinition(),
   new DispatchNodeDefinition(),
   new TakeNodeDefinition(),
   new YieldNodeDefinition(),

@@ -36,7 +36,7 @@ type FxLoopNode = FxNodeBase<"loop", { cond: FxRef<boolean>, body: FxNode }>;
 type FxConditionNode = FxNodeBase<"condition", { if: FxRef<boolean>, then: FxNode, else?: FxNode }>;
 type FxSwitchNode = FxNodeBase<"switch", { by: FxRef<string | number | symbol>, cases: Map<string | number | symbol, FxNode>, default?: FxNode }>;
 type FxCallNode = FxNodeBase<"call", { action: FxRef<(v: any) => unknown>, arg?: FxRef<any>, context?: FxRef<any>, catcher?: FxRef<(error: Error) => unknown> }>;
-type FxDripNode = FxNodeBase<"drip", { stream: FxRef<DripperStream<any>>, value: FxRef<any>, catcher?: FxRef<(error: Error) => unknown>, mode?: FxRef<"saga" | "atomic">, promise?: FxRef<"deny" | "allow" | "await"> }>;
+type FxCollapseNode = FxNodeBase<"collapse", { dripper: FxRef<DripperStream<any>>, value: FxRef<any>, catcher?: FxRef<(error: Error) => unknown>, mode?: FxRef<"saga" | "atomic">, promise?: FxRef<"deny" | "allow" | "await"> }>;
 type FxDispatchNode = FxNodeBase<"dispatch", { name: FxRef<string>, settings: FxDispatchSettings<FxRef<any>>, child?: FxNode }>;
 type FxTakeNode = FxNodeBase<"take", { stream: FxRef<Stream<any>> }>;
 type FxYieldNode = FxNodeBase<"yield", { for: string, value: FxRef<any>, id?: string }>; // yieldの拡張を反映
@@ -54,7 +54,7 @@ type FxNode =
   | FxConditionNode
   | FxSwitchNode
   | FxCallNode
-  | FxDripNode
+  | FxCollapseNode
   | FxDispatchNode
   | FxTakeNode
   | FxYieldNode;
@@ -74,7 +74,7 @@ type FxCompiledLoopNode = FxCompiledNodeBase<"loop", { cond: Prop<boolean>, body
 type FxCompiledConditionNode = FxCompiledNodeBase<"condition", { if: Prop<boolean>, then: FxCompiledNode, else?: FxCompiledNode }>;
 type FxCompiledSwitchNode = FxCompiledNodeBase<"switch", { by: Prop<string | number | symbol>, cases: Map<string | number | symbol, FxCompiledNode>, default?: FxCompiledNode }>;
 type FxCompiledCallNode = FxCompiledNodeBase<"call", { action: (v: any) => unknown, arg?: Prop<any>, context?: Prop<any>, catcher?: (error: Error) => unknown }>;
-type FxCompiledDripNode = FxCompiledNodeBase<"drip", { stream: Prop<DripperStream<any>>, value: Prop<any>, catcher?: (error: Error) => unknown, mode?: Prop<"saga" | "atomic">, promise?: Prop<"deny" | "allow" | "await"> }>;
+type FxCompiledCollapseNode = FxCompiledNodeBase<"collapse", { stream: Prop<DripperStream<any>>, value: Prop<any>, catcher?: (error: Error) => unknown, mode?: Prop<"saga" | "atomic">, promise?: Prop<"deny" | "allow" | "await"> }>;
 type FxCompiledDispatchNode = FxCompiledNodeBase<"dispatch", { name: Prop<string>, settings: FxDispatchSettings<Prop<any>>, child?: FxCompiledNode }>;
 type FxCompiledTakeNode = FxCompiledNodeBase<"take", { stream: Prop<Stream<any>> }>;
 type FxCompiledYieldNode = FxCompiledNodeBase<"yield", { for: string, value: Prop<any>, id?: string }>;
@@ -92,7 +92,7 @@ type FxCompiledNode =
   | FxCompiledConditionNode
   | FxCompiledSwitchNode
   | FxCompiledCallNode
-  | FxCompiledDripNode
+  | FxCompiledCollapseNode
   | FxCompiledDispatchNode
   | FxCompiledTakeNode
   | FxCompiledYieldNode;
@@ -212,12 +212,14 @@ interface ExecutionHandle {
    * フローの結果をプル型で、逐次的に取得するための非同期ジェネレータ。
    * `fx.yield`を使った対話的なフローに利用できる。
    */
-  results(): AsyncGenerator<YieldRequest, void, any>;
+  fetch(): AsyncGenerator<YieldRequest, void, any>;
 
   /**
    * 実行の完了を知らせるPromise
    */
   done: Promise<AppContext>
+
+  
 }
 
 
@@ -256,9 +258,9 @@ type FxFactoryArgs = {
     action: FxRef<(v: any) => unknown>,
     options?: { arg?: FxRef<any>, context?: FxRef<any>, catcher?: FxRef<(e: Error) => unknown>, id?: string }
   ],
-  drip: [
+  collapse: [
     value: FxRef<any>,
-    stream: FxRef<DripperStream<any>>,
+    dripper: FxRef<DripperStream<any>>,
     options?: { catcher?: FxRef<(e: Error) => unknown>, mode?: FxRef<any>, promise?: FxRef<any> }
   ],
   dispatch: [name: FxRef<string>, settings: FxDispatchSettings<FxRef<any>>, child?: FxNode],
@@ -293,7 +295,7 @@ export {
     FxConditionNode,
     FxSwitchNode,
     FxCallNode,
-    FxDripNode,
+    FxCollapseNode,
     FxDispatchNode,
     FxTakeNode,
     FxYieldNode,
@@ -308,7 +310,7 @@ export {
     FxCompiledConditionNode,
     FxCompiledSwitchNode,
     FxCompiledCallNode,
-    FxCompiledDripNode,
+    FxCompiledCollapseNode,
     FxCompiledDispatchNode,
     FxCompiledTakeNode,
     FxCompiledYieldNode,

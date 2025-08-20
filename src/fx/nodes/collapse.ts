@@ -1,23 +1,24 @@
 import type { FxNode, FxRef, FxNodeCompiler, FxExecutionContext, FxCompiledNode } from '../types';
 import { drip, DripperStream } from '../../blooky-fp';
 import { NodeDefinition } from '../NodeDefinition';
-type ThisNode = Extract<FxNode, { type: 'drip' }>;
-type ThisCompiledNode = Extract<FxCompiledNode, { type: 'drip' }>;
+import { fx } from '../engine';
+type ThisNode = Extract<FxNode, { type: 'collapse' }>;
+type ThisCompiledNode = Extract<FxCompiledNode, { type: 'collapse' }>;
 
-export class DripNodeDefinition extends NodeDefinition<'drip'> {
-  public readonly type = 'drip';
+export class CollapseNodeDefinition extends NodeDefinition<'collapse'> {
+  public readonly type = 'collapse';
 
-  public factory(value: FxRef<any>, stream: FxRef<DripperStream<any>>, options?: {
+  public factory(value: FxRef<any>, dripper: FxRef<DripperStream<any>>, options?: {
       promise?: FxRef<"deny"|"allow"|"await">, 
       catcher?: FxRef<(v:Error) => unknown>,
       mode?: FxRef<"saga"|"atomic">
     }): ThisNode {
-    return { ...options, type: 'drip', stream, value };
+    return { ...options, type: 'collapse', dripper, value };
   }
 
   public compile(node: ThisNode, compiler: FxNodeCompiler) {
     return Object.create(node, {
-      stream: { value: compiler.resolveValue(node.stream) },
+      stream: { value: compiler.resolveValue(node.dripper) },
       value: { value: compiler.resolveValue(node.value) },
       catcher: { value: node.catcher ? compiler.resolveAction(node.catcher) : undefined },
       mode: { value: node.mode ? compiler.resolveValue(node.mode) : undefined },
@@ -29,16 +30,14 @@ export class DripNodeDefinition extends NodeDefinition<'drip'> {
     try {
       const effect = await drip(node.value(), { acceptPromise: node.promise ? node.promise() : 'deny' })(node.stream()).effects;
       const mode = node.mode ? node.mode() : 'atomic';
+      let _fx: FxNode;
       if (mode === 'atomic') {
-        effect.forEach(({ update, nextValue }) => update(nextValue));
+        _fx = fx.call(()=>effect.forEach(({ update, nextValue }) => update(nextValue)));
       } else { // 'saga' mode
         // 各Propの更新を独立した並列な副作用として実行
-        const updateFlows = effect.map(({ update, nextValue }) => ({
-          type: 'call' as const,
-          action: () => update(nextValue) // update(nextValue) を返す関数
-        }));
-        await execute({ type: 'parallel', steps: updateFlows });
+        _fx = fx.parallel(effect.map(({update,nextValue})=>fx.call(update, { arg: nextValue })));
       }
+      await execute(_fx);
     } catch (error) {
       if (node.catcher) {
         return node.catcher(error as Error);
