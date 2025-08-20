@@ -1,6 +1,6 @@
 import type { INodeDefinition, FxRef, FxNode, FxNodeCompiler } from '../types';
 import { NodeDefinition } from '../NodeDefinition';
-import { when } from '../../blooky'; // when関数をインポート
+import { when } from '../../blooky-fp'; // when関数をインポート
 type ThisNode = Extract<FxNode, { type: 'wait' }>;
 
 export class WaitNodeDefinition extends NodeDefinition<'wait'> {

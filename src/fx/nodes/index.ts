@@ -11,7 +11,6 @@ import {SwitchNodeDefinition} from "./switch";
 import {CallNodeDefinition} from "./call";
 import {CollapseNodeDefinition} from "./collapse";
 import {DispatchNodeDefinition} from "./dispatch";
-import {TakeNodeDefinition} from "./take";
 import {YieldNodeDefinition} from "./yield";
 
 export const allNodeDefinitions = [
@@ -26,7 +25,6 @@ export const allNodeDefinitions = [
   new CallNodeDefinition(),
   new CollapseNodeDefinition(),
   new DispatchNodeDefinition(),
-  new TakeNodeDefinition(),
   new YieldNodeDefinition(),
 ].map(def => [def.type, def] as [string, INodeDefinition<any>]); // Mapにしやすいように[key, value]のペアに変換
 

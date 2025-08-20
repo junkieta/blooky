@@ -85,7 +85,7 @@ const debugMiddleware: FxMiddleware = async (ctx, next) => {
   let result: any = null;
   try {
     // --- 内側の処理（次のMiddlewareまたはコア）を呼び出す ---
-    if(node.type === "wait" || node.type === "take" || node.type === "yield") {
+    if(node.type === "wait" || node.type === "yield") {
       element?.classList.add("is-paused");
       result = await next();
       element?.classList.remove("is-paused");
@@ -155,20 +155,12 @@ EffectElementTagNameMap["fx-switch"] = class extends (EffectElementTagNameMap["f
   }
 }
 
-EffectElementTagNameMap["fx-take"] = class extends (EffectElementTagNameMap["fx-take"] as typeof ConcreteEffectElementConstructor) {
-  connectedCallback(): void {
-    super.connectedCallback();
-    this.append(new Text(`stream-key=["${this.getAttribute("stream-key")}"]`));
-  }
-}
-
-
-// dripはターゲットのStreamのグラフと紐づける
-EffectElementTagNameMap["fx-drip"] = class extends (EffectElementTagNameMap["fx-drip"] as typeof ConcreteEffectElementConstructor) {
+// collapseはターゲットのStreamのグラフと紐づける
+EffectElementTagNameMap["fx-collapse"] = class extends (EffectElementTagNameMap["fx-collapse"] as typeof ConcreteEffectElementConstructor) {
   static observedAttributes = ["class"];
   attributeChangedCallback(name: string, oldValue: string, newValue: string) {
     if(name !== "class" || newValue !== "is-running") return;
-    const streamKey = this.getAttribute("stream-key")!; if(!streamKey) return;
+    const streamKey = this.getAttribute("dripper")!; if(!streamKey) return;
     const nodeElement = document.getElementById(`node-${streamKey}`); if(!nodeElement) return;
     nodeElement.classList.add('is-emitting');
     // アニメーションが終わったらclassを削除

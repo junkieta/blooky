@@ -38,7 +38,6 @@ type FxSwitchNode = FxNodeBase<"switch", { by: FxRef<string | number | symbol>, 
 type FxCallNode = FxNodeBase<"call", { action: FxRef<(v: any) => unknown>, arg?: FxRef<any>, context?: FxRef<any>, catcher?: FxRef<(error: Error) => unknown> }>;
 type FxCollapseNode = FxNodeBase<"collapse", { dripper: FxRef<DripperStream<any>>, value: FxRef<any>, catcher?: FxRef<(error: Error) => unknown>, mode?: FxRef<"saga" | "atomic">, promise?: FxRef<"deny" | "allow" | "await"> }>;
 type FxDispatchNode = FxNodeBase<"dispatch", { name: FxRef<string>, settings: FxDispatchSettings<FxRef<any>>, child?: FxNode }>;
-type FxTakeNode = FxNodeBase<"take", { stream: FxRef<Stream<any>> }>;
 type FxYieldNode = FxNodeBase<"yield", { for: string, value: FxRef<any>, id?: string }>; // yieldの拡張を反映
 
 /**
@@ -56,7 +55,6 @@ type FxNode =
   | FxCallNode
   | FxCollapseNode
   | FxDispatchNode
-  | FxTakeNode
   | FxYieldNode;
 
 
@@ -76,7 +74,6 @@ type FxCompiledSwitchNode = FxCompiledNodeBase<"switch", { by: Prop<string | num
 type FxCompiledCallNode = FxCompiledNodeBase<"call", { action: (v: any) => unknown, arg?: Prop<any>, context?: Prop<any>, catcher?: (error: Error) => unknown }>;
 type FxCompiledCollapseNode = FxCompiledNodeBase<"collapse", { stream: Prop<DripperStream<any>>, value: Prop<any>, catcher?: (error: Error) => unknown, mode?: Prop<"saga" | "atomic">, promise?: Prop<"deny" | "allow" | "await"> }>;
 type FxCompiledDispatchNode = FxCompiledNodeBase<"dispatch", { name: Prop<string>, settings: FxDispatchSettings<Prop<any>>, child?: FxCompiledNode }>;
-type FxCompiledTakeNode = FxCompiledNodeBase<"take", { stream: Prop<Stream<any>> }>;
 type FxCompiledYieldNode = FxCompiledNodeBase<"yield", { for: string, value: Prop<any>, id?: string }>;
 
 /**
@@ -94,7 +91,6 @@ type FxCompiledNode =
   | FxCompiledCallNode
   | FxCompiledCollapseNode
   | FxCompiledDispatchNode
-  | FxCompiledTakeNode
   | FxCompiledYieldNode;
 
 export declare class FxNodeCompiler {
@@ -264,7 +260,6 @@ type FxFactoryArgs = {
     options?: { catcher?: FxRef<(e: Error) => unknown>, mode?: FxRef<any>, promise?: FxRef<any> }
   ],
   dispatch: [name: FxRef<string>, settings: FxDispatchSettings<FxRef<any>>, child?: FxNode],
-  take: [stream: FxRef<Stream<any>>, id?: string],
   yield: [options: { for: FxRef<string>, value: FxRef<any>, id?: string }],
 };
 
@@ -297,7 +292,6 @@ export {
     FxCallNode,
     FxCollapseNode,
     FxDispatchNode,
-    FxTakeNode,
     FxYieldNode,
     FxCompiledNodeBase,
     FxCompiledNode,
@@ -312,7 +306,6 @@ export {
     FxCompiledCallNode,
     FxCompiledCollapseNode,
     FxCompiledDispatchNode,
-    FxCompiledTakeNode,
     FxCompiledYieldNode,
 
     FxRef,

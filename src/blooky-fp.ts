@@ -546,25 +546,11 @@ const when = <A>(predicate: (v: A) => boolean) => (p: Prop<A>): PromisedProp<A> 
     const _p = (()=>thenOrNotThen) as PromisedProp<A>;
     STREAM_PROP_RELATIONS.set(_s,[_p]);
     cleanupRegistry.register(_p,new WeakRef(_p));
-    const promise = new Promise<A>((resolve)=>PROP_UPDATE.set(_p,resolve));
+    const promise = new Promise<A>((resolve)=>PROP_UPDATE.set(_p,(_v)=>resolve(thenOrNotThen=_v)));
     promise.then(()=>clear(_s));
-    promise.then((_v)=>thenOrNotThen=_v);
     _p.then = promise.then.bind(promise);
     return _p;
 };
-
-/**
- * Streamからは次の値を、Propからは現在の値を取得し、それを解決するPromiseを返す。
- * whenのショートコードで、次回分のみのPromiseを取得する
- * @param source 取得元となるStreamまたはProp
- */
-function resolve<A>(source: Stream<A> | PromisedProp<A> | Prop<A>): PromiseLike<A> {
-  // typeofでProp（関数）かStream（オブジェクト）かを判別
-  if (typeof source === 'function') return "then" in source ? source : Promise.resolve(source());
-  const prop=(()=>{}) as Prop<A>;
-  STREAM_PROP_RELATIONS.set(source,STREAM_PROP_RELATIONS.has(source) ? STREAM_PROP_RELATIONS.get(source)!.concat(prop) : [prop]);
-  return new Promise(resolvePromise => PROP_UPDATE.set(prop,resolvePromise));
-}
 
 
 /**
@@ -666,8 +652,8 @@ const moments = {} as moments; {
     // --- 時間のレシピ集 (The Recipe Book for Time) ---
     moments.timeout = (ms:number = 0) => {
         if(!hasReferences(_globalTickStream, 1)) requestAnimationFrame(tick);
-        const s = tickStateStream(({elapsed})=>ms <= elapsed);
-        resolve(s).then(s.disconnect);
+        const s = tickStateStream(({elapsed})=> ms <= elapsed);
+        when<MomentState>(({elapsed})=>ms<=elapsed)(STREAM_PROP_RELATIONS.get(s)![0]).then(s.disconnect);
         return s;
     };
 
@@ -732,7 +718,7 @@ export {
     isStream,isDripperStream,isChainedProp,
     countReferences,hasReferences,clear,
     merge,junction,map,filter,
-    hold,accum,lift,remap,when,resolve,
+    hold,accum,lift,remap,when,
     proxy,
     clock,moments
 };

@@ -216,13 +216,13 @@ class FxDispatch extends EffectElement {
   }
 }
 
-class FxDrip extends EffectElement {
+class FxCollapse extends EffectElement {
   toFxNode(): FxNode {
     const streamKey = this.getAttribute("stream-key");
     if (!streamKey) return fx.none();
 
     const valueKey = this.getAttribute("value");
-    if(valueKey) return fx.drip(ref<any>(valueKey), ref<DripperStream<any>>(streamKey));
+    if(valueKey) return fx.collapse(ref<any>(valueKey), ref<DripperStream<any>>(streamKey));
 
     let data: any;
     const raw = this.textContent.trim();
@@ -231,18 +231,10 @@ class FxDrip extends EffectElement {
     } catch(err) {
       data = raw;
     }
-    return fx.drip(data, ref<DripperStream<any>>(streamKey));
+    return fx.collapse(data, ref<DripperStream<any>>(streamKey));
   }
 }
 
-class FxTake extends EffectElement {
-  toFxNode(): FxNode {
-    const streamKey = this.getAttribute("stream-key");
-    return streamKey
-      ? fx.take(ref<Stream<any>>(streamKey), this.id)
-      : fx.none();
-  }
-}
 
 class FxYield extends EffectElement {
   toFxNode(): FxNode {
@@ -368,11 +360,10 @@ const EffectElementTagNameMap = {
   "fx-switch":  FxSwitch,
   "fx-loop":  FxLoop,
   "fx-dispatch":  FxDispatch,
-  "fx-drip":  FxDrip,
-  "fx-take":  FxTake,
+  "fx-collapse":  FxCollapse,
   "fx-yield": FxYield,
   "fx-context":  FxContext,
   "fx-effect":  FxEffect,
 }
 
-export {FxCall,FxWait,FxEffect,FxDispatch,FxDrip,FxIf,FxInclude,FxParallel,FxRace,FxLoop,FxSequence,FxSwitch,FxTake,FxContext,fxdom,EffectElementTagNameMap};
+export {FxCall,FxWait,FxEffect,FxDispatch,FxCollapse,FxIf,FxInclude,FxParallel,FxRace,FxLoop,FxSequence,FxSwitch,FxContext,fxdom,EffectElementTagNameMap};
