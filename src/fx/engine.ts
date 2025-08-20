@@ -171,13 +171,32 @@ function execute(preparedFx: PreparedFx): ExecutionHandle {
   })();
 
   // 実行ハンドルを同期的に返す
-  return {
+  const handle : ExecutionHandle = {
     cancel: execContext.cancelToken.cancel,
     results$: execContext.runtimeState$,
-    results: () => resultsIterator,
-    done: resultPromise
+    fetch: () => resultsIterator,
+    done: resultPromise,
+    close: async (finalValue?: any) => {
+      // ★ closeが呼ばれたら、GCによる自動クローズの対象から外す
+      executionHandleRegistry.unregister(handle);
+      // ★ 保留中のyieldがあれば、それを中断させる
+      if (execContext._pendingYieldReject)
+        execContext._pendingYieldReject(new Error('Flow was closed externally.'));
+      // ★ フロー全体の実行をキャンセルし、完了させる
+      handle.cancel();
+      
+    }
   };
+  executionHandleRegistry.register(handle, new WeakRef(handle), handle);
+  return handle;
 }
+
+// ガベージコレクト
+const executionHandleRegistry = new FinalizationRegistry((handleToCloseRef: WeakRef<{ close: () => void }>) => {
+  console.warn('[blooky-fx] An ExecutionHandle was garbage collected without being explicitly closed. Closing automatically.');
+  const handle = handleToCloseRef.deref();
+  if(handle) handle.close();
+});
 
 // prepare->exeuteのショートハンド
 const query = (node: FxNode, app?: AppContext, ctx?: ExecContext) => 

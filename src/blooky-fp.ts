@@ -3,7 +3,7 @@
  * 関数型のリアクティブプログラミングをtypescriptで行うためのライブラリ。
  */
 
-import { DripTrigger } from "./blooky-types";
+import { DripperEffect, DripResult, DripTrigger, PropEffect } from "./blooky-types";
 
 // ガベージコレクタの格納プロパティ用シンボル
 const STREAM_CLEANER = Symbol("STREAM_CLEANER");
@@ -71,16 +71,6 @@ type Stream<A> =
  */
 type FlowingState = [PropEffect<unknown>[], [MergedStream<any>,any][]];
 
-// 副作用の集合体
-type DripperEffect = PropEffect<unknown>[];
-
-
-type PropEffect<A> = {
-    created: number
-    prop: Prop<A>
-    nextValue: A
-    update: (v:A)=>void
-}
 
 /**
  * 時変値を返す関数の型。
@@ -431,10 +421,7 @@ async function* flowAsync<A>(v: A, s: Stream<A>): AsyncGenerator<PropEffect<unkn
   }
 }
 
-type DripResult<A,M="deny"> = M extends 'await'
-  ? { effects: Promise<DripperEffect>, trigger: DripTrigger<A> }
-  : { effects: DripperEffect, trigger: DripTrigger<A> };
-  
+
 /**
  * 起点となるストリームに時変値を流し込み、関連するオブザーバの呼び出しと時変値で構成されたEffectを返す。
  * @param s 
@@ -752,9 +739,7 @@ export {
 
 export type {
     Stream,FilterStream,MappedStream,MergedStream,DripperStream,
-    DripResult,
     Prop,PromisedProp,
-    PropEffect,DripperEffect,
     MomentStream,MomentState,
 };
 

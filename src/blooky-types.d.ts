@@ -1,11 +1,11 @@
 // src/blooky-store/types.ts
 
-import type { Prop, DripperEffect, DripperStream } from './blooky-fp';
+import type { Prop, DripperStream } from './blooky-fp';
 
 /**
  * コミットのトリガーとなったdripの入力情報を記録する
  */
-export interface DripTrigger<A> {
+interface DripTrigger<A> {
   dripper: DripperStream<A>;
   value: A;
 }
@@ -13,7 +13,7 @@ export interface DripTrigger<A> {
 /**
  * Gitの「コミット」に相当する、状態のスナップショット
  */
-export interface StateSnapshot {
+interface StateSnapshot {
   id: string;                      // このスナップショットのユニークID (コミットハッシュ)
   parent: string | null;           // 親スナップショットのID
   trigger: DripTrigger<any>;       // このスナップショットを生成したトリガー
@@ -24,7 +24,29 @@ export interface StateSnapshot {
 /**
  * Gitの「ブランチ」に相当する、スナップショットへのポインター
  */
-export interface Branch {
+interface Branch {
   name: string;
   commitId: string; // このブランチが指し示すスナップショットのID
+}
+
+type DripResult<A,M="deny"> = M extends 'await'
+  ? { effects: Promise<DripperEffect>, trigger: DripTrigger<A> }
+  : { effects: DripperEffect, trigger: DripTrigger<A> };
+ 
+
+// 副作用の集合体
+type DripperEffect = PropEffect<unknown>[];
+
+
+type PropEffect<A> = {
+    created: number
+    prop: Prop<A>
+    nextValue: A
+    update: (v:A)=>void
+}
+
+
+export {
+  DripperEffect,DripperStream, PropEffect,DripResult,
+  Branch,StateSnapshot,DripTrigger,
 }
