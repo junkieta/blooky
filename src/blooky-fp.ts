@@ -19,7 +19,7 @@ const PROP_FROM = new WeakMap<Prop<any>, Stream<any>>();
 /**
  * Propの値を更新する
  */
-const PROP_UPDATE = new WeakMap<Prop<any>, (v:any)=>void>();
+const PROP_UPDATE = new WeakMap<Prop<any>, ((v:any)=>void)|((next:any,prev:any)=>void)>();
 
 /**
  * ストリームの状態定義。次のストリームへの接続用情報を保持する。
@@ -295,11 +295,11 @@ const streamToFlowingState = <A>(v:A) => (s:Stream<A>) : FlowingState => {
     const waiting = [...s.lazyNext].map((s) => [s,v] as [MergedStream<A>,A]);
     if(!STREAM_PROP_RELATIONS.has(s)) return [[], waiting];
     const p = STREAM_PROP_RELATIONS.get(s)!;
-    const created = Date.now();
     const effect: DripperEffect = p.map((prop)=>({
         prop,
-        created,
+        created: Date.now(),
         nextValue: v,
+        prevValue: prop(),
         update: PROP_UPDATE.get(prop)!.bind(null, v)
     }));
     return [effect,waiting];
@@ -639,79 +639,121 @@ type moments = {
 
 // --- 時間の源泉 (The Fountain of Time) ---
 
-// 1. 内部に、RAFを動力源とする非公開のStreamを持つ
-const _globalTickStream = stream<number>();
+/**
+ * blookyアプリケーション全体の実行ループを管理する、統合スケジューラ。
+ * requestAnimationFrameを心臓の鼓動（Beat）として、状態、UI、時間、歴史の
+ * すべてを同期させる指揮者（Conductor）の役割を担う。
+ */
 
-// 2. 「フレームごとの時間」という状態を、`clock`という名前の公開Propとして提供する
-const clock = hold(performance.now())(_globalTickStream);
+// --- 1. モジュールの状態管理 (スケジューラの脳) ---
+/** ユーザー操作やfx-collapseから発生した実行計画を溜めるキュー */
+type E = DripResult<any>;
+const executionQueue : DripResult<any>[] = [];
 
-// 3. momentsは、now Prop (とその源流Stream) を使って、
-//    便利なイベントStreamを生成するファクトリになる
-const moments = {} as moments; {
+// --- 2. 時間の根源 (The Source of Time) ---
+/** * 1フレームに一度だけdripされる、値を持たない純粋な「鼓動」
+ * これが全ての時間ベースのリアクティビティの源泉となる。
+ */
+const _beat$ = stream<void>();
+/**
+ * 【公開API】アプリケーション全体で共有される、現在の時間を表すProp。
+ * 呼び出された瞬間の現在時刻を返す「センサー」としての役割を持つ。
+ */
+const clock: Prop<number> = () => performance.now();
+/**
+ * 「鼓動」(_beat$)を元に、その瞬間の時刻で意味付けされたMappedStream。
+ * これが内部的な「公式時刻」の伝達役となる。
+ */
+const moment$ = map<number, void>(clock)(_beat$);
 
-    // --- 時間のレシピ集 (The Recipe Book for Time) ---
-    moments.timeout = (ms:number = 0) => {
-        if(!hasReferences(_globalTickStream, 1)) requestAnimationFrame(tick);
-        const s = tickStateStream(({elapsed})=> ms <= elapsed);
-        when<MomentState>(({elapsed})=>ms<=elapsed)(STREAM_PROP_RELATIONS.get(s)![0]).then(s.disconnect);
-        return s;
-    };
+// `clock` Propが`moment$`から派生していることを内部的に関連付ける
+PROP_FROM.set(clock, moment$);
 
-    moments.interval = (ms: number = 0) => {
-        if(!hasReferences(_globalTickStream, 1)) requestAnimationFrame(tick);
-        const s = tickStateStream(({deltaTime})=>deltaTime >= ms);
-        const c = countReferences(s,true)() + 1;
-        when(()=>!hasReferences(s,c))(STREAM_PROP_RELATIONS.get(s)![0]).then(s.disconnect);
-        return s;
-    };
+// Effect処理のミドルウェア
+const tickHandlers = new Set<(effects: DripResult<any>[]) => void>();
+// デフォルトの処理
+const defaultTickHandler = (e)=>e.forEach((e)=>e.effects.forEach((e)=>e.update(e.nextValue,e.prevValue)));
+tickHandlers.add(defaultTickHandler);
 
-    moments.framecount = typeof window.requestAnimationFrame === "function"
-        ? (limit: number = Infinity) => {
-            if(!hasReferences(_globalTickStream, 1)) requestAnimationFrame(tick);
-            const s = tickStateStream(limit === Infinity ? undefined : ({count})=>count<=limit);
-            if(limit) when(({count}:MomentState)=>count===limit)(STREAM_PROP_RELATIONS.get(s)![0]).then(s.disconnect);
-            return s;
-        }
-        : (_:number) => {throw new Error('moments.framecount function need "requestAnimationFrame" function')};
-
-    const nextState = (s:MomentState) => (n:number) : MomentState => 
-    ({
-        now: n,
-        started: s.started,
-        elapsed: n - s.started,
-        deltaTime: n - s.now,
-        count: s.count + 1
-    });
-    
-    const tickStateStream = (f?:(s:MomentState)=>boolean): MomentStream => {
-        const started = clock();
-        const s = map((n:number): MomentState => nextState(p())(n))(_globalTickStream);
-        const _s = (f ? filter(f)(s) : s) as Stream<MomentState> as MomentStream;
-        const p = hold({
-            started,
-            now: started,
-            elapsed: 0,
-            deltaTime: 0,
-            count: 0
-        })(_s);
-        _s[STREAM_CLEANER] = ()=>{
-            _globalTickStream.next.delete(s);
-        }
-        _s.disconnect = ()=>{
-            clear(s, true);
-            _globalTickStream.next.delete(s);
-        };
-        return _s;
-    }
-
-    // tickStreamにdripする。clock以外のPropが紐づいていれば自動呼出しする。
-    const tick = (t:number) => {
-        if(!hasReferences(_globalTickStream, 1)) return;
-        drip(t)(_globalTickStream).effects.forEach(({update,nextValue}) => update(nextValue));
-        if(hasReferences(_globalTickStream, 1)) requestAnimationFrame(tick);
-    };
-
+function registerTickHandler(handler: (effects: DripResult<any>[]) => void) {
+  tickHandlers.add(handler);
+  return () => tickHandlers.delete(handler);
 }
+
+/**
+ * 1フレーム分の処理。この関数内が、一つの「瞬間（Moment）」となる。
+ */
+function tick(now: number) {
+    const beat_effect = drip<void>(void 0)(_beat$);
+    const items = [beat_effect,...executionQueue];
+    executionQueue.length = 0;
+    tickHandlers.forEach((handler)=>handler(items));
+    // 時間ベースのイベントが残っていれば、次のtickを予約する
+    if (beat_effect.effects.length) requestAnimationFrame(tick);
+}
+
+const nextState = (s:MomentState) => (n:number) : MomentState => 
+({
+    now: n,
+    started: s.started,
+    elapsed: n - s.started,
+    deltaTime: n - s.now,
+    count: s.count + 1
+});
+
+const tickStateStream = (f?:(s:MomentState)=>boolean): MomentStream => {
+    const started = clock();
+    const s = map((n:number): MomentState => nextState(p())(n))(moment$);
+    const _s = (f ? filter(f)(s) : s) as Stream<MomentState> as MomentStream;
+    const p = hold({
+        started,
+        now: started,
+        elapsed: 0,
+        deltaTime: 0,
+        count: 0
+    })(_s);
+    _s[STREAM_CLEANER] = ()=>{
+        moment$.next.delete(s);
+    }
+    _s.disconnect = ()=>{
+        clear(s, true);
+        moment$.next.delete(s);
+    };
+    return _s;
+}
+
+
+/**
+ * 【公開API】時間ベースのイベントを生成するファクトリ
+ */
+const moments = {
+  /**
+   * 指定した間隔でイベントを発行するStreamを生成する
+   * @param ms 間隔（ミリ秒）
+   * @returns 経過時間(deltaTime)を値として持つStream
+   */
+  interval(ms: number): MomentStream {
+    if(!hasReferences(moment$)) requestAnimationFrame(tick);
+    const s = tickStateStream(({deltaTime})=>deltaTime >= ms);
+    const c = countReferences(s,true)() + 1;
+    when(()=>!hasReferences(s,c))(STREAM_PROP_RELATIONS.get(s)![0]).then(s.disconnect);
+    return s;
+  },
+
+  /**
+   * 指定した時間後に一度だけイベントを発行するStreamを生成する
+   * @param ms 遅延時間（ミリ秒）
+   * @returns 経過時間(deltaTime)を値として持つStream
+   */
+  timeout(ms: number): MomentStream {
+    if(!hasReferences(moment$)) setTimeout(tick, ms);
+    const s = tickStateStream(({elapsed})=> ms <= elapsed);
+    when<MomentState>(({elapsed})=>ms<=elapsed)(STREAM_PROP_RELATIONS.get(s)![0]).then(s.disconnect);
+    return s;
+  },
+};
+
+
 
 export {
     drip,stream,
@@ -720,7 +762,7 @@ export {
     merge,junction,map,filter,
     hold,accum,lift,remap,when,
     proxy,
-    clock,moments
+    clock,moments,registerTickHandler
 };
 
 export type {

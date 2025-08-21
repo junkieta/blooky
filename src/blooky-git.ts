@@ -1,15 +1,15 @@
 // src/blooky-git.ts
 
-import type { Prop, DripperEffect, DripperStream, DripResult } from './blooky-fp';
+import type { Prop } from './blooky-fp';
 import { drip, clock } from './blooky-fp'; // ★ fpからclockをインポート
-import type { StateSnapshot, Branch, DripTrigger } from './blooky-types'; // git用の型定義
+import type { StateSnapshot, Branch, DripTrigger, DripperEffect, DripResult } from './blooky-types'; // git用の型定義
 
 // --- Module-Scoped State (Internal Implementation) ---
 
 const snapshots = new Map<string, StateSnapshot>();
 const branches = new Map<string, Branch>();
 let HEAD: string = 'main';
-const managedProps = new Map<Prop<any>, (value: any) => void>();
+const managedProps = new Map<Prop<any>, ((value: any, _?:any)=>void)>();
 
 // --- Automatic Initialization ---
 
@@ -85,7 +85,7 @@ export function commit(dripResult: DripResult<any>): string {
   snapshots.set(newSnapshot.id, newSnapshot);
   branches.get(HEAD)!.commitId = newSnapshot.id;
   
-  effects.forEach(({ update, nextValue }) => update(nextValue));
+  effects.forEach(({ update, nextValue, prevValue }) => update(nextValue, prevValue));
   return newSnapshot.id;
 }
 
@@ -142,7 +142,7 @@ export function merge(sourceBranchName: string): string | { conflicts: any[] } {
 
       if (!sourceChanged) return;
       if (sourceChanged && !targetChanged) {
-        finalEffects.push({ created, prop, nextValue: sourceValue, update: managedProps.get(prop)! });
+        finalEffects.push({ created, prop, nextValue: sourceValue, prevValue: targetChanged, update: managedProps.get(prop)! });
       } else if (targetChanged && sourceChanged && targetValue !== sourceValue) {
         conflicts.push({ prop, targetValue, sourceValue });
       }

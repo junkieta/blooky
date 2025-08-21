@@ -215,6 +215,10 @@ interface ExecutionHandle {
    */
   done: Promise<AppContext>
 
+  /**
+   * fetchで解決しきらない場合は明示的に呼ぶこと。
+   */
+  close:  (finalValue?: any) => void
   
 }
 

@@ -42,7 +42,8 @@ type PropEffect<A> = {
     created: number
     prop: Prop<A>
     nextValue: A
-    update: (v:A)=>void
+    prevValue: A
+    update: ((v:A)=>void)|((next:A,prev:A)=>void)
 }
 
 
