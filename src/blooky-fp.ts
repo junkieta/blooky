@@ -278,6 +278,7 @@ const hasReferences = (s: Stream<any>, than = 0): boolean => {
         const current = stack.pop()!;
         if (visited.has(current)) continue;
         visited.add(current);
+        if(!STREAM_PROP_RELATIONS.has(current)) continue;
         const o = STREAM_PROP_RELATIONS.get(current)!;
         if (o.length) count += o.length;
         if (count > than) return true;
@@ -661,8 +662,11 @@ const _beat$ = stream<void>();
 const clock: Prop<number> = () => performance.now();
 
 const calendar = {
-    reservations: new Map<DripResult<any>, number>(),
-    schedule: (r:DripResult<any>, at = clock()) => calendar.reservations.set(r, at)
+    reservations: new Map<DripResult<any>, { resolve: (v:number)=>void, reject: (v:number) => void, at: number }>(),
+    schedule: async (r:DripResult<any>, at = clock()) => new Promise((resolve, reject)=>{
+        calendar.reservations.set(r, { resolve, reject, at });
+        if(clock() >= at) tick(clock());
+    })
 }
 
 type MomentStream = Stream<number> & {};
@@ -694,9 +698,13 @@ function registerTickHandler(handler: (effects: DripResult<any>[]) => void) {
  */
 function tick(now: number) {
     const beat_effect = drip<void>(void 0)(_beat$);
-    const items = [beat_effect,...executionQueue];
-    executionQueue.length = 0;
+    const resevations = [...calendar.reservations].flatMap(([effect, {at,resolve,reject}]) => at <= now ? [[effect,resolve,reject] as [DripResult<any>,(v:number)=>void,(v:number)=>void]] : [])
+    const items = [beat_effect,...resevations.map(([effect])=>effect)];
     tickHandlers.forEach((handler)=>handler(items));
+    resevations.forEach(([effect,resolve])=>{
+        calendar.reservations.delete(effect);
+        resolve(now);
+    })
     // 時間ベースのイベントが残っていれば、次のtickを予約する
     if (beat_effect.effects.length) requestAnimationFrame(tick);
 }
@@ -771,7 +779,7 @@ export {
     merge,junction,map,filter,
     hold,accum,lift,remap,when,
     proxy,
-    clock,moments,registerTickHandler
+    clock,moments,calendar,registerTickHandler
 };
 
 export type {

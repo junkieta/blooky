@@ -161,7 +161,8 @@ interface ExecContext {
   onNodeEnter?: (node: FxCompiledNode) => void;
   onNodeExit?: (node: FxCompiledNode, result?:any, error?: Error) => void;
   runtimeState$: DripperStream<FxResult>; // 結果報告用
-  yieldChannel$: DripperStream<YieldRequest>; // 対話用
+  yieldChannel?: (req:YieldRequest) => void
+  pendingYieldReject?: (reason?: any) => void
 }
 
 // ミドルウェアに渡される、各ステップの情報

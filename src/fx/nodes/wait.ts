@@ -6,7 +6,7 @@ type ThisNode = Extract<FxNode, { type: 'wait' }>;
 export class WaitNodeDefinition extends NodeDefinition<'wait'> {
   public readonly type = 'wait';
 
-  public factory(options: { ms?: FxRef<number>, until?: FxRef<boolean> }): ThisNode {
+  public factory(options: { ms?: FxRef<number>, until?: FxRef<boolean>, id?: string }): ThisNode {
     return { ...options, type: 'wait' };
   }
 
@@ -23,7 +23,7 @@ export class WaitNodeDefinition extends NodeDefinition<'wait'> {
     }
     // until属性で指定されたPropがtrueになるのを待つ
     if (node.until) {
-      await when(p => p === true)(node.until);
+      await when(p => p === true)(node.until());
     }
   }
 }

@@ -1,7 +1,8 @@
 import type { FxNode, FxRef, FxNodeCompiler, FxExecutionContext, FxCompiledNode } from '../types';
-import { drip, DripperStream } from '../../blooky-fp';
+import { calendar, drip, DripperStream } from '../../blooky-fp';
 import { NodeDefinition } from '../NodeDefinition';
 import { fx } from '../engine';
+import { DripResult } from '../../blooky-types';
 type ThisNode = Extract<FxNode, { type: 'collapse' }>;
 type ThisCompiledNode = Extract<FxCompiledNode, { type: 'collapse' }>;
 
@@ -11,7 +12,6 @@ export class CollapseNodeDefinition extends NodeDefinition<'collapse'> {
   public factory(value: FxRef<any>, dripper: FxRef<DripperStream<any>>, options?: {
       promise?: FxRef<"deny"|"allow"|"await">, 
       catcher?: FxRef<(v:Error) => unknown>,
-      mode?: FxRef<"saga"|"atomic">
     }): ThisNode {
     return { ...options, type: 'collapse', dripper, value };
   }
@@ -21,23 +21,16 @@ export class CollapseNodeDefinition extends NodeDefinition<'collapse'> {
       stream: { value: compiler.resolveValue(node.dripper) },
       value: { value: compiler.resolveValue(node.value) },
       catcher: { value: node.catcher ? compiler.resolveAction(node.catcher) : undefined },
-      mode: { value: node.mode ? compiler.resolveValue(node.mode) : undefined },
       promise: { value: node.promise ? compiler.resolveValue(node.promise) : undefined },
     });
   }
 
-  public async handle({ node, execute }: FxExecutionContext & { node: ThisCompiledNode }) {
+  public async handle({ node }: FxExecutionContext & { node: ThisCompiledNode }) {
     try {
-      const effect = await drip(node.value(), { acceptPromise: node.promise ? node.promise() : 'deny' })(node.stream()).effects;
-      const mode = node.mode ? node.mode() : 'atomic';
-      let _fx: FxNode;
-      if (mode === 'atomic') {
-        _fx = fx.call(()=>effect.forEach(({ update, nextValue }) => update(nextValue)));
-      } else { // 'saga' mode
-        // 各Propの更新を独立した並列な副作用として実行
-        _fx = fx.parallel(effect.map(({update,nextValue})=>fx.call(update, { arg: nextValue })));
-      }
-      await execute(_fx);
+      const acceptPromise = node.promise ? node.promise() : 'deny';
+      const result =  drip(node.value(), { acceptPromise })(node.stream()) as DripResult<"deny">;
+      if(acceptPromise === "await") result.effects = await result.effects;
+      await calendar.schedule(result);
     } catch (error) {
       if (node.catcher) {
         return node.catcher(error as Error);

@@ -1,5 +1,5 @@
 // -- 0. 事前ロード ---
-import { stream, accum, merge, hold, map, remap } from "./blooky-fp";
+import { stream, accum, merge, hold, map, remap, when } from "./blooky-fp";
 import { into, jshtml } from "./blooky-dom";
 import type { FxEffect } from "./blooky-fxdom";
 import { fxdom,EffectElementTagNameMap, dumpGraphDOT } from "./blooky-devtools";
@@ -14,9 +14,12 @@ fxdom.defineEffectElements(EffectElementTagNameMap);
 const increment$ = stream();
 const decrement$ = stream();
 const save$ = stream();
-const confirmation$ = stream<'yes'|'no'>();
-const statusMessageStream$ = stream<string>();
+const $triggerSave = hold(false)(map(()=>true)(save$));
+const confirmation$ = stream<'yes'|'no'|"yet">();
+const $confirmResult = hold<"yes"|"no"|"yet">("yet")(confirmation$);
+const $decideConfirm = remap((r)=>$triggerSave() && r!=="yet")($confirmResult);
 
+const statusMessageStream$ = stream<string>();
 const changeCountStream = merge<number>((a,b)=>a+b)([map(() => 1)(increment$), map(() => -1)(decrement$)]);
 const $count = accum((current: number, val) => current + val, 0)(changeCountStream);
 const $statusMessage = hold('Ready.')(statusMessageStream$);
@@ -53,8 +56,11 @@ const AppUI = jshtml({
 const rootContext = {
     log: (s:unknown)=>console.log(s),
     save$,
+    $triggerSave,
     statusMessageStream$,
     confirmation$,
+    $confirmResult,
+    $decideConfirm,
     $count,
     $finalMessage
 };
@@ -70,12 +76,12 @@ const fxEffectElement = jshtml({
     },
     "fx-effect": 
     [
-        { "fx-take": jshtml.$({ "stream-key": "save$" }) },
+        { "fx-wait": jshtml.$({ "until": "$triggerSave" }) },
         // 1. 確認メッセージを表示
         { "fx-collapse": '"Confirmation needed: Save this count? (Click Yes/No)"',
             $: { "dripper": "statusMessageStream$" } },
         // 2. confirmationStreamから値が流れてくるのを待つ
-        { "fx-take": jshtml.$({ "stream-key": "confirmation$", id: "confirmResult" }) },
+        { "fx-wait": jshtml.$({ "until": "$decideConfirm" }) },
         // 3. 結果に応じて処理を分岐
         { "fx-switch": [
             // "yes"の場合のフロー
@@ -93,7 +99,7 @@ const fxEffectElement = jshtml({
             { "fx-collapse": '"Save cancelled."',
                 $: { slot: "default", "dripper": "statusMessageStream$" } }
             ],
-            $: { by: "#confirmResult" }
+            $: { by: "$confirmResult" }
         }
     ],
 }) as FxEffect;

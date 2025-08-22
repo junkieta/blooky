@@ -21,19 +21,27 @@ export class YieldNodeDefinition extends NodeDefinition<'yield'> {
   public handle({ node, context }: FxExecutionContext & { node: ThisCompiledNode }) {
     // yieldのコアロジック: Promiseを使ってフローを一時停止させる
     return new Promise((resolve,reject) => {
+      // 1. このPromiseを外部から中断できるように、reject関数を登録する
+      context.pendingYieldReject = reject;      
+
       const yieldRequest: YieldRequest = {
         for: node.for,
         id: node.id,
         value: node.value(),
         resolve: resolve // 応答用のコールバックを同梱
       };
-      // キャンセル用
-      context._pendingYieldReject = reject;
-      // 内部のyieldChannel$にリクエストをdripする
-      drip(yieldRequest)(context.yieldChannel$).effects.forEach(e => e.update(e.nextValue));
-    }).finally(()=>{
-        // Promiseが解決または拒否されたら、登録を解除
-      context._pendingYieldReject = undefined;
+
+      // 登録されているハンドラ（連絡先）があれば、直接リクエストを渡す
+      if (context.yieldChannel) {
+        context.yieldChannel(yieldRequest);
+      } else {
+        // 誰もfetch()で待っていなかった場合。フローを止めるのが安全
+        reject(new Error("fx.yield was called, but no consumer was available via fetch()."));
+      }
+      if(context.cancelToken.cancelled()) reject();
+    }).finally(() => {
+      // 2. Promiseが解決・拒否されたら、必ず登録を解除してクリーンアップ
+      context.pendingYieldReject = undefined;
     });
   }
 }

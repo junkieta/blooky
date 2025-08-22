@@ -1,4 +1,4 @@
-import { accum, drip, Prop, resolve, stream } from "../blooky-fp";
+import { accum, drip, Prop, stream } from "../blooky-fp";
 import { nodeDefinitionMap  } from "./nodes";
 import { FxNode, FxCompiledNode, AppContext, CancelToken, ExecContext, FxExecutionContext, FxResult, YieldRequest, ExecutionHandle, PreparedFx, FxHandlerMap, FxFactoryMap } from "./types";
 
@@ -48,7 +48,7 @@ function* run(
         break;
 
       case 'switch':
-        const key = node.by();
+        let key = node.by()();
         const branch = node.cases.get(key) ?? node.default;
         if (branch) {
           yield* run.call(this, branch);
@@ -97,28 +97,24 @@ function prepare(
   
   const cancelToken = createCancelToken();
   const runtimeState$ = stream<FxResult>();
-  const $runtimeState = accum<Record<string,any>,FxResult>((res,acc) => ({ ...acc, [res.id]: res.value }), {})(runtimeState$)
-  const yieldChannel$ = stream<YieldRequest>();
+  const $runtimeState = accum<Record<string,any>,FxResult>((res,acc) => ({ ...acc, ["#"+res.id]: res.value }), {})(runtimeState$)
 
   const execContext: ExecContext = {
     ...parentExecContext,
     cancelToken,
-    yieldChannel$,
     runtimeState$,
   };
 
   const proxyContext = new Proxy(initialAppContext, {
     get(target, key) {
       if (typeof key === 'string' && key.startsWith('#')) {
-        const id = key.slice(1);
-        return $runtimeState()[id];
+        return $runtimeState()[key];
       }
       return Reflect.get(target, key);
     },
     has(target, key) {
       if (typeof key === 'string' && key.startsWith('#')) {
-        const id = key.slice(1);
-        return id in $runtimeState();
+        return key in $runtimeState();
       }
       return Reflect.has(target, key);
     },
@@ -158,14 +154,18 @@ function execute(preparedFx: PreparedFx): ExecutionHandle {
   // 結果を消費するためのプル型インターフェース（非同期ジェネレータ）
   const resultsIterator = (async function* () {
     while (true) {
-      // 1. yieldChannel$ に次に流れてくる値を待つ
-      const nextResult : YieldRequest = await resolve(execContext.yieldChannel$);
-      // 2. for await...of ループに値をyieldして送り出す
-      //    同時に、next()で渡される応答を待つ
-      const responseFromConsumer = yield nextResult;
-      // 3. 応答があれば、待機中のexecuteエンジンに応答を送り返す
-      if (nextResult) {
-        nextResult.resolve(responseFromConsumer);
+      // 次のリクエストが来るまで待つPromiseを生成
+      const nextRequest = await new Promise<YieldRequest>(resolve => {
+        // このresolve関数を、次のyieldが呼び出せるようにコンテキストに登録する
+        execContext.yieldChannel = resolve;
+      });
+      // リクエストを受け取ったら、次のyieldに備えてハンドラを一旦クリア
+      execContext.yieldChannel = undefined;
+      // 受け取ったリクエストを for await...of ループに送り出す
+      const responseFromConsumer = yield nextRequest;
+      // 利用者からの応答があれば、待機中のyieldハンドラのPromiseを解決する
+      if (nextRequest) {
+        nextRequest.resolve(responseFromConsumer);
       }
     }
   })();
@@ -179,9 +179,9 @@ function execute(preparedFx: PreparedFx): ExecutionHandle {
     close: async (finalValue?: any) => {
       // ★ closeが呼ばれたら、GCによる自動クローズの対象から外す
       executionHandleRegistry.unregister(handle);
-      // ★ 保留中のyieldがあれば、それを中断させる
-      if (execContext._pendingYieldReject)
-        execContext._pendingYieldReject(new Error('Flow was closed externally.'));
+      // ★ もしyieldが待ち状態であれば、それを中断させる
+      if (execContext.pendingYieldReject)
+        execContext.pendingYieldReject(new Error('Flow was closed externally.'));
       // ★ フロー全体の実行をキャンセルし、完了させる
       handle.cancel();
       
@@ -260,12 +260,11 @@ async function _internal_execute(
         throw err;
       }
     }
-    
+
     // nodeにidがあれば、その結果をruntimeState$にdripする
     if (node.id) {
       // このdripは、エンジン内部の通信のため、同期的に実行する必要がある
-      drip({ id: node.id, value: nextValue })(this.runtimeState$)
-        .effects.forEach(e => e.update(e.nextValue));
+      drip({ id: node.id, value: nextValue })(this.runtimeState$).effects.forEach(e => e.update(e.nextValue, e.prevValue));
     }
 
     await yieldToMainThread();

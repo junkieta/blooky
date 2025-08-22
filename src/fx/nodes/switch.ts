@@ -1,5 +1,6 @@
 import type { FxNode, FxRef, FxNodeCompiler } from '../types';
 import { NodeDefinition } from '../NodeDefinition';
+import { Prop } from '../../blooky-fp';
 type ThisNode = Extract<FxNode, { type: 'switch' }>;
 
 export class SwitchNodeDefinition extends NodeDefinition<'switch'> {
@@ -22,8 +23,4 @@ export class SwitchNodeDefinition extends NodeDefinition<'switch'> {
     });
   }
 
-  // switch は run ジェネレータが処理するため、直接のhandleは不要
-  public handle() {
-    throw new Error("SwitchNode should be handled by the run generator.");
-  }
 }

@@ -4,11 +4,10 @@
  * 簡易な仕様でDOMを構築しつつ、Streamを利用した更新管理も行う。
  */
 import type { V_DATASET, V_STYLE, V_CLASSLIST, V_EVENTLISTENER, V_STRING, WritableCSSProperty, JSHTMLElementSource, JSHTMLAttrSource, JSHTMLNodeSource, JSHTMLAttributeMapSource, T_ATTRSET } from "./blooky-dom-types";
-import { type Stream, type Prop, type DripperStream, stream, drip, isChainedProp, filter, isDripperStream, when, registerTickHandler } from "./blooky-fp";
+import { type Stream, type Prop, type DripperStream, stream, drip, isChainedProp, filter, isDripperStream, when, registerTickHandler, calendar } from "./blooky-fp";
 
 // DOMをfpのtickに結び付ける
 registerTickHandler((effectList) => {
-    if(!effectList.length) return effectList;
     const effects = effectList.flatMap((e) => e.effects);
     const update_target = [...PROP_BIND_MAP].flatMap((part)=>effects.find(({prop})=>prop===part.prop) ? part : []);
     PROP_BIND_MAP.forEach((a)=>{
@@ -150,7 +149,8 @@ class DatasetPropBridge extends AbstractAttrPropBridge<V_STRING> {
 // 即時dripの短縮呼び出し関数。イベントリスナーとして登録する想定。
 // ex) onclick: into(eventDripperStream)
 const into = <A>(d: DripperStream<A>) => (v: A) => {
-    drip(v)(d).effects.forEach(({update,nextValue,prevValue})=>update(nextValue,prevValue));
+    calendar.schedule(drip(v)(d));
+//    drip(v)(d).effects.forEach(({update,nextValue,prevValue})=>update(nextValue,prevValue));
 }
 
 /**
