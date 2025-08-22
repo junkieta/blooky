@@ -1,10 +1,9 @@
-import type { FxNode, FxRef, FxNodeCompiler, FxExecutionContext, FxCompiledNode } from '../types';
+import type { FxNode, FxRef, FxExecutionContext} from '../types';
 import { calendar, drip, DripperStream } from '../../blooky-fp';
 import { NodeDefinition } from '../NodeDefinition';
-import { fx } from '../engine';
 import { DripResult } from '../../blooky-types';
 type ThisNode = Extract<FxNode, { type: 'collapse' }>;
-type ThisCompiledNode = Extract<FxCompiledNode, { type: 'collapse' }>;
+type ThisCompiledNode = Extract<FxNode, { type: 'collapse' }>;
 
 export class CollapseNodeDefinition extends NodeDefinition<'collapse'> {
   public readonly type = 'collapse';
@@ -16,26 +15,11 @@ export class CollapseNodeDefinition extends NodeDefinition<'collapse'> {
     return { ...options, type: 'collapse', dripper, value };
   }
 
-  public compile(node: ThisNode, compiler: FxNodeCompiler) {
-    return Object.create(node, {
-      stream: { value: compiler.resolveValue(node.dripper) },
-      value: { value: compiler.resolveValue(node.value) },
-      catcher: { value: node.catcher ? compiler.resolveAction(node.catcher) : undefined },
-      promise: { value: node.promise ? compiler.resolveValue(node.promise) : undefined },
-    });
-  }
-
-  public async handle({ node }: FxExecutionContext & { node: ThisCompiledNode }) {
-    try {
-      const acceptPromise = node.promise ? node.promise() : 'deny';
-      const result =  drip(node.value(), { acceptPromise })(node.stream()) as DripResult<"deny">;
-      if(acceptPromise === "await") result.effects = await result.effects;
-      await calendar.schedule(result);
-    } catch (error) {
-      if (node.catcher) {
-        return node.catcher(error as Error);
-      }
-      throw error;
-    }
+  public async handle({ node,context }: FxExecutionContext & { node: ThisNode }) {
+    const value = context.resolve(node.value);
+    const dripper = context.resolve(node.dripper);
+    const acceptPromise = node.promise ? context.resolve(node.promise)() : 'deny';
+    const result = await drip(value(), { acceptPromise })(dripper());
+    await calendar.schedule(result);
   }
 }

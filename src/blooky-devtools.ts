@@ -3,7 +3,7 @@ import { EffectElementTagNameMap as DefaultEffectElementTagNameMap, EffectElemen
 import { FxNode, FxCompiledNode, FxMiddleware, ExecContext } from "./fx/types";
 
 const FxNodeMap = new WeakMap<FxNode, EffectElement>();
-const getElementByCompiledNode = (n: FxCompiledNode) : EffectElement | undefined => FxNodeMap.get(Object.getPrototypeOf(n)!);
+const getElement = (n: FxNode) : EffectElement | undefined => FxNodeMap.get(n);
 
 const DebEffectElementStyleSheet = new CSSStyleSheet();
 DebEffectElementStyleSheet.replaceSync(`
@@ -79,7 +79,7 @@ document.adoptedStyleSheets.push(sheet);
 
 const debugMiddleware: FxMiddleware = async (ctx, next) => {
   const { node } = ctx;
-  const element = getElementByCompiledNode(node);
+  const element = getElement(node);
   if(!element) return await next();
 
   let result: any = null;
@@ -171,12 +171,12 @@ EffectElementTagNameMap["fx-collapse"] = class extends (EffectElementTagNameMap[
 
 const ExecContextForDebug : Partial<ExecContext> = {
   middlewares: [debugMiddleware],
-  onNodeEnter(node: FxCompiledNode): void {
-    const element = getElementByCompiledNode(node);
+  onNodeEnter(node: FxNode): void {
+    const element = getElement(node);
     element?.classList.add('is-running');
   },
-  onNodeExit(node: FxCompiledNode, error?: any): void {
-    const element = getElementByCompiledNode(node);
+  onNodeExit(node: FxNode, error?: any): void {
+    const element = getElement(node);
     if(!element) return;
     element.classList.remove('is-running');
     if (error) {

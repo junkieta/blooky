@@ -30,7 +30,7 @@ interface Branch {
 }
 
 type DripResult<A,M="deny"> = M extends 'await'
-  ? { effects: Promise<DripperEffect>, trigger: DripTrigger<A> }
+  ? Promise<{ effects: DripperEffect, trigger: DripTrigger<A> }>
   : { effects: DripperEffect, trigger: DripTrigger<A> };
  
 

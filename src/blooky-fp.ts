@@ -436,35 +436,30 @@ function drip<
     const mode = options?.acceptPromise ?? 'deny';
     return (mode === 'await'
         // "await"モードの場合は、非同期エンジンを呼び出し、Promise<Effect>を返す
-        ? (dripper:DripperStream<A>) => ({
-            effects: dripAsync(value)(dripper),
-            trigger: { value, dripper }
-        })
+        ? (dripper:DripperStream<A>) => dripAsync(value)(dripper)
         // "deny" または "allow" の場合は、同期的エンジンを呼び出し、Effectを返す
-        : (dripper:DripperStream<A>) => ({
-            effects: dripSync(value, mode === 'allow')(dripper),
-            trigger: { value, dripper }
-        })
+        : (dripper:DripperStream<A>) => dripSync(value, mode === 'allow')(dripper)
     ) as (d:DripperStream<A>) => DripResult<A,M>;
 }
 
 /**
  * 同期的なdrip。最速だが、Promiseの扱いに注意。
  */
-const dripSync = <A>(v:A, allowPromise = false) => (d:DripperStream<A>) => 
-    [...EFFECT_ENHANCERS].reduce((e,f)=>f(e), flowLazy(v, allowPromise)(d)[0]);
+const dripSync = <A>(value:A, allowPromise = false) => (dripper:DripperStream<A>) => ({
+    trigger: { value, dripper },
+    effects : flowLazy(value, allowPromise)(dripper)[0],
+});
 
 /**
  * 非同期版のdrip。flowAsyncを呼び出し、EffectのPromiseを返す。
  */
-const dripAsync = <A>(v: A) => async (d: DripperStream<A>): Promise<DripperEffect> => {
-  const effectList: DripperEffect = [];
+const dripAsync = <A>(value: A) => async (dripper: DripperStream<A>) => {
+  const effects: DripperEffect = [];
   // for await...of で非同期ジェネレータを処理する
-  for await (const effect of flowAsync(v, d)) {
-    effectList.push(effect);
+  for await (const effect of flowAsync(value, dripper)) {
+    effects.push(effect);
   }
-  // エンハンサーの適用などはsyncと同じ
-  return [...EFFECT_ENHANCERS].reduce((e, f) => f(e), effectList);
+  return { trigger: { value, dripper }, effects, };
 };
 
 /**
@@ -646,11 +641,7 @@ type moments = {
  * すべてを同期させる指揮者（Conductor）の役割を担う。
  */
 
-// --- 1. モジュールの状態管理 (スケジューラの脳) ---
-/** ユーザー操作やfx-collapseから発生した実行計画を溜めるキュー */
-const executionQueue : DripResult<any>[] = [];
-
-// --- 2. 時間の根源 (The Source of Time) ---
+// --- 時間の根源 (The Source of Time) ---
 /** * 1フレームに一度だけdripされる、値を持たない純粋な「鼓動」
  * これが全ての時間ベースのリアクティビティの源泉となる。
  */
@@ -665,7 +656,7 @@ const calendar = {
     reservations: new Map<DripResult<any>, { resolve: (v:number)=>void, reject: (v:number) => void, at: number }>(),
     schedule: async (r:DripResult<any>, at = clock()) => new Promise((resolve, reject)=>{
         calendar.reservations.set(r, { resolve, reject, at });
-        if(clock() >= at) tick(clock());
+        if(clock() >= at) requestAnimationFrame(tick);
     })
 }
 
@@ -699,14 +690,17 @@ function registerTickHandler(handler: (effects: DripResult<any>[]) => void) {
 function tick(now: number) {
     const beat_effect = drip<void>(void 0)(_beat$);
     const resevations = [...calendar.reservations].flatMap(([effect, {at,resolve,reject}]) => at <= now ? [[effect,resolve,reject] as [DripResult<any>,(v:number)=>void,(v:number)=>void]] : [])
-    const items = [beat_effect,...resevations.map(([effect])=>effect)];
-    tickHandlers.forEach((handler)=>handler(items));
-    resevations.forEach(([effect,resolve])=>{
-        calendar.reservations.delete(effect);
-        resolve(now);
-    })
+    const queue = [beat_effect,...resevations.map(([effect])=>effect)];
+    // 実行キューが空なら終了
+    if(!queue.length) return;
+    // ハンドラーの呼び出し
+    tickHandlers.forEach((handler)=>handler(queue));
+    // 処理済みの予定を消去
+    resevations.forEach(([effect])=>calendar.reservations.delete(effect));
+    // 完了通知
+    resevations.forEach(([_,resolve])=>resolve(now));
     // 時間ベースのイベントが残っていれば、次のtickを予約する
-    if (beat_effect.effects.length) requestAnimationFrame(tick);
+    if (beat_effect.effects.length || calendar.reservations.size) requestAnimationFrame(tick);
 }
 
 const nextState = (s:MomentState) => (n:number) : MomentState => 

@@ -1,4 +1,4 @@
-import type { INodeDefinition, FxNode, FxNodeCompiler } from '../types';
+import type { INodeDefinition, FxNode } from '../types';
 import { NodeDefinition } from '../NodeDefinition';
 type ThisNode = Extract<FxNode, { type: 'sequence' }>;
 
@@ -9,9 +9,4 @@ export class SequenceNodeDefinition extends NodeDefinition<'sequence'> {
     return { type: 'sequence', steps };
   }
 
-  public compile(node: ThisNode, compiler: FxNodeCompiler) {
-    return Object.create(node, {
-      steps: { value: node.steps.map(step => compiler.compileNode(step)) }
-    });
-  }
 }
