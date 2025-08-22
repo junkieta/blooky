@@ -3,7 +3,7 @@
  * 関数型のリアクティブプログラミングをtypescriptで行うためのライブラリ。
  */
 
-import { DripperEffect, DripResult, DripTrigger, PropEffect } from "./blooky-types";
+import { DripperEffect, DripResult, PropEffect } from "./blooky-types";
 
 // ガベージコレクタの格納プロパティ用シンボル
 const STREAM_CLEANER = Symbol("STREAM_CLEANER");
@@ -609,7 +609,7 @@ type MomentState = {
     count: number
 }
 
-type MomentStream = Stream<MomentState> & { disconnect: ()=>void };
+type TickStateStream = Stream<MomentState> & { disconnect: ()=>void };
 
 /**
  * 時間の更新をイベントストリームとして取得する。
@@ -647,7 +647,6 @@ type moments = {
 
 // --- 1. モジュールの状態管理 (スケジューラの脳) ---
 /** ユーザー操作やfx-collapseから発生した実行計画を溜めるキュー */
-type E = DripResult<any>;
 const executionQueue : DripResult<any>[] = [];
 
 // --- 2. 時間の根源 (The Source of Time) ---
@@ -660,21 +659,31 @@ const _beat$ = stream<void>();
  * 呼び出された瞬間の現在時刻を返す「センサー」としての役割を持つ。
  */
 const clock: Prop<number> = () => performance.now();
+
+const calendar = {
+    reservations: new Map<DripResult<any>, number>(),
+    schedule: (r:DripResult<any>, at = clock()) => calendar.reservations.set(r, at)
+}
+
+type MomentStream = Stream<number> & {};
+
 /**
  * 「鼓動」(_beat$)を元に、その瞬間の時刻で意味付けされたMappedStream。
  * これが内部的な「公式時刻」の伝達役となる。
  */
-const moment$ = map<number, void>(clock)(_beat$);
+const moment$ : MomentStream = map<number, void>(clock)(_beat$);
 
 // `clock` Propが`moment$`から派生していることを内部的に関連付ける
+// これでclockはremap,liftなどから利用できる
 PROP_FROM.set(clock, moment$);
 
 // Effect処理のミドルウェア
 const tickHandlers = new Set<(effects: DripResult<any>[]) => void>();
-// デフォルトの処理
+// デフォルトの処理の登録
 const defaultTickHandler = (e)=>e.forEach((e)=>e.effects.forEach((e)=>e.update(e.nextValue,e.prevValue)));
 tickHandlers.add(defaultTickHandler);
 
+// ミドルウェアの登録用関数
 function registerTickHandler(handler: (effects: DripResult<any>[]) => void) {
   tickHandlers.add(handler);
   return () => tickHandlers.delete(handler);
@@ -701,10 +710,10 @@ const nextState = (s:MomentState) => (n:number) : MomentState =>
     count: s.count + 1
 });
 
-const tickStateStream = (f?:(s:MomentState)=>boolean): MomentStream => {
+const tickStateStream = (f?:(s:MomentState)=>boolean): TickStateStream => {
     const started = clock();
     const s = map((n:number): MomentState => nextState(p())(n))(moment$);
-    const _s = (f ? filter(f)(s) : s) as Stream<MomentState> as MomentStream;
+    const _s = (f ? filter(f)(s) : s) as Stream<MomentState> as TickStateStream;
     const p = hold({
         started,
         now: started,
@@ -732,7 +741,7 @@ const moments = {
    * @param ms 間隔（ミリ秒）
    * @returns 経過時間(deltaTime)を値として持つStream
    */
-  interval(ms: number): MomentStream {
+  interval(ms: number): TickStateStream {
     if(!hasReferences(moment$)) requestAnimationFrame(tick);
     const s = tickStateStream(({deltaTime})=>deltaTime >= ms);
     const c = countReferences(s,true)() + 1;
@@ -745,7 +754,7 @@ const moments = {
    * @param ms 遅延時間（ミリ秒）
    * @returns 経過時間(deltaTime)を値として持つStream
    */
-  timeout(ms: number): MomentStream {
+  timeout(ms: number): TickStateStream {
     if(!hasReferences(moment$)) setTimeout(tick, ms);
     const s = tickStateStream(({elapsed})=> ms <= elapsed);
     when<MomentState>(({elapsed})=>ms<=elapsed)(STREAM_PROP_RELATIONS.get(s)![0]).then(s.disconnect);
@@ -768,6 +777,5 @@ export {
 export type {
     Stream,FilterStream,MappedStream,MergedStream,DripperStream,
     Prop,PromisedProp,
-    MomentStream,MomentState,
+    TickStateStream as MomentStream,MomentState,
 };
-

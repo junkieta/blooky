@@ -37,13 +37,12 @@ type DripResult<A,M="deny"> = M extends 'await'
 // 副作用の集合体
 type DripperEffect = PropEffect<unknown>[];
 
-
 type PropEffect<A> = {
     created: number
     prop: Prop<A>
     nextValue: A
     prevValue: A
-    update: ((v:A)=>void)|((next:A,prev:A)=>void)
+    update: ((v:A,prev:A)=>void)
 }
 
 
