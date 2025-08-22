@@ -4,32 +4,25 @@
  * 簡易な仕様でDOMを構築しつつ、Streamを利用した更新管理も行う。
  */
 import type { V_DATASET, V_STYLE, V_CLASSLIST, V_EVENTLISTENER, V_STRING, WritableCSSProperty, JSHTMLElementSource, JSHTMLAttrSource, JSHTMLNodeSource, JSHTMLAttributeMapSource, T_ATTRSET } from "./blooky-dom-types";
-import { type Stream, type Prop, type DripperStream, stream, drip, isChainedProp, filter, resolve, isDripperStream, when } from "./blooky-fp";
+import { type Stream, type Prop, type DripperStream, stream, drip, isChainedProp, filter, isDripperStream, when, registerTickHandler, calendar } from "./blooky-fp";
 
-// dripにDOMオブザーバー呼び出しを追加する
-drip.registerEnhancer((effect) => {
-    if(!effect.length) return effect;
-    const first = effect[0];
-    const update = (v:unknown) => {
-        const update_target = [...PROP_BIND_MAP].flatMap((part)=>effect.find(({prop})=>prop===part.prop) ? part : []);
-        PROP_BIND_MAP.forEach((a)=>{
-            // 更新の発生したPropに包含されているPropはbindから外す
-            if(!a.isConnected() || update_target.some((b)=>b.contains(a)&&a!==b))
-                PROP_BIND_MAP.delete(a);
-        })
-        const listeners: (()=>void)[] = effect.flatMap((p) => {
-            const v = p.nextValue;
-            const t = update_target.filter((part)=>PROP_BIND_MAP.has(part) && p.prop === part.prop);
-            return t.length
-                ? [() => t.forEach((p)=>p.update(v as any, p.prop() as any))]
-                : [];
-        });
-        listeners.forEach((f)=>f());
-        first.update(v);
-    };
-    // 最初のPropEffectのupdateを上書きして、バインドされた要素の更新をPropの更新前に処理する
-    return [{...first,update},...effect.slice(1)];
-});
+// DOMをfpのtickに結び付ける
+registerTickHandler((effectList) => {
+    const effects = effectList.flatMap((e) => e.effects);
+    const update_target = [...PROP_BIND_MAP].flatMap((part)=>effects.find(({prop})=>prop===part.prop) ? part : []);
+    PROP_BIND_MAP.forEach((a)=>{
+        // 更新の発生したPropに包含されているPropはbindから外す
+        if(!a.isConnected() || update_target.some((b)=>b.contains(a)&&a!==b))
+            PROP_BIND_MAP.delete(a);
+    })
+    effects.forEach((p)=>{
+        const bridges = update_target.filter((part)=>PROP_BIND_MAP.has(part) && p.prop === part.prop);
+        const a = p.nextValue as any;
+        const b = p.prevValue as any;
+        bridges.forEach((bridge)=>bridge.update(a,b));
+    });
+})
+
 
 // PropとDOMのバインドに責任を持つ
 type PropBridgeInterface<A> = {
@@ -156,7 +149,8 @@ class DatasetPropBridge extends AbstractAttrPropBridge<V_STRING> {
 // 即時dripの短縮呼び出し関数。イベントリスナーとして登録する想定。
 // ex) onclick: into(eventDripperStream)
 const into = <A>(d: DripperStream<A>) => (v: A) => {
-    drip(v)(d).effects.forEach(({update,nextValue})=>update(nextValue));
+    calendar.schedule(drip(v)(d));
+//    drip(v)(d).effects.forEach(({update,nextValue,prevValue})=>update(nextValue,prevValue));
 }
 
 /**

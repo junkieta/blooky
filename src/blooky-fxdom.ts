@@ -53,7 +53,7 @@ class FxWait extends EffectElement {
       ms = ref<number>(msAttr);
     // 属性値をそのまま渡す。数値かrefかはprepareが解決する
     const until = this.hasAttribute("until") ? ref<boolean>(this.getAttribute("until")!) : undefined;
-    return fx.wait({ms,until});
+    return fx.wait({ms,until,id:this.id});
   }
 }
 
@@ -218,7 +218,7 @@ class FxDispatch extends EffectElement {
 
 class FxCollapse extends EffectElement {
   toFxNode(): FxNode {
-    const streamKey = this.getAttribute("stream-key");
+    const streamKey = this.getAttribute("dripper");
     if (!streamKey) return fx.none();
 
     const valueKey = this.getAttribute("value");

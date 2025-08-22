@@ -1,6 +1,6 @@
-import { accum, drip, Prop, resolve, stream } from "../blooky-fp";
-import { nodeDefinitionMap  } from "./nodes";
-import { FxNode, FxCompiledNode, AppContext, CancelToken, ExecContext, FxExecutionContext, FxResult, YieldRequest, ExecutionHandle, PreparedFx, FxHandlerMap, FxFactoryMap } from "./types";
+import { nodeDefinitionMap } from "./nodes";
+import { accum, drip, Prop, stream } from "../blooky-fp";
+import { FxNode, AppContext, CancelToken, ExecContext, FxExecutionContext, FxResult, YieldRequest, ExecutionHandle, PreparedFx, FxHandlerMap, FxFactoryMap } from "./types";
 
 // 参照オブジェクトの型を定義（ブランド化して、他のオブジェクトと区別する）
 const FxRefSymbol = Symbol("FxRef");
@@ -22,7 +22,7 @@ nodeDefinitionMap.forEach((def, type) => {
 // ランナー。nodeを辿るジェネレータを返す
 function* run(
   this: ExecContext,
-  node: FxCompiledNode
+  node: FxNode
 ): Generator<FxNode, void, any> {
   this.onNodeEnter?.(node);
   try {
@@ -34,13 +34,15 @@ function* run(
         break;
 
       case 'loop':
-        while (node.cond()) {
+        const cond = this.resolve(node.cond);
+        while (cond()) {
           yield* run.call(this, node.body);
         }
         break;
       
       case 'condition':
-        if (node.if()) {
+        const ok = this.resolve(node.if);
+        if (ok()) {
           yield* run.call(this, node.then);
         } else if (node.else) {
           yield* run.call(this, node.else);
@@ -48,8 +50,8 @@ function* run(
         break;
 
       case 'switch':
-        const key = node.by();
-        const branch = node.cases.get(key) ?? node.default;
+        const by = this.resolve(node.by);
+        const branch = node.cases.get(by()) ?? node.default;
         if (branch) {
           yield* run.call(this, branch);
         }
@@ -97,28 +99,25 @@ function prepare(
   
   const cancelToken = createCancelToken();
   const runtimeState$ = stream<FxResult>();
-  const $runtimeState = accum<Record<string,any>,FxResult>((res,acc) => ({ ...acc, [res.id]: res.value }), {})(runtimeState$)
-  const yieldChannel$ = stream<YieldRequest>();
+  const $runtimeState = accum<Record<string,any>,FxResult>((res,acc) => ({ ...acc, ["#"+res.id]: res.value }), {})(runtimeState$)
 
   const execContext: ExecContext = {
+    resolve: (v:FxRef<any>) => resolveValue(v)(proxyContext),
     ...parentExecContext,
     cancelToken,
-    yieldChannel$,
     runtimeState$,
   };
 
   const proxyContext = new Proxy(initialAppContext, {
     get(target, key) {
       if (typeof key === 'string' && key.startsWith('#')) {
-        const id = key.slice(1);
-        return $runtimeState()[id];
+        return $runtimeState()[key];
       }
       return Reflect.get(target, key);
     },
     has(target, key) {
       if (typeof key === 'string' && key.startsWith('#')) {
-        const id = key.slice(1);
-        return id in $runtimeState();
+        return key in $runtimeState();
       }
       return Reflect.has(target, key);
     },
@@ -127,11 +126,7 @@ function prepare(
     },
   });
 
-  const compiler = new FxNodeCompiler(proxyContext);
-  // 最初に渡されたflowをコンパイルする
-  const compiledFlow = compiler.compileNode(flow);
-
-  const generator = run.call(execContext, compiledFlow);
+  const generator = run.call(execContext, flow, proxyContext);
   return {
     generator,
     execContext,
@@ -158,14 +153,18 @@ function execute(preparedFx: PreparedFx): ExecutionHandle {
   // 結果を消費するためのプル型インターフェース（非同期ジェネレータ）
   const resultsIterator = (async function* () {
     while (true) {
-      // 1. yieldChannel$ に次に流れてくる値を待つ
-      const nextResult : YieldRequest = await resolve(execContext.yieldChannel$);
-      // 2. for await...of ループに値をyieldして送り出す
-      //    同時に、next()で渡される応答を待つ
-      const responseFromConsumer = yield nextResult;
-      // 3. 応答があれば、待機中のexecuteエンジンに応答を送り返す
-      if (nextResult) {
-        nextResult.resolve(responseFromConsumer);
+      // 次のリクエストが来るまで待つPromiseを生成
+      const nextRequest = await new Promise<YieldRequest>(resolve => {
+        // このresolve関数を、次のyieldが呼び出せるようにコンテキストに登録する
+        execContext.yieldChannel = resolve;
+      });
+      // リクエストを受け取ったら、次のyieldに備えてハンドラを一旦クリア
+      execContext.yieldChannel = undefined;
+      // 受け取ったリクエストを for await...of ループに送り出す
+      const responseFromConsumer = yield nextRequest;
+      // 利用者からの応答があれば、待機中のyieldハンドラのPromiseを解決する
+      if (nextRequest) {
+        nextRequest.resolve(responseFromConsumer);
       }
     }
   })();
@@ -179,9 +178,9 @@ function execute(preparedFx: PreparedFx): ExecutionHandle {
     close: async (finalValue?: any) => {
       // ★ closeが呼ばれたら、GCによる自動クローズの対象から外す
       executionHandleRegistry.unregister(handle);
-      // ★ 保留中のyieldがあれば、それを中断させる
-      if (execContext._pendingYieldReject)
-        execContext._pendingYieldReject(new Error('Flow was closed externally.'));
+      // ★ もしyieldが待ち状態であれば、それを中断させる
+      if (execContext.pendingYieldReject)
+        execContext.pendingYieldReject(new Error('Flow was closed externally.'));
       // ★ フロー全体の実行をキャンセルし、完了させる
       handle.cancel();
       
@@ -205,7 +204,7 @@ const query = (node: FxNode, app?: AppContext, ctx?: ExecContext) =>
 // `execute`のコアロジックは、プライベートなヘルパー関数に移動
 async function _internal_execute(
   this: ExecContext,
-  generator: Generator<FxCompiledNode, void, any>,
+  generator: Generator<FxNode, void, any>,
   appContext: AppContext
 ): Promise<AppContext> {
   // `this`から実行設定を取得
@@ -213,8 +212,7 @@ async function _internal_execute(
   const { cancelToken, middlewares } = this;
 
   async function nestedExecute (n:FxNode) : Promise<AppContext> {
-    const compiler = new FxNodeCompiler(appContext);
-    return _internal_execute.call(this || ctx, run.call(this || ctx, compiler.compileNode(n)), appContext);
+    return _internal_execute.call(this || ctx, run.call(this || ctx, n), appContext);
   }
 
   const allMiddlewares = middlewares ? [...middlewares] : [];
@@ -224,10 +222,12 @@ async function _internal_execute(
 
   while (!result.done) {
     if (cancelToken.cancelled()) break;
-    const node = result.value;
+
+    let node = result.value;
     try {
       const definition = nodeDefinitionMap.get(node.type);
-      if(!(definition)) throw new Error(`error: "${node.type}" is not unknown node type`);
+      if(!(definition))
+        throw new Error(`error: "${node.type}" is not unknown node type`);
 
       // ★各ステップの情報をまとめたFxExecutionContextを生成
       const fxec: FxExecutionContext = {
@@ -249,23 +249,23 @@ async function _internal_execute(
       nextValue = await runNextMiddleware(0);
 
     } catch(err) {
-      const catcher = (node as any).catcher;
+      let catcher = (node as any).catcher;
+      if(typeof catcher !== "function" && catcher) catcher = this.resolve(catcher);
       if(typeof catcher === 'function') {
-          // ハンドラに処理を移譲
-          console.warn(`[fx-effect] Action failed, but was handled by context.`, catcher);
-          nextValue = catcher(err); // ハンドラの戻り値を、成功時の値としてフローに復帰させる
+        // ハンドラに処理を移譲
+        console.warn(`[fx-effect] Action failed, but was handled by context.`, catcher);
+        nextValue = catcher(err); // ハンドラの戻り値を、成功時の値としてフローに復帰させる
       } else {
         // ハンドラが見つからない場合は、エラーを再スローしてフローを停止
         console.error(`[fx-effect] Unhandled error: Catch handler not found in context.`);
         throw err;
       }
     }
-    
+
     // nodeにidがあれば、その結果をruntimeState$にdripする
     if (node.id) {
       // このdripは、エンジン内部の通信のため、同期的に実行する必要がある
-      drip({ id: node.id, value: nextValue })(this.runtimeState$)
-        .effects.forEach(e => e.update(e.nextValue));
+      drip({ id: node.id, value: nextValue })(this.runtimeState$).effects.forEach(e => e.update(e.nextValue, e.prevValue));
     }
 
     await yieldToMainThread();
@@ -284,50 +284,19 @@ function yieldToMainThread(): Promise<void> {
   });
 }
 
-// FxNodeのrefを解決し、FxCompiledNodeに変換する
-class FxNodeCompiler {
-  factory = nodeDefinitionMap
-  context: AppContext
-  constructor(context: AppContext) {
-    this.context = context;
-  }
-  
-  compileNode(node: FxNode) : FxCompiledNode {
-    return this.factory.has(node.type)
-      ? this.factory.get(node.type)!.compile(node, this as any)
-      : node as FxCompiledNode;
-  }
-
-  // FxRef, Prop, または静的な値を、常にProp（ゲッター関数）に正規化するヘルパー
-  resolveValue<T>(value: FxRef<T>): Prop<T> {
-    if (typeof value === 'function') return value as Prop<T>; // Propはそのまま
-    if (isFxRef(value)) {
-      // FxRefは、proxyContextから値を解決するPropに変換
-      return () => {
-        if(!(value.key in this.context)) {
-          throw new Error(`"${value.key}" cannot resolve from context.`)
-        }
-        return this.context[value.key]
-      }
-    }
-    // 静的な値は、その値を返すだけのPropに変換
-    return () => value;
-  }
-
-  // FxRef, または作用を含む関数を、関数に解決する
-  resolveAction(value: unknown): (v:any)=>unknown {
-    if(typeof value === 'function')
-      return value as (v:any)=>unknown;
-    if(isFxRef(value)) 
-      return this.resolveValue<(v:any)=>unknown>(value)();
-    return () => value;
-  }
-
-}
-
 export {
-  fx,
-  FxRef, isFxRef, ref,
-  FxNodeCompiler,
+  fx, FxRef, isFxRef, ref,
   run,prepare,execute,query,createCancelToken
 }
+
+// FxRef, Prop, または静的な値を、常に()=>Prop（ゲッター関数）に正規化するヘルパー
+const resolveValue = <T>(value: FxRef<T>) => (context: AppContext) : Prop<T> => {
+  if (isFxRef<T>(value)) { 
+    if(!(value.key in context)) {
+      throw new Error(`"${value.key}" cannot resolve from context.`)
+    }
+    value = context[value.key];
+  }
+  return typeof value === "function" ? value as Prop<T> : () => value as T;
+}
+

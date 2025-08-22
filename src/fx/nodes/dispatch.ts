@@ -1,8 +1,9 @@
-import type { INodeDefinition, FxNode, FxRef, FxNodeCompiler, FxExecutionContext, FxCompiledNode, FxDispatchSettings } from '../types';
+import type { FxNode, FxRef, FxExecutionContext, FxDispatchSettings } from '../types';
 import { NodeDefinition } from '../NodeDefinition';
+import {isFxRef} from "../engine"
 
 type ThisNode = Extract<FxNode, { type: 'dispatch' }>;
-type ThisCompiledNode = Extract<FxCompiledNode, { type: 'dispatch' }>;
+type ThisCompiledNode = Extract<FxNode, { type: 'dispatch' }>;
 
 export class DispatchNodeDefinition extends NodeDefinition<'dispatch'> {
   public readonly type = 'dispatch';
@@ -11,19 +12,7 @@ export class DispatchNodeDefinition extends NodeDefinition<'dispatch'> {
     return { type: 'dispatch', name, settings, child };
   }
 
-  public compile(node: ThisNode, compiler: FxNodeCompiler) {
-    return Object.create(node, {
-      name: { value: compiler.resolveValue(node.name) },
-      settings: { 
-        value: Object.create(node.settings, {
-          detail: { value: node.settings.detail ? compiler.resolveValue(node.settings.detail) : undefined }
-        })
-      },
-      child: { value: node.child ? compiler.compileNode(node.child) : undefined }
-    });
-  }
-
-  public async handle({ node, execute }: FxExecutionContext & { node: ThisCompiledNode }) {
+  public async handle({ node, context, execute }: FxExecutionContext & { node: ThisNode }) {
     let target: EventTarget = window;
     if (typeof node.settings.target === 'string') {
         const element = document.querySelector(node.settings.target);
@@ -31,14 +20,11 @@ export class DispatchNodeDefinition extends NodeDefinition<'dispatch'> {
     } else if (node.settings.target instanceof EventTarget) {
         target = node.settings.target;
     }
-    
-    const event = new CustomEvent(node.name(), {
-      ...node.settings,
-      detail: node.settings.detail ? node.settings.detail() : undefined
-    });
 
+    const name = context.resolve(node.name);
+    const detail = isFxRef(node.settings.detail) ? context.resolve(node.settings.detail)() : node.settings.detail;
+    const event = new CustomEvent(name(), { ...node.settings, detail });
     const dispatchedSuccessfully = target.dispatchEvent(event);
-
     if (dispatchedSuccessfully && node.child) {
       await execute(node.child);
     }

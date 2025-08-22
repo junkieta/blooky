@@ -31,12 +31,12 @@ type FxNoneNode = FxNodeBase<"none">;
 type FxSequenceNode = FxNodeBase<"sequence", { steps: FxNode[] }>;
 type FxParallelNode = FxNodeBase<"parallel", { steps: FxNode[] }>;
 type FxRaceNode = FxNodeBase<"race", { steps: FxNode[] }>;
-type FxWaitNode = FxNodeBase<"wait", { ms?: FxRef<number>, until?: FxRef<boolean> }>; // waitの拡張を反映
+type FxWaitNode = FxNodeBase<"wait", { ms?: FxRef<number>, until?: FxRef<Prop<boolean>> }>; // waitの拡張を反映
 type FxLoopNode = FxNodeBase<"loop", { cond: FxRef<boolean>, body: FxNode }>;
 type FxConditionNode = FxNodeBase<"condition", { if: FxRef<boolean>, then: FxNode, else?: FxNode }>;
 type FxSwitchNode = FxNodeBase<"switch", { by: FxRef<string | number | symbol>, cases: Map<string | number | symbol, FxNode>, default?: FxNode }>;
 type FxCallNode = FxNodeBase<"call", { action: FxRef<(v: any) => unknown>, arg?: FxRef<any>, context?: FxRef<any>, catcher?: FxRef<(error: Error) => unknown> }>;
-type FxCollapseNode = FxNodeBase<"collapse", { dripper: FxRef<DripperStream<any>>, value: FxRef<any>, catcher?: FxRef<(error: Error) => unknown>, mode?: FxRef<"saga" | "atomic">, promise?: FxRef<"deny" | "allow" | "await"> }>;
+type FxCollapseNode = FxNodeBase<"collapse", { dripper: FxRef<DripperStream<any>>, value: FxRef<any>, catcher?: FxRef<(error: Error) => unknown>, promise?: FxRef<"deny" | "allow" | "await"> }>;
 type FxDispatchNode = FxNodeBase<"dispatch", { name: FxRef<string>, settings: FxDispatchSettings<FxRef<any>>, child?: FxNode }>;
 type FxYieldNode = FxNodeBase<"yield", { for: string, value: FxRef<any>, id?: string }>; // yieldの拡張を反映
 
@@ -57,48 +57,6 @@ type FxNode =
   | FxDispatchNode
   | FxYieldNode;
 
-
-// --- FxCompiledNodeの定義 ---
-
-// コンパイル後の各ノードの型を定義
-type FxCompiledNodeBase<T extends string, P = {}> = FxNodeBase<T, P>;
-
-type FxCompiledNoneNode = FxCompiledNodeBase<"none">;
-type FxCompiledSequenceNode = FxCompiledNodeBase<"sequence", { steps: FxCompiledNode[] }>;
-type FxCompiledParallelNode = FxCompiledNodeBase<"parallel", { steps: FxCompiledNode[] }>;
-type FxCompiledRaceNode = FxCompiledNodeBase<"race", { steps: FxCompiledNode[] }>;
-type FxCompiledWaitNode = FxCompiledNodeBase<"wait", { ms?: Prop<number>, until?: Prop<boolean> }>;
-type FxCompiledLoopNode = FxCompiledNodeBase<"loop", { cond: Prop<boolean>, body: FxCompiledNode }>;
-type FxCompiledConditionNode = FxCompiledNodeBase<"condition", { if: Prop<boolean>, then: FxCompiledNode, else?: FxCompiledNode }>;
-type FxCompiledSwitchNode = FxCompiledNodeBase<"switch", { by: Prop<string | number | symbol>, cases: Map<string | number | symbol, FxCompiledNode>, default?: FxCompiledNode }>;
-type FxCompiledCallNode = FxCompiledNodeBase<"call", { action: (v: any) => unknown, arg?: Prop<any>, context?: Prop<any>, catcher?: (error: Error) => unknown }>;
-type FxCompiledCollapseNode = FxCompiledNodeBase<"collapse", { stream: Prop<DripperStream<any>>, value: Prop<any>, catcher?: (error: Error) => unknown, mode?: Prop<"saga" | "atomic">, promise?: Prop<"deny" | "allow" | "await"> }>;
-type FxCompiledDispatchNode = FxCompiledNodeBase<"dispatch", { name: Prop<string>, settings: FxDispatchSettings<Prop<any>>, child?: FxCompiledNode }>;
-type FxCompiledYieldNode = FxCompiledNodeBase<"yield", { for: string, value: Prop<any>, id?: string }>;
-
-/**
- * コンパイラによってFxRefが解決された、実行可能なノードを表す合併型
- */
-type FxCompiledNode =
-  | FxCompiledNoneNode
-  | FxCompiledSequenceNode
-  | FxCompiledParallelNode
-  | FxCompiledRaceNode
-  | FxCompiledWaitNode
-  | FxCompiledLoopNode
-  | FxCompiledConditionNode
-  | FxCompiledSwitchNode
-  | FxCompiledCallNode
-  | FxCompiledCollapseNode
-  | FxCompiledDispatchNode
-  | FxCompiledYieldNode;
-
-export declare class FxNodeCompiler {
-  resolveValue<T>(value: FxRef<T>): Prop<T>;
-  resolveAction(value: unknown): (v: any) => unknown;
-  compileNode(node: FxNode): FxCompiledNode;
-}
-
 /**
  * 全てのFxNode定義が実装すべき規約
  */
@@ -118,18 +76,18 @@ interface INodeDefinition<T extends FxNode['type']> {
    * FxNodeをFxCompiledNodeに変換するコンパイラロジック
    * @param node コンパイル対象の FxNode
    * @param compiler FxNodeCompilerのインスタンス
-   */
   compile(
     node: Extract<FxNode, { type: T }>,
     compiler: FxNodeCompiler
   ): Extract<FxCompiledNode, { type: T }>;
+*/
 
   /**
-   * コンパイル済みノードを実行するハンドラ
+   * ノードを実行するハンドラ
    * @param context 実行コンテキスト
    */
   handle(
-    context: FxExecutionContext & { node: Extract<FxCompiledNode, { type: T }> }
+    context: FxExecutionContext & { node: Extract<FxNode, { type: T }> }
   ): Promise<any>;
 
 }
@@ -144,8 +102,8 @@ type CancelToken = { cancel: () => void; cancelled: () => boolean };
 
 
 type FxHandlerMap = {
-  [K in FxCompiledNode["type"]]?: (
-    ctx: FxExecutionContext & { node: Extract<FxCompiledNode, { type: K }> }
+  [K in FxNode["type"]]?: (
+    ctx: FxExecutionContext & { node: Extract<FxNode, { type: K }> }
   ) => Promise<any>
 };
 
@@ -156,17 +114,19 @@ type FxFactoryMap = {
 
 // 実行全体の設定
 interface ExecContext {
+  resolve: <A>(v:FxRef<A>)=>Prop<A>;
   cancelToken: CancelToken;
   middlewares?: FxMiddleware[];
-  onNodeEnter?: (node: FxCompiledNode) => void;
-  onNodeExit?: (node: FxCompiledNode, result?:any, error?: Error) => void;
+  onNodeEnter?: (node: FxNode) => void;
+  onNodeExit?: (node: FxNode, result?:any, error?: Error) => void;
   runtimeState$: DripperStream<FxResult>; // 結果報告用
-  yieldChannel$: DripperStream<YieldRequest>; // 対話用
+  yieldChannel?: (req:YieldRequest) => void
+  pendingYieldReject?: (reason?: any) => void
 }
 
 // ミドルウェアに渡される、各ステップの情報
 interface FxExecutionContext {
-  node: FxCompiledNode;
+  node: FxNode;
   execute: (n:FxNode)=>Promise<AppContext>
   context: ExecContext
   appContext: AppContext
@@ -297,20 +257,6 @@ export {
     FxCollapseNode,
     FxDispatchNode,
     FxYieldNode,
-    FxCompiledNodeBase,
-    FxCompiledNode,
-    FxCompiledNoneNode,
-    FxCompiledSequenceNode,
-    FxCompiledParallelNode,
-    FxCompiledRaceNode,
-    FxCompiledWaitNode,
-    FxCompiledLoopNode,
-    FxCompiledConditionNode,
-    FxCompiledSwitchNode,
-    FxCompiledCallNode,
-    FxCompiledCollapseNode,
-    FxCompiledDispatchNode,
-    FxCompiledYieldNode,
 
     FxRef,
     INodeDefinition,
