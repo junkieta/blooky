@@ -1,8 +1,8 @@
 // src/blooky-git.ts
 
 import type { Prop } from './blooky-fp';
-import { drip, clock } from './blooky-fp'; // ★ fpからclockをインポート
-import type { StateSnapshot, Branch, DripTrigger, DripperEffect, DripResult } from './blooky-types'; // git用の型定義
+import { drip, clock, calendar, registerTickHandler } from './blooky-fp'; // ★ fpからclockをインポート
+import type { StateSnapshot, Branch, DripTrigger, DripperEffect, DripResult, DripperStream } from './blooky-types'; // git用の型定義
 
 // --- Module-Scoped State (Internal Implementation) ---
 
@@ -14,7 +14,7 @@ const managedProps = new Map<Prop<any>, ((value: any, _?:any)=>void)>();
 // --- Automatic Initialization ---
 
 // ★ モジュールが読み込まれた瞬間に、歴史の創世記が自動的に記録される
-const rootSnapshot: StateSnapshot = (() => {
+{
   const initialState = new Map<Prop<any>, any>([[clock, clock()]]);
   const snapshot: StateSnapshot = {
     id: 'root-' + Math.random().toString(36).substring(2, 9),
@@ -25,9 +25,7 @@ const rootSnapshot: StateSnapshot = (() => {
   };
   snapshots.set(snapshot.id, snapshot);
   branches.set('main', { name: 'main', commitId: snapshot.id });
-  return snapshot;
-})();
-
+}
 
 // --- Private Helper Methods ---
 
@@ -54,14 +52,8 @@ function getCommitHistory(start: StateSnapshot, stopAtId?: string): StateSnapsho
   return history;
 }
 
-// --- Public API (Exported Functions) ---
-
-/**
- * 新しい状態をコミットする
- */
-export function commit(dripResult: DripResult<any>): string {
-  const { trigger, effects } = dripResult;
-
+const takeSnapshot = (result: DripResult<"deny">) => {
+  const {effects} = result;
   // commitのたびに、未知のPropとそのupdate関数を「学習」する
   effects.forEach(({ prop, update }) => {
     if (!managedProps.has(prop)) {
@@ -78,15 +70,34 @@ export function commit(dripResult: DripResult<any>): string {
   const newSnapshot: StateSnapshot = {
     id: 'snap-' + Math.random().toString(36).substr(2, 9),
     parent: parentId,
-    trigger: trigger,
+    trigger: result.trigger,
     effects: effects,
     fullState: newFullState,
   };
   snapshots.set(newSnapshot.id, newSnapshot);
   branches.get(HEAD)!.commitId = newSnapshot.id;
-  
-  effects.forEach(({ update, nextValue, prevValue }) => update(nextValue, prevValue));
   return newSnapshot.id;
+};
+
+
+// --- Public API (Exported Functions) ---
+
+
+
+/**
+ * 新しい状態をコミットする
+ */
+const commit = <A>(dripper: DripperStream<A>) => (value: A) => {
+  const result = drip(value)(dripper);
+  calendar.schedule(result);
+
+  const { trigger } = result;
+  return new Promise((resolve) => {
+    const unregister = registerTickHandler((effects)=>{
+      resolve(effects.filter((e)=>e.trigger === trigger).map((e)=>takeSnapshot(e)));
+      unregister();
+    });
+  });
 }
 
 /**

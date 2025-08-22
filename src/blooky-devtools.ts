@@ -1,6 +1,6 @@
 import { isChainedProp, isDripperStream, isStream, Prop, Stream } from "./blooky-fp";
 import { EffectElementTagNameMap as DefaultEffectElementTagNameMap, EffectElement, FxEffect as ConcreteEffectElementConstructor, fxdom } from "./blooky-fxdom";
-import { FxNode, FxCompiledNode, FxMiddleware, ExecContext } from "./fx/types";
+import { FxNode, FxMiddleware, ExecContext } from "./fx/types";
 
 const FxNodeMap = new WeakMap<FxNode, EffectElement>();
 const getElement = (n: FxNode) : EffectElement | undefined => FxNodeMap.get(n);
@@ -282,3 +282,4 @@ function dumpGraphDOT(entries: Record<string, Stream<any> | Prop<any>>): string 
 
 
 export {dumpGraphDOT};
+

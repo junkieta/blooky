@@ -690,7 +690,9 @@ function registerTickHandler(handler: (effects: DripResult<any>[]) => void) {
 function tick(now: number) {
     const beat_effect = drip<void>(void 0)(_beat$);
     const resevations = [...calendar.reservations].flatMap(([effect, {at,resolve,reject}]) => at <= now ? [[effect,resolve,reject] as [DripResult<any>,(v:number)=>void,(v:number)=>void]] : [])
-    const queue = [beat_effect,...resevations.map(([effect])=>effect)];
+    const queue = beat_effect.effects.length
+        ? [beat_effect,...resevations.map(([effect])=>effect)]
+        : resevations.map(([effect])=>effect);
     // 実行キューが空なら終了
     if(!queue.length) return;
     // ハンドラーの呼び出し
