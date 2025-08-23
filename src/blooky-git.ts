@@ -87,10 +87,8 @@ const takeSnapshot = (result: DripResult<"deny">) => {
 /**
  * 新しい状態をコミットする
  */
-const commit = <A>(dripper: DripperStream<A>) => (value: A) => {
-  const result = drip(value)(dripper);
+const commit = async (result: DripResult<any>) : Promise<string[]> => {
   calendar.schedule(result);
-
   const { trigger } = result;
   return new Promise((resolve) => {
     const unregister = registerTickHandler((effects)=>{
@@ -131,7 +129,7 @@ export function branch(branchName: string): void {
 /**
  * 指定したブランチの変更を、現在のHEADブランチにマージする
  */
-export function merge(sourceBranchName: string): string | { conflicts: any[] } {
+export async function merge(sourceBranchName: string) {
   // ... (実装は前回の提案と同じ)
   const targetSnapshot = snapshots.get(branches.get(HEAD)!.commitId)!;
   const sourceSnapshot = snapshots.get(branches.get(sourceBranchName)!.commitId)!;
@@ -162,13 +160,13 @@ export function merge(sourceBranchName: string): string | { conflicts: any[] } {
   if (conflicts.length > 0) return { conflicts };
 
   const mergeTrigger = { dripper: null as any, value: `merge ${sourceBranchName} into ${HEAD}` };
-  return commit({ trigger: mergeTrigger, effects: finalEffects });
+  return await commit({ trigger: mergeTrigger, effects: finalEffects });
 }
 
 /**
  * 現在のブランチの変更を、指定したブランチの先端に付け替える
  */
-export function rebase(baseBranchName: string): void {
+export async function rebase(baseBranchName: string) {
   const headBranchName = HEAD;
   if (headBranchName === baseBranchName) return;
 
@@ -183,7 +181,7 @@ export function rebase(baseBranchName: string): void {
   
   for (const oldCommit of commitsToReplay.reverse()) {
     if(oldCommit.id === ancestorSnapshot.id) continue;
-    commit(drip(oldCommit.trigger.value)(oldCommit.trigger.dripper));
+    await commit(oldCommit);
   }
   
   const newCommitId = branches.get(HEAD)!.commitId;
