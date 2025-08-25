@@ -83,7 +83,7 @@ class RangePropBridge implements PropBridgeInterface<JSHTMLNodeSource> {
         prevValue.append(...previous);
 
         const target = _a === _b ? _a : _a.parentNode!;
-        target.dispatchEvent(new CustomEvent("node-prop-update", { detail: { prop: this.prop, previousNode: prevValue } }));
+        target.dispatchEvent(new CustomEvent("node-prop-update", { detail: { prop: this.prop, prevValue } }));
         return true;
     }
     isConnected() {
@@ -117,6 +117,16 @@ abstract class AbstractAttrPropBridge<A> implements PropBridgeInterface<A> {
     contains(p: PropBridge): boolean {
         return false; // 属性は特殊な例を除いて他のbridgeを包含しない
     }
+    protected dispatchModifiedEvent(type: string, next:A, prev:A) {
+        this.target.dispatchEvent(new CustomEvent(type, {
+            detail: {
+                prop: this.prop,
+                name: this.name,
+                nextValue: next,
+                prevValue: prev
+            }
+        }));
+    }
 }
 
 class AttrPropBridge extends AbstractAttrPropBridge<JSHTMLAttrSource> {
@@ -129,13 +139,7 @@ class AttrPropBridge extends AbstractAttrPropBridge<JSHTMLAttrSource> {
             if(isDripperStream(next)) next = this.generatedListener = createListenerForDripper(next);
         }
         update_attr([this.name,next] as T_ATTRSET)(this.target);
-        this.target.dispatchEvent(new CustomEvent("attr-prop-update", {
-            detail: {
-                prop: this.prop,
-                name: this.name,
-                prevValue: prev
-            }
-        }));
+        this.dispatchModifiedEvent("attr-prop-modified", next, prev);
     }
     contains(p: PropBridge) {
         // 属性の詳細Bridgeでなければアウト
@@ -152,13 +156,7 @@ class StylePropBridge extends AbstractAttrPropBridge<V_STRING> {
     update(v: V_STRING, prev: V_STRING) {
         if(v === prev) return;
         set_css_property(this.name, v != null ? v + "" : "")(this.target.style);
-        this.target.dispatchEvent(new CustomEvent("style-prop-update", {
-            detail: {
-                prop: this.prop,
-                name: this.name,
-                prevValue: prev
-            }
-        }));
+        this.dispatchModifiedEvent("style-prop-update", v, prev);
     }
 }
 
@@ -166,13 +164,7 @@ class DatasetPropBridge extends AbstractAttrPropBridge<V_STRING> {
     update(v: V_STRING, prev: V_STRING) {
         if(v === prev) return;
         this.target.dataset[this.name] = v == null ? "" : v+"";
-        this.target.dispatchEvent(new CustomEvent("dataset-prop-update", {
-            detail: {
-                prop: this.prop,
-                name: this.name,
-                prevValue: prev
-            }
-        }));
+        this.dispatchModifiedEvent("dataset-prop-update",v,prev);
     }
 }
 
