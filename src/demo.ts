@@ -1,6 +1,6 @@
 // -- 0. 事前ロード ---
-import { stream, accum, merge, hold, map, remap, when } from "./blooky-fp";
-import { into, jshtml } from "./blooky-dom";
+import { stream, accum, merge, hold, map, remap, when, lift } from "./blooky-fp";
+import { collapse, jshtml } from "./blooky-dom";
 import type { FxEffect } from "./blooky-fxdom";
 import { fxdom,EffectElementTagNameMap, dumpGraphDOT } from "./blooky-devtools";
 // dot視覚化用にviz
@@ -17,7 +17,7 @@ const save$ = stream();
 const $triggerSave = hold(false)(map(()=>true)(save$));
 const confirmation$ = stream<'yes'|'no'|"yet">();
 const $confirmResult = hold<"yes"|"no"|"yet">("yet")(confirmation$);
-const $decideConfirm = remap((r)=>$triggerSave() && r!=="yet")($confirmResult);
+const $decideConfirm = lift(([save,confirm])=>save && confirm !== "yet")([$triggerSave,$confirmResult]);
 
 const statusMessageStream$ = stream<string>();
 const changeCountStream = merge<number>((a,b)=>a+b)([map(() => 1)(increment$), map(() => -1)(decrement$)]);
@@ -33,9 +33,9 @@ const AppUI = jshtml({
     { p: ["Count: ", $count] },
     
     // イベントをStreamに接続
-    { button: "+", $: { onclick: into(increment$) } },
-    { button: "-", $: { onclick: into(decrement$) } },
-    { button: "Save", $: { onclick: into(save$), style: { marginLeft: '1em' } } },
+    { button: "+", $: { onclick: collapse(increment$) } },
+    { button: "-", $: { onclick: collapse(decrement$) } },
+    { button: "Save", $: { onclick: collapse(save$), style: { marginLeft: '1em' } } },
     
     // 副作用の状態を表示
     { div: $statusMessage, $: { id: "status" } },
@@ -43,8 +43,8 @@ const AppUI = jshtml({
     // 確認用のボタン
     { div: [
         "Confirm here: ",
-        { button: "Yes", $: { onclick: () => into(confirmation$)('yes') } },
-        { button: "No", $: { onclick: () => into(confirmation$)('no') } },
+        { button: "Yes", $: { onclick: () => collapse(confirmation$)('yes') } },
+        { button: "No", $: { onclick: () => collapse(confirmation$)('no') } },
       ],
       $: { style: { marginTop: '1em' } }
     }
@@ -72,7 +72,7 @@ const fxEffectElement = jshtml({
     $: {
         use: useKeys.join(),
         theme: "./blooky-devtools-theme.css",
-        "onsave": into(save$),
+        "onsave": collapse(save$),
     },
     "fx-effect": 
     [

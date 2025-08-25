@@ -2,7 +2,7 @@
 
 import type { Prop } from './blooky-fp';
 import { drip, clock, calendar, registerTickHandler } from './blooky-fp'; // ★ fpからclockをインポート
-import type { StateSnapshot, Branch, DripTrigger, DripperEffect, DripResult, DripperStream } from './blooky-types'; // git用の型定義
+import type { StateSnapshot, Branch, DripResult, PropEffect } from './blooky-types'; // git用の型定義
 
 // --- Module-Scoped State (Internal Implementation) ---
 
@@ -130,14 +130,13 @@ export function branch(branchName: string): void {
  * 指定したブランチの変更を、現在のHEADブランチにマージする
  */
 export async function merge(sourceBranchName: string) {
-  // ... (実装は前回の提案と同じ)
   const targetSnapshot = snapshots.get(branches.get(HEAD)!.commitId)!;
   const sourceSnapshot = snapshots.get(branches.get(sourceBranchName)!.commitId)!;
   const ancestorSnapshot = findCommonAncestor(targetSnapshot, sourceSnapshot);
   if (!ancestorSnapshot) throw new Error("No common ancestor.");
   
   const conflicts: any[] = [];
-  const finalEffects: DripperEffect = [];
+  const finalEffects: PropEffect<any>[] = [];
   const allProps = new Set([...managedProps.keys()]);
   const created = clock();
 

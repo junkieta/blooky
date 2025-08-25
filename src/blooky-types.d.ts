@@ -17,7 +17,7 @@ interface StateSnapshot {
   id: string;                      // このスナップショットのユニークID (コミットハッシュ)
   parent: string | null;           // 親スナップショットのID
   trigger: DripTrigger<any>;       // このスナップショットを生成したトリガー
-  effects: DripperEffect;          // このスナップショットを生成した差分情報 (git diff)
+  effects: PropEffect<any>[];          // このスナップショットを生成した差分情報 (git diff)
   fullState: Map<Prop<any>, any>;  // この時点での全Propの完全な状態
 }
 
@@ -29,13 +29,11 @@ interface Branch {
   commitId: string; // このブランチが指し示すスナップショットのID
 }
 
-type DripResult<A,M="deny"> = M extends 'await'
-  ? Promise<{ effects: DripperEffect, trigger: DripTrigger<A> }>
-  : { effects: DripperEffect, trigger: DripTrigger<A> };
- 
-
 // 副作用の集合体
-type DripperEffect = PropEffect<unknown>[];
+type DripEffect<A> = {
+  effects: PropEffect<unknown>[]
+  trigger: DripTrigger<A>
+};
 
 type PropEffect<A> = {
     created: number
@@ -45,8 +43,12 @@ type PropEffect<A> = {
     update: ((v:A,prev:A)=>void)
 }
 
+type DripResult<A,M="deny"> = M extends 'await'
+  ? Promise<DripEffect<A>>
+  : DripEffect<A>;
+ 
 
 export {
-  DripperEffect,DripperStream, PropEffect,DripResult,
+  DripEffect,DripperStream, PropEffect,DripResult,
   Branch,StateSnapshot,DripTrigger,
 }

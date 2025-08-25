@@ -63,12 +63,14 @@ class RangePropBridge implements PropBridgeInterface<JSHTMLNodeSource> {
         return this.target[0] === this.target[1];
     }
     update(v:JSHTMLNodeSource, prev: JSHTMLNodeSource){
+        // 通知イベント用に確保
+        const previous : Node[] = this.target;
         const n = jshtml(v);
         const [_a,_b] = n.nodeType === n.DOCUMENT_FRAGMENT_NODE
-            ? [n.firstChild!, n.lastChild!]
+            ? [n.firstChild!, n.lastChild!]  
             : [n,n];
         if(this.isSingleNode()) {
-            this.target[0].parentNode?.replaceChild(n, this.target[0])
+            previous[0].parentNode?.replaceChild(n, previous[0])
         } else {
             const r = this.toRange();
             r.insertNode(n);
@@ -76,6 +78,12 @@ class RangePropBridge implements PropBridgeInterface<JSHTMLNodeSource> {
             r.deleteContents();
         }
         this.target = [_a,_b];
+        
+        const prevValue = new DocumentFragment();
+        prevValue.append(...previous);
+
+        const target = _a === _b ? _a : _a.parentNode!;
+        target.dispatchEvent(new CustomEvent("node-prop-update", { detail: { prop: this.prop, previousNode: prevValue } }));
         return true;
     }
     isConnected() {
@@ -121,6 +129,13 @@ class AttrPropBridge extends AbstractAttrPropBridge<JSHTMLAttrSource> {
             if(isDripperStream(next)) next = this.generatedListener = createListenerForDripper(next);
         }
         update_attr([this.name,next] as T_ATTRSET)(this.target);
+        this.target.dispatchEvent(new CustomEvent("attr-prop-update", {
+            detail: {
+                prop: this.prop,
+                name: this.name,
+                prevValue: prev
+            }
+        }));
     }
     contains(p: PropBridge) {
         // 属性の詳細Bridgeでなければアウト
@@ -135,22 +150,45 @@ class AttrPropBridge extends AbstractAttrPropBridge<JSHTMLAttrSource> {
 
 class StylePropBridge extends AbstractAttrPropBridge<V_STRING> {
     update(v: V_STRING, prev: V_STRING) {
-        if(v !== prev) set_css_property(this.name, v != null ? v + "" : "")(this.target.style);
+        if(v === prev) return;
+        set_css_property(this.name, v != null ? v + "" : "")(this.target.style);
+        this.target.dispatchEvent(new CustomEvent("style-prop-update", {
+            detail: {
+                prop: this.prop,
+                name: this.name,
+                prevValue: prev
+            }
+        }));
     }
 }
 
 class DatasetPropBridge extends AbstractAttrPropBridge<V_STRING> {
     update(v: V_STRING, prev: V_STRING) {
-        if(v !== prev) this.target.dataset[this.name] = v == null ? "" : v+"";
+        if(v === prev) return;
+        this.target.dataset[this.name] = v == null ? "" : v+"";
+        this.target.dispatchEvent(new CustomEvent("dataset-prop-update", {
+            detail: {
+                prop: this.prop,
+                name: this.name,
+                prevValue: prev
+            }
+        }));
     }
 }
 
 
-// 即時dripの短縮呼び出し関数。イベントリスナーとして登録する想定。
-// ex) onclick: into(eventDripperStream)
-const into = <A>(d: DripperStream<A>) => (v: A) => {
-    calendar.schedule(drip(v)(d));
-//    drip(v)(d).effects.forEach(({update,nextValue,prevValue})=>update(nextValue,prevValue));
+// PROPの観測。イベントリスナーとして登録する想定。
+// ex) onclick: collapse(eventDripperStream)
+const collapse = <A>(d: DripperStream<A>) => (v: A) => {
+    const dripResult = drip(v)(d);
+    if(v instanceof Event) {
+        const collapseEvt = new CustomEvent("blooky-collapse", {
+            cancelable: true,
+            detail: dripResult
+        });
+        if(!v.target?.dispatchEvent(collapseEvt)) return;
+    }
+    calendar.schedule(dripResult);
 }
 
 /**
@@ -223,7 +261,7 @@ const gen_listener_setter =
 const createListenerForDripper = (d:DripperStream<any>) => function _(e:Event) {
     const t = (e.currentTarget as HTMLElement);
     if(t.isConnected)
-        into(d)(e);
+        collapse(d)(e);
     else {
         t.removeEventListener(e.type, _);
     }
@@ -382,7 +420,7 @@ jshtml.$ = (attrs: JSHTMLAttributeMapSource) => new EmptyElementAttributeMapSour
  */
 const mutations = (init: MutationObserverInit) => (n: Node) : [Stream<MutationRecord[]>,()=>void] => {
     const s = stream<MutationRecord[]>();
-    const o = new MutationObserver(into(s));
+    const o = new MutationObserver(collapse(s));
     o.observe(n, init);
     return [s, o.disconnect.bind(o)];
 };
@@ -390,7 +428,7 @@ const mutations = (init: MutationObserverInit) => (n: Node) : [Stream<MutationRe
 // addEventListenerを介して、DOMイベントをイベントストリームに接続する。
 const events = <T extends string, E = T extends keyof HTMLElementEventMap ? HTMLElementEventMap[T] : Event>(t: T) => (target:EventTarget) : [Stream<E>,()=>void] => {
     const s = stream<E>();
-    const l = into(s) as EventListener;
+    const l = collapse(s) as EventListener;
     target.addEventListener(t, l, false);
     return [s, target.removeEventListener.bind(target,t,l,false)];
 }
@@ -423,4 +461,4 @@ const jshtmlWithPrefixAuto = (prefix: string) => (node: JSHTMLNodeSource): Node 
 };
 
 
-export {into, promised, jshtml, mutations, events, jshtmlWithPrefixAuto};
+export {collapse, promised, jshtml, mutations, events, jshtmlWithPrefixAuto};

@@ -3,7 +3,7 @@
  * 関数型のリアクティブプログラミングをtypescriptで行うためのライブラリ。
  */
 
-import { DripperEffect, DripResult, PropEffect } from "./blooky-types";
+import { DripEffect, DripResult, PropEffect } from "./blooky-types";
 
 // ガベージコレクタの格納プロパティ用シンボル
 const STREAM_CLEANER = Symbol("STREAM_CLEANER");
@@ -296,7 +296,7 @@ const streamToFlowingState = <A>(v:A) => (s:Stream<A>) : FlowingState => {
     const waiting = [...s.lazyNext].map((s) => [s,v] as [MergedStream<A>,A]);
     if(!STREAM_PROP_RELATIONS.has(s)) return [[], waiting];
     const p = STREAM_PROP_RELATIONS.get(s)!;
-    const effect: DripperEffect = p.map((prop)=>({
+    const effect: PropEffect<any>[] = p.map((prop)=>({
         prop,
         created: Date.now(),
         nextValue: v,
@@ -348,7 +348,7 @@ const flowLazy = <A>(v:A, allowPromise = false) => (s:Stream<A>) : FlowingState 
 
 // 戻り値の型を定義
 type AsyncFlowState = {
-  effects: DripperEffect,
+  effects: PropEffect<any>[],
   waiting: [MergedStream<any>, any][]
 };
 
@@ -454,27 +454,12 @@ const dripSync = <A>(value:A, allowPromise = false) => (dripper:DripperStream<A>
  * 非同期版のdrip。flowAsyncを呼び出し、EffectのPromiseを返す。
  */
 const dripAsync = <A>(value: A) => async (dripper: DripperStream<A>) => {
-  const effects: DripperEffect = [];
+  const effects: PropEffect<any>[] = [];
   // for await...of で非同期ジェネレータを処理する
   for await (const effect of flowAsync(value, dripper)) {
     effects.push(effect);
   }
   return { trigger: { value, dripper }, effects, };
-};
-
-/**
- * エンハンサーの登録用Set
- */
-const EFFECT_ENHANCERS = new Set<(e:DripperEffect)=>DripperEffect>();
-
-/**
- * サブモジュールからEffectの生成をupgradeするためのエンハンサー登録/登録解除関数。
- */
-drip.registerEnhancer = (f:(e:DripperEffect)=>DripperEffect) => {
-    EFFECT_ENHANCERS.add(f);
-};
-drip.unregisterEnhancer = (f:(e:DripperEffect)=>DripperEffect) => {
-    EFFECT_ENHANCERS.delete(f);
 };
 
 /**
@@ -687,9 +672,11 @@ function registerTickHandler(handler: (effects: DripResult<any>[]) => void) {
 /**
  * 1フレーム分の処理。この関数内が、一つの「瞬間（Moment）」となる。
  */
-function tick(now: number) {
+function tick(_now: number) {
+    const now = clock();
     const beat_effect = drip<void>(void 0)(_beat$);
-    const resevations = [...calendar.reservations].flatMap(([effect, {at,resolve,reject}]) => at <= now ? [[effect,resolve,reject] as [DripResult<any>,(v:number)=>void,(v:number)=>void]] : [])
+    const resevations = [...calendar.reservations]
+        .flatMap(([effect, {at,resolve,reject}]) => at <= now ? [[effect,resolve,reject] as [DripResult<any>,(v:number)=>void,(v:number)=>void]] : [])
     const queue = beat_effect.effects.length
         ? [beat_effect,...resevations.map(([effect])=>effect)]
         : resevations.map(([effect])=>effect);
