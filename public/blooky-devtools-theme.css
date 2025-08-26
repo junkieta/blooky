@@ -7,4 +7,5 @@
   --fx-running-shadow-color: rgba(0, 123, 255, 0.5);
   --fx-completed-border-color: #28a745;
   --fx-paused-border-color: #9a760bff;
+  --fx-canceled-border-color: #bbbbbbff;
 }

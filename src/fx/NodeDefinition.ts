@@ -1,5 +1,5 @@
 // src/blooky-fx/NodeDefinition.ts
-import type { FxNode, FxExecutionContext, INodeDefinition } from './types';
+import type { FxNode, FxExecutionContext, INodeDefinition, FxCallNode, FxCollapseNode, FxConditionNode, FxDispatchNode, FxLoopNode, FxParallelNode, FxRaceNode, FxSequenceNode, FxSwitchNode, FxWaitNode, FxYieldNode } from './types';
 
 /**
  * 全てのFxNode定義が継承すべき、抽象基底クラス
@@ -7,9 +7,10 @@ import type { FxNode, FxExecutionContext, INodeDefinition } from './types';
 export abstract class NodeDefinition<T extends FxNode['type']> implements INodeDefinition<T> {
   public abstract readonly type: T;
   public abstract factory(...args: any[]): Extract<FxNode, { type: T }>;
-//  public abstract compile(node: Extract<FxNode, { type: T }>,compiler:FxNodeCompiler): Extract<FxCompiledNode, { type: T }>;
-
   public handle(context: FxExecutionContext & { node: Extract<FxNode, { type: T }> }): Promise<any> | any {
     throw new Error(`Node type "${this.type}" does not have a direct handler.`);
+  }
+  public *step({node}: FxExecutionContext & { node: Extract<FxNode, { type: T }>; }): Generator<FxNode, void, any> {
+    yield node;
   }
 }

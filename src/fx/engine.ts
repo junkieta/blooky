@@ -19,67 +19,14 @@ nodeDefinitionMap.forEach((def, type) => {
 });
 
 
-// ランナー。nodeを辿るジェネレータを返す
-function* run(
-  this: ExecContext,
-  node: FxNode
-): Generator<FxNode, void, any> {
-  this.onNodeEnter?.(node);
-  try {
-    switch (node.type) {
-      case 'sequence':
-        for (const step of node.steps) {
-          yield* run.call(this, step);
-        }
-        break;
 
-      case 'loop':
-        const cond = this.resolve(node.cond);
-        while (cond()) {
-          yield* run.call(this, node.body);
-        }
-        break;
-      
-      case 'condition':
-        const ok = this.resolve(node.if);
-        if (ok()) {
-          yield* run.call(this, node.then);
-        } else if (node.else) {
-          yield* run.call(this, node.else);
-        }
-        break;
-
-      case 'switch':
-        const by = this.resolve(node.by);
-        const branch = node.cases.get(by()) ?? node.default;
-        if (branch) {
-          yield* run.call(this, branch);
-        }
-        break;
-
-      case 'none':
-        break;
-
-      default:
-        // call, wait, take などのプリミティブな命令は、そのままexecuteに渡す
-        yield node;
-        break;
-    }
-    this.onNodeExit?.(node);
-  } catch(err) {
-    // エラーで完了した場合、 onNodeExit フックにエラー情報を渡す
-    this.onNodeExit?.(node, undefined, err);
-    throw err; // エラーは再スローする
-  }
-}
-
-
-function createCancelToken(): CancelToken {
+function createCancelToken(parent?: CancelToken): CancelToken {
   let isCancelled = false;
   return {
+    parent,
     cancel: () => { isCancelled = true },
-    cancelled: () => isCancelled,
-  };
+    cancelled: () => isCancelled || (parent ? parent.cancelled() : false),
+  }
 }
 
 /**
@@ -126,9 +73,8 @@ function prepare(
     },
   });
 
-  const generator = run.call(execContext, flow, proxyContext);
   return {
-    generator,
+    rootNode: flow,
     execContext,
     appContext: proxyContext,
   };
@@ -141,14 +87,19 @@ function prepare(
  * @returns ExecutionHandle
  */
 function execute(preparedFx: PreparedFx): ExecutionHandle {
-  const { generator, execContext, appContext } = preparedFx;
+  const { rootNode, execContext, appContext } = preparedFx;
+
+  const runtimeContext : Omit<FxExecutionContext,"node"> = {
+    run: (node:FxNode) => run.call(execContext, { ...runtimeContext, node }),
+    execute(node: FxNode) {
+      return _internal_execute.call(execContext.isPrototypeOf(this) ? this : execContext, runtimeContext.run(node), runtimeContext)
+    },
+    context: execContext,
+    appContext
+  };
 
   // 非同期で実行するランナーを開始（awaitしない）
-  const resultPromise:Promise<AppContext> = _internal_execute.call(
-    execContext,
-    generator,
-    appContext
-  );
+  const resultPromise:Promise<AppContext> = runtimeContext.execute(rootNode);
 
   // 結果を消費するためのプル型インターフェース（非同期ジェネレータ）
   const resultsIterator = (async function* () {
@@ -183,7 +134,6 @@ function execute(preparedFx: PreparedFx): ExecutionHandle {
         execContext.pendingYieldReject(new Error('Flow was closed externally.'));
       // ★ フロー全体の実行をキャンセルし、完了させる
       handle.cancel();
-      
     }
   };
   executionHandleRegistry.register(handle, new WeakRef(handle), handle);
@@ -204,38 +154,28 @@ const query = (node: FxNode, app?: AppContext, ctx?: ExecContext) =>
 // `execute`のコアロジックは、プライベートなヘルパー関数に移動
 async function _internal_execute(
   this: ExecContext,
-  generator: Generator<FxNode, void, any>,
-  appContext: AppContext
+  generator: Generator<FxNode, any, any>,
+  ctx: FxExecutionContext
 ): Promise<AppContext> {
   // `this`から実行設定を取得
-  const ctx = this;
   const { cancelToken, middlewares } = this;
-
-  async function nestedExecute (n:FxNode) : Promise<AppContext> {
-    return _internal_execute.call(this || ctx, run.call(this || ctx, n), appContext);
-  }
-
   const allMiddlewares = middlewares ? [...middlewares] : [];
-
   let result = generator.next();
   let nextValue: any;
-
+  let node: FxNode;
   while (!result.done) {
-    if (cancelToken.cancelled()) break;
-
-    let node = result.value;
+    node = result.value;
+    if(cancelToken.cancelled()) {
+      generator.throw("canceled");
+      break;
+    }
     try {
       const definition = nodeDefinitionMap.get(node.type);
       if(!(definition))
         throw new Error(`error: "${node.type}" is not unknown node type`);
 
       // ★各ステップの情報をまとめたFxExecutionContextを生成
-      const fxec: FxExecutionContext = {
-        node,
-        execute: nestedExecute,
-        context: this,
-        appContext
-      };
+      const fxec: FxExecutionContext = { ...ctx, node };
 
       // ミドルウェアパイプラインの実行
       const runNextMiddleware = async (i: number): Promise<any> => {
@@ -271,8 +211,34 @@ async function _internal_execute(
     await yieldToMainThread();
     result = generator.next(nextValue);
   }
-  return appContext;
+  return this.cancelToken;
 }
+
+// ランナー。nodeを辿るジェネレータを返す
+function* run(
+  this: ExecContext,
+  ctx: FxExecutionContext
+): Generator<FxNode, any, any> {
+  const node = ctx.node;
+  this.onNodeEnter?.(node);
+  try {
+    // 各ノードのDefinitionにナビゲーションを委譲する
+    const definition = nodeDefinitionMap.get(node.type)!;
+    yield* definition.step(ctx);
+    this.onNodeExit?.(node);
+  } catch(err) {
+    // エラーで完了した場合、onNodeExit フックにエラー情報を渡す
+    if(err instanceof Error) {
+      this.onNodeExit?.(node, undefined, err);
+      throw err; // エラーは再スローする
+    } else if(err === "canceled"){
+      this.onNodeExit?.(node, err);
+      throw err;
+    }
+  }
+}
+
+
 
 /**
  * 現在の処理を一旦中断し、後続の処理を新しいマイクロタスクとして予約するPromiseを返す。

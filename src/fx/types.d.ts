@@ -73,15 +73,13 @@ interface INodeDefinition<T extends FxNode['type']> {
   factory(...args: any[]): Extract<FxNode, { type: T }>;
 
   /**
-   * FxNodeをFxCompiledNodeに変換するコンパイラロジック
-   * @param node コンパイル対象の FxNode
-   * @param compiler FxNodeCompilerのインスタンス
-  compile(
-    node: Extract<FxNode, { type: T }>,
-    compiler: FxNodeCompiler
-  ): Extract<FxCompiledNode, { type: T }>;
-*/
-
+   * runジェネレータに、次に実行すべきノードを案内する。
+   * @param context 実行コンテキスト (ifの条件評価などに使用)
+   */
+  step(
+    context: FxExecutionContext & { node: Extract<FxNode, { type: T }> }
+  ): Generator<FxNode, any, any>;
+  
   /**
    * ノードを実行するハンドラ
    * @param context 実行コンテキスト
@@ -98,7 +96,11 @@ interface INodeDefinition<T extends FxNode['type']> {
  */
 type AppContext = Record<string, any>;
 
-type CancelToken = { cancel: () => void; cancelled: () => boolean };
+type CancelToken = {
+  parent?: CancelToken
+  cancel: () => void;
+  cancelled: () => boolean
+};
 
 
 type FxHandlerMap = {
@@ -127,9 +129,10 @@ interface ExecContext {
 // ミドルウェアに渡される、各ステップの情報
 interface FxExecutionContext {
   node: FxNode;
-  execute: (n:FxNode)=>Promise<AppContext>
   context: ExecContext
   appContext: AppContext
+  run: (n:FxNode)=>Generator<FxNode, void, any>
+  execute: (n:FxNode)=>Promise<AppContext>
 }
 
 // Middlewareの関数型
@@ -144,9 +147,9 @@ type FxMiddleware = (
  * prepare関数によって生成され、execute関数に渡される。
  */
 interface PreparedFx {
-  readonly generator: Generator<FxNode, void, any>;
-  readonly execContext: ExecContext;
-  readonly appContext: AppContext; // プロキシされたコンテキスト
+  readonly rootNode: FxNode
+  readonly execContext: ExecContext
+  readonly appContext: AppContext // プロキシされたコンテキスト
 }
 
 /**

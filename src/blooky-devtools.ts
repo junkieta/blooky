@@ -34,6 +34,10 @@ DebEffectElementStyleSheet.replaceSync(`
   border-color: var(--fx-running-border-color, #007bff);
   box-shadow: 0 0 5px var(--fx-running-shadow-color, rgba(0, 123, 255, 0.5));
 }
+:host(.is-canceled) {
+  border-style: dashed;
+  border-color: var(--fx-canceled-border-color, #bbbbbbff);
+}
 
 :host(.is-paused) {
   border-style: dashed;
@@ -175,13 +179,17 @@ const ExecContextForDebug : Partial<ExecContext> = {
     const element = getElement(node);
     element?.classList.add('is-running');
   },
-  onNodeExit(node: FxNode, error?: any): void {
+  onNodeExit(node: FxNode, reason?: any, error?: any): void {
     const element = getElement(node);
     if(!element) return;
     element.classList.remove('is-running');
     if (error) {
       element.classList.add('is-failed');
-    } else {
+    }
+    else if(reason) {
+      element.classList.add('is-'+reason);
+    }
+    else {
       element.classList.add("is-completed");
     }
   }

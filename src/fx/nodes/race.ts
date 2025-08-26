@@ -1,5 +1,6 @@
-import type { FxNode } from '../types';
+import type { CancelToken, FxExecutionContext, FxNode } from '../types';
 import { NodeDefinition } from '../NodeDefinition';
+import { createCancelToken } from '../engine';
 type ThisNode = Extract<FxNode, { type: 'race' }>;
 
 export class RaceNodeDefinition extends NodeDefinition<'race'> {
@@ -8,5 +9,17 @@ export class RaceNodeDefinition extends NodeDefinition<'race'> {
   public factory(steps: FxNode[]): ThisNode {
     return { type: 'race', steps };
   }
+
+  public async handle({ node,context,execute }: FxExecutionContext & { node: ThisNode }): Promise<any> {
+    const raceTokens = node.steps.map(()=>createCancelToken(context.cancelToken));
+    try {
+      const promises = node.steps.map((stepNode, i) =>
+        execute.call(Object.create(context, { cancelToken: { value: raceTokens[i] } }), stepNode)
+      );
+      return await Promise.race(promises);
+    } finally {
+      raceTokens.forEach((token)=>token.cancel());
+    }
+  }  
 
 }
