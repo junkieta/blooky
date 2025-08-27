@@ -14,7 +14,7 @@ export class RaceNodeDefinition extends NodeDefinition<'race'> {
     const raceTokens = node.steps.map(()=>createCancelToken(context.cancelToken));
     try {
       const promises = node.steps.map((stepNode, i) =>
-        execute.call(Object.create(context, { cancelToken: { value: raceTokens[i] } }), stepNode)
+        execute(stepNode,Object.create(context, { cancelToken: { value: raceTokens[i] } }))
       );
       return await Promise.race(promises);
     } finally {

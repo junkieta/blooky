@@ -38,7 +38,9 @@ type FxSwitchNode = FxNodeBase<"switch", { by: FxRef<string | number | symbol>, 
 type FxCallNode = FxNodeBase<"call", { action: FxRef<(v: any) => unknown>, arg?: FxRef<any>, context?: FxRef<any>, catcher?: FxRef<(error: Error) => unknown> }>;
 type FxCollapseNode = FxNodeBase<"collapse", { dripper: FxRef<DripperStream<any>>, value: FxRef<any>, catcher?: FxRef<(error: Error) => unknown>, promise?: FxRef<"deny" | "allow" | "await"> }>;
 type FxDispatchNode = FxNodeBase<"dispatch", { name: FxRef<string>, settings: FxDispatchSettings<FxRef<any>>, child?: FxNode }>;
-type FxYieldNode = FxNodeBase<"yield", { for: string, value: FxRef<any>, id?: string }>; // yieldの拡張を反映
+type FxYieldNode = FxNodeBase<"yield", { for: FxRef<FxContextNode>, value: FxRef<any>, id?: string }>; // yieldの拡張を反映
+type FxContextNode = FxNodeBase<"context",  { context: AppContext, child: FxNode }>;
+type FxReturnNode = FxNodeBase<"return",  { value: FxRef<any> }>;
 
 /**
  * ユーザーが定義する、コンパイル前の副作用フローのノードを表す合併型
@@ -55,7 +57,10 @@ type FxNode =
   | FxCallNode
   | FxCollapseNode
   | FxDispatchNode
-  | FxYieldNode;
+  | FxYieldNode
+  | FxContextNode
+  | FxReturnNode
+  ;
 
 /**
  * 全てのFxNode定義が実装すべき規約
@@ -123,7 +128,6 @@ interface ExecContext {
   onNodeExit?: (node: FxNode, result?:any, error?: Error) => void;
   runtimeState$: DripperStream<FxResult>; // 結果報告用
   yieldChannel?: (req:YieldRequest) => void
-  pendingYieldReject?: (reason?: any) => void
 }
 
 // ミドルウェアに渡される、各ステップの情報
@@ -131,8 +135,8 @@ interface FxExecutionContext {
   node: FxNode;
   context: ExecContext
   appContext: AppContext
-  run: (n:FxNode)=>Generator<FxNode, void, any>
-  execute: (n:FxNode)=>Promise<AppContext>
+  run: (n:FxNode, ctx?: ExecContext)=>Generator<FxNode, void, any>
+  execute: (n:FxNode, ctx?: ExecContext)=>Promise<AppContext>
 }
 
 // Middlewareの関数型
@@ -162,27 +166,16 @@ interface ExecutionHandle {
   cancel: () => void;
 
   /**
-   * フローが生成するid付きの結果をプッシュ型で受け取るためのStream。
-   * UIのリアルタイム更新など、宣言的なリアクティブ連携に最適。
+   * フローが生成するid付きの結果を受け取るためのStream。
+   * UIのリアルタイム更新など、宣言的なリアクティブ連携に。
    */
   results$: Stream<FxResult>;
-
-  /**
-   * フローの結果をプル型で、逐次的に取得するための非同期ジェネレータ。
-   * `fx.yield`を使った対話的なフローに利用できる。
-   */
-  fetch(): AsyncGenerator<YieldRequest, void, any>;
 
   /**
    * 実行の完了を知らせるPromise
    */
   done: Promise<AppContext>
 
-  /**
-   * fetchで解決しきらない場合は明示的に呼ぶこと。
-   */
-  close:  (finalValue?: any) => void
-  
 }
 
 
@@ -260,6 +253,7 @@ export {
     FxCollapseNode,
     FxDispatchNode,
     FxYieldNode,
+    FxContextNode,
 
     FxRef,
     INodeDefinition,

@@ -1,37 +1,44 @@
-import type { FxNode, FxRef, FxExecutionContext, YieldRequest } from '../types';
+import type { FxNode, FxRef, FxExecutionContext, YieldRequest, FxYieldNode, FxContextNode, FxResult } from '../types';
 import { NodeDefinition } from '../NodeDefinition';
+import { createProxyContext, execute, prepare } from '../engine';
 type ThisNode = Extract<FxNode, { type: 'yield' }>;
-type ThisCompiledNode = Extract<FxNode, { type: 'yield' }>;
 
 export class YieldNodeDefinition extends NodeDefinition<'yield'> {
   public readonly type = 'yield';
 
-  public factory(options: { for: string, value: FxRef<any>, id?: string }): ThisNode {
+  public factory(options: { for: FxRef<FxContextNode>, value: FxRef<any>, id?: string }): ThisNode {
     return { type: 'yield', ...options };
   }
 
-  public handle({ node, context }: FxExecutionContext & { node: ThisCompiledNode }) {
-    // yieldのコアロジック: Promiseを使ってフローを一時停止させる
-    return new Promise((resolve,reject) => {
-      // 1. このPromiseを外部から中断できるように、reject関数を登録する
-      context.pendingYieldReject = reject;
-      const yieldRequest: YieldRequest = {
-        for: context.resolve(node.for)(),
-        id: node.id,
-        value: context.resolve(node.value)(),
-        resolve: resolve // 応答用のコールバックを同梱
-      };
-      // 登録されているハンドラ（連絡先）があれば、直接リクエストを渡す
-      if (context.yieldChannel) {
-        context.yieldChannel(yieldRequest);
-      } else {
-        // 誰もfetch()で待っていなかった場合。フローを止めるのが安全
-        reject(new Error("fx.yield was called, but no consumer was available via fetch()."));
-      }
-      if(context.cancelToken.cancelled()) reject();
-    }).finally(() => {
-      // 2. Promiseが解決・拒否されたら、必ず登録を解除してクリーンアップ
-      context.pendingYieldReject = undefined;
-    });
+  /*
+  public *step({ node, run, context }: FxExecutionContext & { node: ThisNode }): Generator<FxNode, any, any> {
+    const targetNode = context.resolve(node.for)();
+    if (targetNode.type !== 'context') {
+      throw new Error(`fx-yield: The target FxNode must be a 'context' node.`);
+    }
+
+    const childNodeToRun = targetNode.child;
+    const yieldedValue = node.value ? context.resolve(node.value)() : undefined;
+    const subAppContextBase = { ...targetNode.context, yielded: yieldedValue };
+    const subRuntimeState$ = stream<FxResult>();
+    const proxiedSubAppContext = createProxyContext(subAppContextBase, subRuntimeState$);
+    console.log(proxiedSubAppContext);
+    const subContext = { ...context, appContext: proxiedSubAppContext };
+    const returnValue = yield* run(childNodeToRun, subContext);
+    return returnValue;
   }
+  */
+ public async handle({node,context}: FxExecutionContext & { node: FxYieldNode; }) {
+    const targetNode = context.resolve(node.for)();
+    if (targetNode.type !== 'context') {
+      throw new Error(`fx-yield: The target FxNode must be a 'context' node.`);
+    }
+
+    const childNodeToRun = targetNode.child;
+    const yieldedValue = node.value ? context.resolve(node.value)() : undefined;
+    const subAppContextBase = { ...targetNode.context, yielded: yieldedValue };
+    const handle = execute(prepare(childNodeToRun, subAppContextBase));
+    return await handle.done;
+ }
+
 }

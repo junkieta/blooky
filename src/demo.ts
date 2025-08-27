@@ -1,10 +1,12 @@
 // -- 0. 事前ロード ---
 import { stream, accum, merge, hold, map, remap, when, lift } from "./blooky-fp";
 import { collapse, jshtml } from "./blooky-dom";
-import type { FxEffect } from "./blooky-fxdom";
+import type { FxContext, FxEffect } from "./blooky-fxdom";
 import { fxdom,EffectElementTagNameMap, dumpGraphDOT } from "./blooky-devtools";
 // dot視覚化用にviz
 import { instance as viz_instance } from "@viz-js/viz";
+import { fx, ref } from "./fx/engine";
+import { FxContextNode } from "./fx/types";
 
 // debuggerとしてdefine
 fxdom.defineEffectElements(EffectElementTagNameMap);
@@ -52,9 +54,17 @@ const AppUI = jshtml({
   ]
 });
 
+const fxConfirm = fx.context({confirm},
+    fx.sequence([
+        fx.call(confirm, { arg: ref("yielded"), id: "confirmResult" }),
+        fx.call((a)=>console.log(a), { arg: ref("#confirmResult") }),
+    ])
+) as FxContextNode;
+
 // コンテキストとして渡すためのJSオブジェクト
 const rootContext = {
     log: (s:unknown)=>console.log(s),
+    fxConfirm,
     save$,
     $triggerSave,
     statusMessageStream$,
@@ -81,7 +91,8 @@ const fxEffectElement = jshtml({
         { "fx-collapse": '"Confirmation needed: Save this count? (Click Yes/No)"',
             $: { "dripper": "statusMessageStream$" } },
         // 2. confirmationStreamから値が流れてくるのを待つ
-        { "fx-wait": jshtml.$({ "until": "$decideConfirm" }) },
+        { "fx-yield": jshtml.$({ for: "fxConfirm", id: "$decideConfirm", value: "$count" }) },
+//        { "fx-wait": jshtml.$({ "until": "$decideConfirm" }) },
         // 3. 結果に応じて処理を分岐
         { "fx-switch": [
             // "yes"の場合のフロー
