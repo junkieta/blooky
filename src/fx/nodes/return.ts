@@ -1,6 +1,5 @@
-import type { FxNode, FxRef, FxExecutionContext, YieldRequest, FxYieldNode, FxContextNode, FxResult } from '../types';
+import type { FxNode, FxRef, FxExecutionContext } from '../types';
 import { NodeDefinition } from '../NodeDefinition';
-import { createProxyContext, execute, prepare } from '../engine';
 type ThisNode = Extract<FxNode, { type: 'return' }>;
 
 export class ReturnNodeDefinition extends NodeDefinition<'return'> {
@@ -10,8 +9,17 @@ export class ReturnNodeDefinition extends NodeDefinition<'return'> {
     return { type: 'return', value };
   }
 
-  public handle({node,context}: FxExecutionContext & { node: ThisNode; }) {
-      return context.resolve(node.value)();
+  public handle({node,context,appContext}: FxExecutionContext & { node: ThisNode }) {
+    const value = context.resolve(node.value)();
+    appContext.returnValue(value);
+    context.cancelToken.cancel();
+    return value;
   }
+  /*
+  public *step({ node,context }: FxExecutionContext & { node: ThisNode }): Generator<FxNode, void, any> {
+    const value = context.resolve(node.value)();
+    return value;
+  }
+  */
 
 }

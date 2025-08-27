@@ -10,35 +10,19 @@ export class YieldNodeDefinition extends NodeDefinition<'yield'> {
     return { type: 'yield', ...options };
   }
 
-  /*
-  public *step({ node, run, context }: FxExecutionContext & { node: ThisNode }): Generator<FxNode, any, any> {
-    const targetNode = context.resolve(node.for)();
-    if (targetNode.type !== 'context') {
-      throw new Error(`fx-yield: The target FxNode must be a 'context' node.`);
-    }
-
-    const childNodeToRun = targetNode.child;
-    const yieldedValue = node.value ? context.resolve(node.value)() : undefined;
-    const subAppContextBase = { ...targetNode.context, yielded: yieldedValue };
-    const subRuntimeState$ = stream<FxResult>();
-    const proxiedSubAppContext = createProxyContext(subAppContextBase, subRuntimeState$);
-    console.log(proxiedSubAppContext);
-    const subContext = { ...context, appContext: proxiedSubAppContext };
-    const returnValue = yield* run(childNodeToRun, subContext);
-    return returnValue;
-  }
-  */
  public async handle({node,context}: FxExecutionContext & { node: FxYieldNode; }) {
     const targetNode = context.resolve(node.for)();
     if (targetNode.type !== 'context') {
       throw new Error(`fx-yield: The target FxNode must be a 'context' node.`);
     }
-
     const childNodeToRun = targetNode.child;
     const yieldedValue = node.value ? context.resolve(node.value)() : undefined;
-    const subAppContextBase = { ...targetNode.context, yielded: yieldedValue };
-    const handle = execute(prepare(childNodeToRun, subAppContextBase));
-    return await handle.done;
+    return await new Promise(async(resolve)=>{
+      const subAppContextBase = { ...targetNode.context, yieldedValue, returnValue: resolve };
+      const handle = execute(prepare(childNodeToRun, subAppContextBase));
+      const result = await handle.done;
+      resolve(result);
+    });
  }
 
 }

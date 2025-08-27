@@ -54,12 +54,13 @@ const AppUI = jshtml({
   ]
 });
 
-const fxConfirm = fx.context({confirm},
-    fx.sequence([
-        fx.call(confirm, { arg: ref("yielded"), id: "confirmResult" }),
-        fx.call((a)=>console.log(a), { arg: ref("#confirmResult") }),
-    ])
-) as FxContextNode;
+const yesOrNo = (cond: boolean) => cond ? "yes" : "no";
+
+// confirmの呼び出しを別ツリーのフローとして宣言
+const fxConfirm = fx.context({},fx.sequence([
+    fx.call((text)=>yesOrNo(confirm(text)), { arg: ref("yieldedValue"), id: "confirmResult" }),
+    fx.return(ref("#confirmResult")),
+])) as FxContextNode;
 
 // コンテキストとして渡すためのJSオブジェクト
 const rootContext = {
@@ -81,19 +82,14 @@ const useKeys = Object.keys(rootContext);
 const fxEffectElement = jshtml({
     $: {
         use: useKeys.join(),
-        theme: "./blooky-devtools-theme.css",
         "onsave": collapse(save$),
     },
     "fx-effect": 
     [
         { "fx-wait": jshtml.$({ "until": "$triggerSave" }) },
         // 1. 確認メッセージを表示
-        { "fx-collapse": '"Confirmation needed: Save this count? (Click Yes/No)"',
-            $: { "dripper": "statusMessageStream$" } },
-        // 2. confirmationStreamから値が流れてくるのを待つ
-        { "fx-yield": jshtml.$({ for: "fxConfirm", id: "$decideConfirm", value: "$count" }) },
-//        { "fx-wait": jshtml.$({ "until": "$decideConfirm" }) },
-        // 3. 結果に応じて処理を分岐
+        { "fx-yield": '"Confirmation needed: Save this count?"',
+            $: { for: "fxConfirm", id: "confirmResult" } },
         { "fx-switch": [
             // "yes"の場合のフロー
             { "fx-sequence": [
@@ -110,7 +106,7 @@ const fxEffectElement = jshtml({
             { "fx-collapse": '"Save cancelled."',
                 $: { slot: "default", "dripper": "statusMessageStream$" } }
             ],
-            $: { by: "$confirmResult" }
+            $: { by: "#confirmResult" }
         }
     ],
 }) as FxEffect;
