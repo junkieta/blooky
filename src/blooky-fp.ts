@@ -21,6 +21,9 @@ const PROP_FROM = new WeakMap<Prop<any>, Stream<any>>();
  */
 const PROP_UPDATE = new WeakMap<Prop<any>, ((v:any)=>void)|((next:any,prev:any)=>void)>();
 
+// 各PropのIDとして機能するsymbolを保管する
+const PROP_IDENTIFIER = new WeakMap<Prop<any>, symbol>();
+
 /**
  * ストリームの状態定義。次のストリームへの接続用情報を保持する。
  */
@@ -219,8 +222,8 @@ const junction = <A,B>(records: Map<B,Stream<A>>|Record<string,Stream<A>>) => {
 /**
  * イベントストリームから一つの値を計算する
  */
-const accum = <S,A>(f:(v:A,s:S)=>S, s: S) => (_s:Stream<A>) : Prop<S> => {
-    const p: Prop<S> = hold(s)(map((v:A)=>f(v,p()))(_s));
+const accum = <S,A>(f:(s:S,v:A)=>S, s: S) => (_s:Stream<A>) : Prop<S> => {
+    const p: Prop<S> = hold(s)(map((v:A)=>f(p(),v))(_s));
     return p;
 }
 
@@ -241,8 +244,11 @@ const isStream = <A>(v:unknown) : v is Stream<A> =>
 const isDripperStream = <A>(v:unknown) : v is DripperStream<A> =>
     isStream<A>(v) && v[IS_DRIPPER] === IS_DRIPPER;
 
-function isChainedProp<A>(v: unknown): v is Prop<A> {
-  return PROP_UPDATE.has(v as Prop<A>);
+const isChainedProp = <A>(v: unknown): v is Prop<A> => PROP_UPDATE.has(v as Prop<A>);
+
+const getPropId = (p:Prop<any>)=>{
+    if(!PROP_IDENTIFIER.has(p)) PROP_IDENTIFIER.set(p, Symbol("PROP_ID_SYMBOL"));
+    return PROP_IDENTIFIER.get(p)!;
 }
 
 
@@ -757,7 +763,7 @@ const moments = {
 
 export {
     drip,stream,
-    isStream,isDripperStream,isChainedProp,
+    isStream,isDripperStream,isChainedProp,getPropId,
     countReferences,hasReferences,clear,
     merge,junction,map,filter,
     hold,accum,lift,remap,when,

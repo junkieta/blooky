@@ -1,7 +1,7 @@
 // src/blooky-git.ts
 
 import type { Prop } from './blooky-fp';
-import { drip, clock, calendar, registerTickHandler } from './blooky-fp'; // ★ fpからclockをインポート
+import { drip, clock, calendar, registerTickHandler, getPropId } from './blooky-fp'; // ★ fpからclockをインポート
 import type { StateSnapshot, Branch, DripResult, PropEffect } from './blooky-types'; // git用の型定義
 
 // --- Module-Scoped State (Internal Implementation) ---
@@ -15,13 +15,12 @@ const managedProps = new Map<Prop<any>, ((value: any, _?:any)=>void)>();
 
 // ★ モジュールが読み込まれた瞬間に、歴史の創世記が自動的に記録される
 {
-  const initialState = new Map<Prop<any>, any>([[clock, clock()]]);
   const snapshot: StateSnapshot = {
     id: 'root-' + Math.random().toString(36).substring(2, 9),
     parent: null,
     trigger: { dripper: null as any, value: 'initial_state' },
     effects: [],
-    fullState: initialState,
+    fullState: { [getPropId(clock)]: clock() },
   };
   snapshots.set(snapshot.id, snapshot);
   branches.set('main', { name: 'main', commitId: snapshot.id });
@@ -64,11 +63,11 @@ const takeSnapshot = (result: DripResult<"deny">) => {
   const parentId = branches.get(HEAD)!.commitId;
   const parentSnapshot = snapshots.get(parentId)!;
 
-  const newFullState = new Map(parentSnapshot.fullState);
-  effects.forEach(({ prop, nextValue }) => newFullState.set(prop, nextValue));
+  const newFullState = Object.create(parentSnapshot.fullState);
+  effects.forEach(({ prop, nextValue }) => newFullState[getPropId(prop)] = nextValue);
 
   const newSnapshot: StateSnapshot = {
-    id: 'snap-' + Math.random().toString(36).substr(2, 9),
+    id: 'snap-' + Math.random().toString(36).substring(2, 9),
     parent: parentId,
     trigger: result.trigger,
     effects: effects,
@@ -108,8 +107,7 @@ export function checkout(branchName: string): void {
   const targetSnapshot = snapshots.get(targetCommitId)!;
 
   managedProps.forEach((update, prop) => {
-    const value = targetSnapshot.fullState.get(prop);
-    update(value);
+    update(targetSnapshot.fullState[getPropId(prop)]);
   });
 
   HEAD = branchName;
@@ -141,9 +139,10 @@ export async function merge(sourceBranchName: string) {
   const created = clock();
 
   allProps.forEach(prop => {
-      const ancestorValue = ancestorSnapshot.fullState.get(prop);
-      const targetValue = targetSnapshot.fullState.get(prop);
-      const sourceValue = sourceSnapshot.fullState.get(prop);
+      const propId = getPropId(prop);
+      const ancestorValue = ancestorSnapshot.fullState[propId];
+      const targetValue = targetSnapshot.fullState[propId];
+      const sourceValue = sourceSnapshot.fullState[propId];
 
       const targetChanged = ancestorValue !== targetValue;
       const sourceChanged = ancestorValue !== sourceValue;
@@ -188,3 +187,4 @@ export async function rebase(baseBranchName: string) {
   
   checkout(headBranchName);
 }
+
