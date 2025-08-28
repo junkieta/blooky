@@ -23,7 +23,6 @@ type FxDispatchSettings<A> = CustomEventInit<A> & {
   target: string | EventTarget;
 };
 
-
 // --- FxNodeの定義 ---
 
 // 各ノードの型を個別に定義
@@ -99,14 +98,13 @@ interface INodeDefinition<T extends FxNode['type']> {
 /**
  * エフェクト実行エンジンが要求するコンテキストの機能。
  */
-type AppContext = Record<string, any>;
+type AppContext = Record<string|symbol, any>;
 
 type CancelToken = {
   parent?: CancelToken
   cancel: () => void;
   cancelled: () => boolean
 };
-
 
 type FxHandlerMap = {
   [K in FxNode["type"]]?: (

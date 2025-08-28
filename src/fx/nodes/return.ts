@@ -2,6 +2,7 @@ import type { FxNode, FxRef, FxExecutionContext } from '../types';
 import { NodeDefinition } from '../NodeDefinition';
 type ThisNode = Extract<FxNode, { type: 'return' }>;
 
+export const RETURN_VALUE = Symbol("RETURN_VALUE");
 export class ReturnNodeDefinition extends NodeDefinition<'return'> {
   public readonly type = 'return';
 
@@ -10,16 +11,13 @@ export class ReturnNodeDefinition extends NodeDefinition<'return'> {
   }
 
   public handle({node,context,appContext}: FxExecutionContext & { node: ThisNode }) {
+    if(!(RETURN_VALUE in appContext)) {
+      throw new Error("fx-return: This node must be called within a flow initiated by fx-yield.");
+    }
     const value = context.resolve(node.value)();
-    appContext.returnValue(value);
+    appContext[RETURN_VALUE](value);
     context.cancelToken.cancel();
     return value;
   }
-  /*
-  public *step({ node,context }: FxExecutionContext & { node: ThisNode }): Generator<FxNode, void, any> {
-    const value = context.resolve(node.value)();
-    return value;
-  }
-  */
 
 }

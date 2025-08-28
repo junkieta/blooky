@@ -96,9 +96,7 @@ const fxEffectElement = jshtml({
                 { "fx-collapse": '"Saving..."', $: { "dripper": "statusMessageStream$" } },
                 { "fx-wait": jshtml.$({ ms: 1500 }) },
                 { "fx-collapse": jshtml.$({ "dripper": "statusMessageStream$", value: '$finalMessage' }) },
-                { "fx-dispatch":
-                    { "fx-call": '"save complete"', $: { fn: "log" } },
-                    $: { name: "save" } }
+                { "fx-call": '"save complete"', $: { fn: "log" } },
                 ], 
                 $: { slot: "yes" }
             },

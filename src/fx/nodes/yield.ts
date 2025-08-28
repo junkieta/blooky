@@ -1,6 +1,7 @@
 import type { FxNode, FxRef, FxExecutionContext, YieldRequest, FxYieldNode, FxContextNode, FxResult } from '../types';
 import { NodeDefinition } from '../NodeDefinition';
-import { createProxyContext, execute, prepare } from '../engine';
+import { execute, prepare } from '../engine';
+import { RETURN_VALUE } from './return';
 type ThisNode = Extract<FxNode, { type: 'yield' }>;
 
 export class YieldNodeDefinition extends NodeDefinition<'yield'> {
@@ -18,7 +19,7 @@ export class YieldNodeDefinition extends NodeDefinition<'yield'> {
     const childNodeToRun = targetNode.child;
     const yieldedValue = node.value ? context.resolve(node.value)() : undefined;
     return await new Promise(async(resolve)=>{
-      const subAppContextBase = { ...targetNode.context, yieldedValue, returnValue: resolve };
+      const subAppContextBase = { ...targetNode.context, yieldedValue, [RETURN_VALUE]: resolve };
       const handle = execute(prepare(childNodeToRun, subAppContextBase));
       const result = await handle.done;
       resolve(result);
