@@ -230,6 +230,11 @@ class FxYield extends EffectElement {
   }
 }
 
+class FxReturn extends EffectElement {
+  toFxNode(): FxNode {
+    return fx.return(this.hasAttribute("value") ? ref(this.getAttribute("value")!) : undefined);
+  }
+}
 
 class FxContext extends EffectElement {
 
@@ -340,6 +345,7 @@ const EffectElementTagNameMap = {
   "fx-yield": FxYield,
   "fx-context":  FxContext,
   "fx-effect":  FxEffect,
+  "fx-return": FxReturn
 }
 
-export {FxCall,FxWait,FxEffect,FxCollapse,FxIf,FxInclude,FxParallel,FxRace,FxLoop,FxSequence,FxSwitch,FxContext,fxdom,EffectElementTagNameMap};
+export {FxCall,FxWait,FxEffect,FxCollapse,FxIf,FxInclude,FxParallel,FxRace,FxLoop,FxSequence,FxSwitch,FxContext,FxReturn,fxdom,EffectElementTagNameMap};
