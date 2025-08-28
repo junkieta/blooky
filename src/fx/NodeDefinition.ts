@@ -1,5 +1,5 @@
 // src/blooky-fx/NodeDefinition.ts
-import type { FxNode, FxExecutionContext, INodeDefinition, FxCallNode, FxCollapseNode, FxConditionNode, FxDispatchNode, FxLoopNode, FxParallelNode, FxRaceNode, FxSequenceNode, FxSwitchNode, FxWaitNode, FxYieldNode } from './types';
+import type { FxNode, FxExecutionContext, INodeDefinition } from './types';
 
 /**
  * 全てのFxNode定義が継承すべき、抽象基底クラス
