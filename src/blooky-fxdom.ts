@@ -192,30 +192,6 @@ class FxLoop extends EffectElement {
     }
 }
 
-class FxDispatch extends EffectElement {
-  
-  toFxNode(): FxNode {
-    const name = this.getAttribute("name");
-    if (!name) return fx.none();
-
-    const detail : FxRef<unknown> = this.hasAttribute("detail")
-      ? ref(this.getAttribute("detail")!)
-      : undefined;
-
-    const target_attr = this.getAttribute("target") || "_self";
-    const target = target_attr === "_self" ? this : target_attr;
-    const settings: FxDispatchSettings<any> = {
-      target,
-      detail,
-      bubbles: this.getAttribute("bubbles") !== "none",
-      composed: this.getAttribute("composed") !== "none",
-      cancelable: this.hasAttribute("cancelable")
-    };
-    const childrenFx = this.childrenToFxNodes()[0] ?? fx.none();
-    return fx.dispatch(name, settings, childrenFx);
-  }
-}
-
 class FxCollapse extends EffectElement {
   toFxNode(): FxNode {
     const streamKey = this.getAttribute("dripper");
@@ -251,6 +227,12 @@ class FxYield extends EffectElement {
       value = JSON.parse(this.textContent.trim());
     }
     return fx.yield({ for: ref<string>(forAttr), value, id });
+  }
+}
+
+class FxReturn extends EffectElement {
+  toFxNode(): FxNode {
+    return fx.return(this.hasAttribute("value") ? ref(this.getAttribute("value")!) : undefined);
   }
 }
 
@@ -359,11 +341,11 @@ const EffectElementTagNameMap = {
   "fx-if":  FxIf,
   "fx-switch":  FxSwitch,
   "fx-loop":  FxLoop,
-  "fx-dispatch":  FxDispatch,
   "fx-collapse":  FxCollapse,
   "fx-yield": FxYield,
   "fx-context":  FxContext,
   "fx-effect":  FxEffect,
+  "fx-return": FxReturn
 }
 
-export {FxCall,FxWait,FxEffect,FxDispatch,FxCollapse,FxIf,FxInclude,FxParallel,FxRace,FxLoop,FxSequence,FxSwitch,FxContext,fxdom,EffectElementTagNameMap};
+export {FxCall,FxWait,FxEffect,FxCollapse,FxIf,FxInclude,FxParallel,FxRace,FxLoop,FxSequence,FxSwitch,FxContext,FxReturn,fxdom,EffectElementTagNameMap};

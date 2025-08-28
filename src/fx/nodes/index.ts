@@ -10,8 +10,9 @@ import {ConditionNodeDefinition} from "./condition";
 import {SwitchNodeDefinition} from "./switch";
 import {CallNodeDefinition} from "./call";
 import {CollapseNodeDefinition} from "./collapse";
-import {DispatchNodeDefinition} from "./dispatch";
 import {YieldNodeDefinition} from "./yield";
+import {ContextNodeDefinition} from "./context";
+import {ReturnNodeDefinition} from "./return";
 
 export const allNodeDefinitions = [
   new NoneNodeDefinition(),
@@ -24,8 +25,9 @@ export const allNodeDefinitions = [
   new SwitchNodeDefinition(),
   new CallNodeDefinition(),
   new CollapseNodeDefinition(),
-  new DispatchNodeDefinition(),
   new YieldNodeDefinition(),
+  new ContextNodeDefinition(),
+  new ReturnNodeDefinition()
 ].map(def => [def.type, def] as [string, INodeDefinition<any>]); // Mapにしやすいように[key, value]のペアに変換
 
 export const nodeDefinitionMap = new Map<string, INodeDefinition<any>>(allNodeDefinitions);

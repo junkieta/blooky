@@ -36,7 +36,7 @@ export class CallNodeDefinition extends NodeDefinition<'call'> {
     const actionFn = typeof node.action === "function" ? node.action : context.resolve(node.action) as (v:any)=>void;
     const contextObj = node.context ? context.resolve(node.context)() : undefined;
     const argValue = node.arg ? context.resolve(node.arg)() : undefined;
-    await actionFn.call(contextObj, argValue);
+    return await actionFn.call(contextObj, argValue);
   }
 
 }

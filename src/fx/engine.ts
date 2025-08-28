@@ -1,5 +1,5 @@
 import { nodeDefinitionMap } from "./nodes";
-import { accum, drip, Prop, stream } from "../blooky-fp";
+import { accum, drip, DripperStream, Prop, stream } from "../blooky-fp";
 import { FxNode, AppContext, CancelToken, ExecContext, FxExecutionContext, FxResult, YieldRequest, ExecutionHandle, PreparedFx, FxHandlerMap, FxFactoryMap } from "./types";
 
 // 参照オブジェクトの型を定義（ブランド化して、他のオブジェクトと区別する）
@@ -17,8 +17,6 @@ const fx = {} as FxFactoryMap;
 nodeDefinitionMap.forEach((def, type) => {
   fx[type] = def.factory.bind(def);
 });
-
-
 
 function createCancelToken(parent?: CancelToken): CancelToken {
   let isCancelled = false;
@@ -46,32 +44,13 @@ function prepare(
   
   const cancelToken = createCancelToken();
   const runtimeState$ = stream<FxResult>();
-  const $runtimeState = accum<Record<string,any>,FxResult>((res,acc) => ({ ...acc, ["#"+res.id]: res.value }), {})(runtimeState$)
-
+  const proxyContext = createProxyContext(initialAppContext, runtimeState$);
   const execContext: ExecContext = {
     resolve: (v:FxRef<any>) => resolveValue(v)(proxyContext),
     ...parentExecContext,
     cancelToken,
     runtimeState$,
   };
-
-  const proxyContext = new Proxy(initialAppContext, {
-    get(target, key) {
-      if (typeof key === 'string' && key.startsWith('#')) {
-        return $runtimeState()[key];
-      }
-      return Reflect.get(target, key);
-    },
-    has(target, key) {
-      if (typeof key === 'string' && key.startsWith('#')) {
-        return key in $runtimeState();
-      }
-      return Reflect.has(target, key);
-    },
-    ownKeys(target) {
-      return [...Reflect.ownKeys(target), ...Object.keys($runtimeState())];
-    },
-  });
 
   return {
     rootNode: flow,
@@ -90,62 +69,27 @@ function execute(preparedFx: PreparedFx): ExecutionHandle {
   const { rootNode, execContext, appContext } = preparedFx;
 
   const runtimeContext : Omit<FxExecutionContext,"node"> = {
-    run: (node:FxNode) => run.call(execContext, { ...runtimeContext, node }),
-    execute(node: FxNode) {
-      return _internal_execute.call(execContext.isPrototypeOf(this) ? this : execContext, runtimeContext.run(node), runtimeContext)
+    run(node:FxNode, context?: ExecContext) {
+      return run.call(context || execContext, { ...runtimeContext, node })
+    },
+    execute(node: FxNode, context?: ExecContext) {
+      return _internal_execute.call(context || execContext, runtimeContext.run(node), runtimeContext)
     },
     context: execContext,
     appContext
   };
 
-  // 非同期で実行するランナーを開始（awaitしない）
   const resultPromise:Promise<AppContext> = runtimeContext.execute(rootNode);
-
-  // 結果を消費するためのプル型インターフェース（非同期ジェネレータ）
-  const resultsIterator = (async function* () {
-    while (true) {
-      // 次のリクエストが来るまで待つPromiseを生成
-      const nextRequest = await new Promise<YieldRequest>(resolve => {
-        // このresolve関数を、次のyieldが呼び出せるようにコンテキストに登録する
-        execContext.yieldChannel = resolve;
-      });
-      // リクエストを受け取ったら、次のyieldに備えてハンドラを一旦クリア
-      execContext.yieldChannel = undefined;
-      // 受け取ったリクエストを for await...of ループに送り出す
-      const responseFromConsumer = yield nextRequest;
-      // 利用者からの応答があれば、待機中のyieldハンドラのPromiseを解決する
-      if (nextRequest) {
-        nextRequest.resolve(responseFromConsumer);
-      }
-    }
-  })();
 
   // 実行ハンドルを同期的に返す
   const handle : ExecutionHandle = {
     cancel: execContext.cancelToken.cancel,
     results$: execContext.runtimeState$,
-    fetch: () => resultsIterator,
     done: resultPromise,
-    close: async (finalValue?: any) => {
-      // ★ closeが呼ばれたら、GCによる自動クローズの対象から外す
-      executionHandleRegistry.unregister(handle);
-      // ★ もしyieldが待ち状態であれば、それを中断させる
-      if (execContext.pendingYieldReject)
-        execContext.pendingYieldReject(new Error('Flow was closed externally.'));
-      // ★ フロー全体の実行をキャンセルし、完了させる
-      handle.cancel();
-    }
   };
-  executionHandleRegistry.register(handle, new WeakRef(handle), handle);
+  
   return handle;
 }
-
-// ガベージコレクト
-const executionHandleRegistry = new FinalizationRegistry((handleToCloseRef: WeakRef<{ close: () => void }>) => {
-  console.warn('[blooky-fx] An ExecutionHandle was garbage collected without being explicitly closed. Closing automatically.');
-  const handle = handleToCloseRef.deref();
-  if(handle) handle.close();
-});
 
 // prepare->exeuteのショートハンド
 const query = (node: FxNode, app?: AppContext, ctx?: ExecContext) => 
@@ -231,7 +175,8 @@ function* run(
     if(err instanceof Error) {
       this.onNodeExit?.(node, undefined, err);
       throw err; // エラーは再スローする
-    } else if(err === "canceled"){
+    }
+    else if(err === "canceled"){
       this.onNodeExit?.(node, err);
       throw err;
     }
@@ -250,9 +195,30 @@ function yieldToMainThread(): Promise<void> {
   });
 }
 
-export {
-  fx, FxRef, isFxRef, ref,
-  run,prepare,execute,query,createCancelToken
+// Proxyコンテキストを生成するヘルパー関数
+const createProxyContext = (appContext: AppContext, runtimeState$: DripperStream<FxResult>): AppContext => {
+  const $runtimeState = accum<Record<string, any>, FxResult>(
+    (res, acc) => ({ ...acc, ["#" + res.id]: res.value }),
+    {}
+  )(runtimeState$);
+
+  return new Proxy(appContext, {
+    get(target, key) {
+      if (typeof key === 'string' && key.startsWith('#')) {
+        return $runtimeState()[key];
+      }
+      return Reflect.get(target, key);
+    },
+    has(target, key) {
+      if (typeof key === 'string' && key.startsWith('#')) {
+        return key in $runtimeState();
+      }
+      return Reflect.has(target, key);
+    },
+    ownKeys(target) {
+      return [...Reflect.ownKeys(target), ...Object.keys($runtimeState())];
+    },
+  });
 }
 
 // FxRef, Prop, または静的な値を、常に()=>Prop（ゲッター関数）に正規化するヘルパー
@@ -266,3 +232,7 @@ const resolveValue = <T>(value: FxRef<T>) => (context: AppContext) : Prop<T> => 
   return typeof value === "function" ? value as Prop<T> : () => value as T;
 }
 
+export {
+  fx, FxRef, isFxRef, ref,
+  run,prepare,execute,query,createCancelToken,createProxyContext
+}
