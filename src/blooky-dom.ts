@@ -4,21 +4,34 @@
  * 簡易な仕様でDOMを構築しつつ、Streamを利用した更新管理も行う。
  */
 import type { V_DATASET, V_STYLE, V_CLASSLIST, V_EVENTLISTENER, V_STRING, WritableCSSProperty, JSHTMLElementSource, JSHTMLAttrSource, JSHTMLNodeSource, JSHTMLAttributeMapSource, T_ATTRSET } from "./blooky-dom-types";
-import { type Stream, type Prop, type DripperStream, stream, drip, isChainedProp, filter, isDripperStream, when, registerTickHandler, calendar } from "./blooky-fp";
+import { type Stream, type Prop, type DripperStream, stream, drip, isChainedProp, filter, isDripperStream, when, registerTickHandler, calendar, getPropId } from "./blooky-fp";
 
 // DOMをfpのtickに結び付ける
 registerTickHandler((effectList) => {
     const effects = effectList.flatMap((e) => e.effects);
-    const update_target = [...PROP_BIND_MAP].flatMap((part)=>effects.find(({prop})=>prop===part.prop) ? part : []);
-    PROP_BIND_MAP.forEach((a)=>{
-        // 更新の発生したPropに包含されているPropはbindから外す
-        if(!a.isConnected() || update_target.some((b)=>b.contains(a)&&a!==b))
-            PROP_BIND_MAP.delete(a);
-    })
-    effects.forEach((p)=>{
-        const bridges = update_target.filter((part)=>PROP_BIND_MAP.has(part) && p.prop === part.prop);
-        const a = p.nextValue as any;
-        const b = p.prevValue as any;
+    const id_list = effects.map((e)=>getPropId(e.prop));
+    const update_target = id_list.flatMap((id) => id in PROP_BRIDGE_RECORD ? PROP_BRIDGE_RECORD[id]! : []);
+
+    // ツリーから外れたものと、更新の発生したPropに包含されているPropはbindから外す
+    const isGCTarget = (a:PropBridge) => !a.isConnected() || update_target.some((b)=>b.contains(a)&&a!==b);
+    Object.getOwnPropertySymbols(PROP_BRIDGE_RECORD).forEach((id)=>{
+        const bridge = PROP_BRIDGE_RECORD[id];
+        if(!Array.isArray(bridge)) {
+            if(isGCTarget(bridge))
+                delete PROP_BRIDGE_RECORD[id];
+        } else {
+            const filtered = bridge.filter((b)=>!isGCTarget(b));
+            if(!filtered.length) 
+                delete PROP_BRIDGE_RECORD[id];
+            else if(filtered.length < bridge.length)
+                PROP_BRIDGE_RECORD[id] = filtered;
+        }
+    });
+    effects.forEach((effect,index)=>{
+        if(!(id_list[index] in PROP_BRIDGE_RECORD)) return;
+        const a = effect.nextValue as any;
+        const b = effect.prevValue as any;
+        const bridges = update_target.filter((bridge)=>effect.prop === bridge.prop);
         bridges.forEach((bridge)=>bridge.update(a,b));
     });
 })
@@ -34,7 +47,19 @@ type PropBridgeInterface<A> = {
 
 type PropBridge = (RangePropBridge | AttrPropBridge | StylePropBridge);
 
-const PROP_BIND_MAP = new Set<PropBridge>();
+// 最適化用に共用型
+const PROP_BRIDGE_RECORD = {} as { [key:symbol]: PropBridge|PropBridge[] };
+const bindRecord = (p:Prop<any>, b:PropBridge) => {
+    const id = getPropId(p);
+    if(Array.isArray(PROP_BRIDGE_RECORD[id]))
+        PROP_BRIDGE_RECORD[id].push(b);
+    else
+        PROP_BRIDGE_RECORD[id] = (id in PROP_BRIDGE_RECORD) ? [PROP_BRIDGE_RECORD[id],b] : b;
+}
+// バインド中のPROPを全て取得して返す
+const getBoundProps = () : Set<Prop<any>> => 
+    new Set(Object.getOwnPropertySymbols(PROP_BRIDGE_RECORD).flatMap((id)=>PROP_BRIDGE_RECORD[id]).map((p)=>p.prop));
+
 
 // aにbが含まれているならtrue
 const contains_range = (a:Range) => (b: Range) => {
@@ -139,6 +164,7 @@ class AttrPropBridge extends AbstractAttrPropBridge<JSHTMLAttrSource> {
             if(isDripperStream(next)) next = this.generatedListener = createListenerForDripper(next);
         }
         update_attr([this.name,next] as T_ATTRSET)(this.target);
+
         this.dispatchModifiedEvent("attr-prop-modified", next, prev);
     }
     contains(p: PropBridge) {
@@ -209,7 +235,7 @@ const gen_dataset_setter =
             Object.keys(e.dataset).filter((k)=>!(k in v)).forEach((k)=>delete e.dataset[k]);
             Object.entries(v).forEach(([k,v]) => {
                 if(isChainedProp(v)) {
-                    PROP_BIND_MAP.add(new DatasetPropBridge(v,e,k));
+                    bindRecord(v, new DatasetPropBridge(v,e,k));
                     v = v();
                 }
                 e.dataset[k] = v != null ? v + "" : '';
@@ -225,7 +251,7 @@ const gen_style_setter =
             e.removeAttribute("style");
             (Object.entries(v) as [WritableCSSProperty,V_STRING|Prop<V_STRING>][]).forEach(([k,v]) => {
                 if(isChainedProp(v)) {
-                    PROP_BIND_MAP.add(new StylePropBridge(v,e,k));
+                    bindRecord(v, new StylePropBridge(v,e,k));
                     v = v();
                 }
                 set_css_property(k,v != null ? v + "": "")(e.style);
@@ -272,7 +298,7 @@ const element = (s:JSHTMLElementSource) => {
     if(attrs) {
         Object.entries(attrs).forEach(([k,v])=> {
             if(isChainedProp(v)) {
-                PROP_BIND_MAP.add(new AttrPropBridge(v as Prop<JSHTMLAttrSource>, elm, k));
+                bindRecord(v, new AttrPropBridge(v as Prop<JSHTMLAttrSource>, elm, k));
                 v = v() as T_ATTRSET[1];
             }
             update_attr([k,v] as T_ATTRSET)(elm);
@@ -380,7 +406,7 @@ function jshtml(s:Node|JSHTMLNodeSource|Prop<JSHTMLNodeSource>): Node {
             n = new Comment("[jshtml::placeholder]");
             p = [n,n];
         }
-        PROP_BIND_MAP.add(new RangePropBridge(s, p));
+        bindRecord(s, new RangePropBridge(s, p));
         return n;
     }
     if(Array.isArray(s)) {
@@ -453,4 +479,4 @@ const jshtmlWithPrefixAuto = (prefix: string) => (node: JSHTMLNodeSource): Node 
 };
 
 
-export {collapse, promised, jshtml, mutations, events, jshtmlWithPrefixAuto};
+export {collapse, promised, jshtml, mutations, events, jshtmlWithPrefixAuto, getBoundProps};
