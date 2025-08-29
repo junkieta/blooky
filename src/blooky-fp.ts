@@ -519,12 +519,14 @@ interface PromisedProp<T> extends PromiseLike<T> {
     () : T|typeof NotThen
 };
 
+// 条件を満たした値だけが更新されるProp。次回更新を待ち受けるPromiseをthenから生成可能。
 const when = <A>(predicate: (v: A) => boolean) => (p: Prop<A>): PromisedProp<A> => {
-    let thenOrNotThen : A|typeof NotThen = predicate(p()) ? p() : NotThen;
+    type ThenOrNotThen = A|typeof NotThen;
+    let thenOrNotThen : ThenOrNotThen = predicate(p()) ? p() : NotThen;
     const _p = (()=>thenOrNotThen) as PromisedProp<A>;
     if(!PROP_FROM.has(p)) {
         _p.then = (thenOrNotThen!==NotThen
-            ? (async(f:(v:A)=>any)=>{new Promise<A>(r=>r(thenOrNotThen as A)).then(f)})
+            ? Promise.resolve(thenOrNotThen)
             : (async(_)=>{})
         ) as PromisedProp<A>["then"];
         return _p;
@@ -535,13 +537,17 @@ const when = <A>(predicate: (v: A) => boolean) => (p: Prop<A>): PromisedProp<A> 
     STREAM_PROP_RELATIONS.set(_s,[_p]);
     cleanupRegistry.register(_p,new WeakRef(_p));
 
-    const resolvers: ((v:A)=>void)[] = [(v:A)=>thenOrNotThen=v];
-    const callResolvers = (v:A) => {
-        resolvers.forEach((f)=>f(v));
-        resolvers.length = 1;
+    const resolvers: ((v:ThenOrNotThen)=>void)[] = [(v:ThenOrNotThen)=>thenOrNotThen=v];
+    const callResolvers = (v:ThenOrNotThen) => {
+        if(v !== NotThen) {
+            resolvers.forEach((f)=>f(v));
+            resolvers.length = 1;
+        } else {
+            resolvers[0](v);
+        }
     };
     PROP_UPDATE.set(_p, callResolvers);
-    _p.then = (f:(v:A)=>any) => new Promise<A>((r)=>resolvers.push(r)).then(f);
+    _p.then = (f:(v:A)=>any) => new Promise<A>((r)=>resolvers.push(r as (v:ThenOrNotThen)=>void)).then(f);
     return _p;
 };
 
