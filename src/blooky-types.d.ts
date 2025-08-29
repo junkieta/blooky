@@ -18,7 +18,7 @@ interface StateSnapshot {
   parent: string | null;           // 親スナップショットのID
   trigger: DripTrigger<any>;       // このスナップショットを生成したトリガー
   effects: PropEffect<any>[];          // このスナップショットを生成した差分情報 (git diff)
-  fullState: Map<Prop<any>, any>;  // この時点での全Propの完全な状態
+  fullState: { [key: symbol]: any };  // この時点での全Propの完全な状態
 }
 
 /**
