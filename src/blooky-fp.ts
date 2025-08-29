@@ -520,6 +520,33 @@ interface PromisedProp<T> extends PromiseLike<T> {
 };
 
 const when = <A>(predicate: (v: A) => boolean) => (p: Prop<A>): PromisedProp<A> => {
+    let thenOrNotThen : A|typeof NotThen = predicate(p()) ? p() : NotThen;
+    const _p = (()=>thenOrNotThen) as PromisedProp<A>;
+    if(!PROP_FROM.has(p)) {
+        _p.then = (thenOrNotThen!==NotThen
+            ? (async(f:(v:A)=>any)=>{new Promise<A>(r=>r(thenOrNotThen as A)).then(f)})
+            : (async(_)=>{})
+        ) as PromisedProp<A>["then"];
+        return _p;
+    }
+    
+    const source = PROP_FROM.get(p)!;
+    const _s = filter(predicate)(source);
+    STREAM_PROP_RELATIONS.set(_s,[_p]);
+    cleanupRegistry.register(_p,new WeakRef(_p));
+
+    const resolvers: ((v:A)=>void)[] = [(v:A)=>thenOrNotThen=v];
+    const callResolvers = (v:A) => {
+        resolvers.forEach((f)=>f(v));
+        resolvers.length = 1;
+    };
+    PROP_UPDATE.set(_p, callResolvers);
+    _p.then = (f:(v:A)=>any) => new Promise<A>((r)=>resolvers.push(r)).then(f);
+    return _p;
+};
+
+/*
+const when = <A>(predicate: (v: A) => boolean) => (p: Prop<A>): PromisedProp<A> => {
     // 1. まず現在の値で条件をチェックする
     const current = p();
     if (predicate(current))
@@ -538,6 +565,8 @@ const when = <A>(predicate: (v: A) => boolean) => (p: Prop<A>): PromisedProp<A> 
     _p.then = promise.then.bind(promise);
     return _p;
 };
+*/
+
 
 
 /**
