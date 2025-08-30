@@ -17,13 +17,10 @@ const increment$ = stream();
 const decrement$ = stream();
 const save$ = stream();
 const $triggerSave = hold(false)(map(()=>true)(save$));
-const confirmation$ = stream<'yes'|'no'|"yet">();
-const $confirmResult = hold<"yes"|"no"|"yet">("yet")(confirmation$);
-const $decideConfirm = lift(([save,confirm])=>save && confirm !== "yet")([$triggerSave,$confirmResult]);
 
 const statusMessageStream$ = stream<string>();
 const changeCountStream = merge<number>((a,b)=>a+b)([map(() => 1)(increment$), map(() => -1)(decrement$)]);
-const $count = accum((current: number, val) => current + val, 0)(changeCountStream);
+const $count = accum((current: number, val: number) => current + val, 0)(changeCountStream);
 const $statusMessage = hold('Ready.')(statusMessageStream$);
 const $finalMessage = remap<string,number>((v) => `Saved Count:${v}`)($count);
 
@@ -42,23 +39,12 @@ const AppUI = jshtml({
     // 副作用の状態を表示
     { div: $statusMessage, $: { id: "status" } },
 
-    // 確認用のボタン
-    { div: [
-        "Confirm here: ",
-        { button: "Yes", $: { onclick: () => collapse(confirmation$)('yes') } },
-        { button: "No", $: { onclick: () => collapse(confirmation$)('no') } },
-      ],
-      $: { style: { marginTop: '1em' } }
-    }
-
   ]
 });
 
-const yesOrNo = (cond: boolean) => cond ? "yes" : "no";
-
 // confirmの呼び出しを別ツリーのフローとして宣言
 const fxConfirm = fx.context({},fx.sequence([
-    fx.call((text)=>yesOrNo(confirm(text)), { arg: ref("yieldedValue"), id: "confirmResult" }),
+    fx.call((text)=>confirm(text) ? "yes" : "no", { arg: ref("yieldedValue"), id: "confirmResult" }),
     fx.return(ref("#confirmResult")),
 ])) as FxContextNode;
 
@@ -69,9 +55,6 @@ const rootContext = {
     save$,
     $triggerSave,
     statusMessageStream$,
-    confirmation$,
-    $confirmResult,
-    $decideConfirm,
     $count,
     $finalMessage
 };
@@ -88,8 +71,7 @@ const fxEffectElement = jshtml({
     [
         { "fx-wait": jshtml.$({ "until": "$triggerSave" }) },
         // 1. 確認メッセージを表示
-        { "fx-yield": '"Confirmation needed: Save this count?"',
-            $: { for: "fxConfirm", id: "confirmResult" } },
+        { "fx-yield": '"Confirmation needed: Save this count?"', $: { for: "fxConfirm", id: "confirmResult" } },
         { "fx-switch": [
             // "yes"の場合のフロー
             { "fx-sequence": [

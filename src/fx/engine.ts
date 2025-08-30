@@ -198,9 +198,10 @@ function yieldToMainThread(): Promise<void> {
 // Proxyコンテキストを生成するヘルパー関数
 const createProxyContext = (appContext: AppContext, runtimeState$: DripperStream<FxResult>): AppContext => {
   const $runtimeState = accum<Record<string, any>, FxResult>(
-    (res, acc) => ({ ...acc, ["#" + res.id]: res.value }),
+    (acc, res) => ({ ...acc, ["#" + res.id]: res.value }),
     {}
   )(runtimeState$);
+  
 
   return new Proxy(appContext, {
     get(target, key) {

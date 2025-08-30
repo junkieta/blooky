@@ -136,6 +136,8 @@ const cleanupRegistry =
         unregister(_: WeakKey): boolean {return false}
     } as FinalizationRegistry<WeakRef<Stream<any>|Prop<any>>>;
 
+
+
 /**
  * ストリーム状態を生成する。
  */
@@ -227,6 +229,15 @@ const accum = <S,A>(f:(s:S,v:A)=>S, s: S) => (_s:Stream<A>) : Prop<S> => {
     return p;
 }
 
+// パイプライン的な書き方
+// pipe(stream(),map(),filter(),...)等
+function pipe<A,B>(value:A,op1:(a:A)=>B):B;
+function pipe<A,B,C>(value:A,op1:(a:A)=>B,op2:(b:B)=>C):C;
+function pipe<A,B,C,D>(value:A,op1:(a:A)=>B,op2:(b:B)=>C,op3:(c:C)=>D):D;
+function pipe<A,B,C,D,E>(value:A,op1:(a:A)=>B,op2:(b:B)=>C,op3:(c:C)=>D,op4:(d:D)=>E):E;
+function pipe<A,B,C,D,E,F>(value:A,op1:(a:A)=>B,op2:(b:B)=>C,op3:(c:C)=>D,op4:(d:D)=>E,op5:(e:E)=>F):F;
+function pipe(v,...fns) { return fns.reduce((v,f)=>f(v),v) }
+
 
 /**
  * 引数がストリームであるかを判別する。
@@ -251,6 +262,36 @@ const getPropId = (p:Prop<any>)=>{
     return PROP_IDENTIFIER.get(p)!;
 }
 
+/**
+ * 指定されたStreamまたはPropから派生する、
+ * すべてのPropを再帰的に列挙する
+ */
+export function* walkRelatedProps(
+  entry: Stream<any> | Prop<any>,
+  visited = new WeakSet()
+): Generator<Prop<any>, void, unknown> {
+
+  if (visited.has(entry)) return;
+  visited.add(entry);
+
+  if (typeof entry === 'function') { // entryがPropの場合
+    yield entry;
+    const sourceStream = PROP_FROM.get(entry);
+    if (sourceStream) {
+      yield* walkRelatedProps(sourceStream, visited);
+    }
+  } else { // entryがStreamの場合
+    const relatedProps = STREAM_PROP_RELATIONS.get(entry) || [];
+    for (const prop of relatedProps) {
+      yield* walkRelatedProps(prop, visited);
+    }
+    // さらに下流のStreamもたどる
+    for (const nextStream of [...entry.next, ...entry.lazyNext]) {
+      yield* walkRelatedProps(nextStream, visited);
+    }
+  }
+
+}
 
 /**
  * ストリームがオブザーバかプロパティによってどれだけ参照されているかを調べる
@@ -269,7 +310,6 @@ const countReferences = (s: Stream<any>, deep = false): Prop<number> => {
     ? () => count_deep(s, new WeakSet())
     : () => count(s);
 };
-
 
 /**
  * ストリームに一定以上の参照が残っているか判定
@@ -551,29 +591,6 @@ const when = <A>(predicate: (v: A) => boolean) => (p: Prop<A>): PromisedProp<A> 
     return _p;
 };
 
-/*
-const when = <A>(predicate: (v: A) => boolean) => (p: Prop<A>): PromisedProp<A> => {
-    // 1. まず現在の値で条件をチェックする
-    const current = p();
-    if (predicate(current))
-        return Object.assign(()=>current, { then(onfulfilled) { onfulfilled!(current) } } as PromiseLike<A>);
-    // 2. Propの源流となるStreamを`PROP_FROM`から取得
-    const source = PROP_FROM.get(p);
-    if (!source) return Object.assign(()=>NotThen, { then(){} } as PromiseLike<A>); 
-    // 3. 解決されうるPromisedPropを生成する
-    let thenOrNotThen : A|typeof NotThen = NotThen;
-    const _s = filter(predicate)(source);
-    const _p = (()=>thenOrNotThen) as PromisedProp<A>;
-    STREAM_PROP_RELATIONS.set(_s,[_p]);
-    cleanupRegistry.register(_p,new WeakRef(_p));
-    const promise = new Promise<A>((resolve)=>PROP_UPDATE.set(_p,(_v)=>resolve(thenOrNotThen=_v)));
-    promise.then(()=>clear(_s));
-    _p.then = promise.then.bind(promise);
-    return _p;
-};
-*/
-
-
 
 /**
  * 既存オブジェクトのプロパティと同期するStream/Propを生成する。
@@ -803,6 +820,7 @@ export {
     merge,junction,map,filter,
     hold,accum,lift,remap,when,
     proxy,
+    pipe,
     clock,moments,calendar,registerTickHandler
 };
 

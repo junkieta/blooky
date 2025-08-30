@@ -21,8 +21,7 @@ export class YieldNodeDefinition extends NodeDefinition<'yield'> {
     return await new Promise(async(resolve)=>{
       const subAppContextBase = { ...targetNode.context, yieldedValue, [RETURN_VALUE]: resolve };
       const handle = execute(prepare(childNodeToRun, subAppContextBase));
-      const result = await handle.done;
-      resolve(result);
+      await handle.done;
     });
  }
 
