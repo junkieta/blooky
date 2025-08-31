@@ -4,7 +4,7 @@
  * 簡易な仕様でDOMを構築しつつ、Streamを利用した更新管理も行う。
  */
 import type { V_DATASET, V_STYLE, V_CLASSLIST, V_EVENTLISTENER, V_STRING, WritableCSSProperty, JSHTMLElementSource, JSHTMLAttrSource, JSHTMLNodeSource, JSHTMLAttributeMapSource, T_ATTRSET } from "./blooky-dom-types";
-import { type Stream, type Prop, type DripperStream, stream, drip, isChainedProp, filter, isDripperStream, when, registerTickHandler, calendar, getPropId } from "./blooky-fp";
+import { type Stream, type Prop, type DripperStream, stream, drip, isChainedProp, filter, isDripperStream, when, registerTickHandler, calendar, getPropId, hasReferences } from "./blooky-fp";
 
 // DOMをfpのtickに結び付ける
 registerTickHandler((effectList) => {
@@ -59,6 +59,26 @@ const bindRecord = (p:Prop<any>, b:PropBridge) => {
 // バインド中のPROPを全て取得して返す
 const getBoundProps = () : Set<Prop<any>> => 
     new Set(Object.getOwnPropertySymbols(PROP_BRIDGE_RECORD).flatMap((id)=>PROP_BRIDGE_RECORD[id]).map((p)=>p.prop));
+
+// アクティブなDripperStreamと、それがいくつのDOM要素から
+// 参照されているかをカウントする台帳
+const ACTIVE_DRIPPERS = new Map<DripperStream<any>, number>();
+
+const getCollapseDrippers = (): Set<DripperStream<any>> => new Set(ACTIVE_DRIPPERS.keys());
+
+// DOM要素がGCされた時に、後片付け処理（デクリメント）を
+// 実行するためのレジストリ
+const dripperRegistry = new FinalizationRegistry((dripperRef: WeakRef<DripperStream<any>>) => {
+  const dripperToDecrement = dripperRef.deref();
+  if(!dripperToDecrement) return;
+  const currentCount = ACTIVE_DRIPPERS.get(dripperToDecrement) || 1;
+  if (currentCount <= 1) {
+    // 参照が0になったら、台帳から完全に削除
+    ACTIVE_DRIPPERS.delete(dripperToDecrement);
+  } else {
+    ACTIVE_DRIPPERS.set(dripperToDecrement, currentCount - 1);
+  }
+});
 
 
 // aにbが含まれているならtrue
@@ -161,10 +181,10 @@ class AttrPropBridge extends AbstractAttrPropBridge<JSHTMLAttrSource> {
         if(this.generatedListener) {
             this.target.removeEventListener(this.name.slice(2), this.generatedListener);
             delete this.generatedListener;
-            if(isDripperStream(next)) next = this.generatedListener = createListenerForDripper(next);
+            if(isDripperStream(next))
+                next = this.generatedListener = getTracableListener(next)(this.target);
         }
         update_attr([this.name,next] as T_ATTRSET)(this.target);
-
         this.dispatchModifiedEvent("attr-prop-modified", next, prev);
     }
     contains(p: PropBridge) {
@@ -198,15 +218,15 @@ class DatasetPropBridge extends AbstractAttrPropBridge<V_STRING> {
 // PROPの観測。イベントリスナーとして登録する想定。
 // ex) onclick: collapse(eventDripperStream)
 const collapse = <A>(d: DripperStream<A>) => (v: A) => {
-    const dripResult = drip(v)(d);
+    const dripEffect = drip(v)(d);
     if(v instanceof Event) {
         const collapseEvt = new CustomEvent("blooky-collapse", {
             cancelable: true,
-            detail: dripResult
+            detail: dripEffect
         });
         if(!v.target?.dispatchEvent(collapseEvt)) return;
     }
-    calendar.schedule(dripResult);
+    calendar.schedule(dripEffect);
 }
 
 /**
@@ -270,20 +290,21 @@ const set_css_property = (n: WritableCSSProperty|string, v: string) => (d: CSSSt
 const gen_listener_setter =
     (v:V_EVENTLISTENER, n: string) => 
         isDripperStream(v)
-        ? gen_listener_setter(createListenerForDripper(v), n)
+        ? (e:EventTarget) => e.addEventListener(n.slice(2), getTracableListener(v)(e))
         : v && (typeof v === "function" || typeof v.handleEvent === "function")
         ? (e:EventTarget) => e.addEventListener(n.slice(2), v as EventListener)
         : (e:Element) => e.setAttribute(n,v+"");
 
+
 // DripperStreamにdripするリスナーを生成する
-const createListenerForDripper = (d:DripperStream<any>) => function _(e:Event) {
-    const t = (e.currentTarget as HTMLElement);
-    if(t.isConnected)
-        collapse(d)(e);
-    else {
-        t.removeEventListener(e.type, _);
-    }
-};
+const getTracableListener = (d:DripperStream<any>) => (t:EventTarget) => {
+    const currentCount = ACTIVE_DRIPPERS.get(d) || 0;
+    ACTIVE_DRIPPERS.set(d, currentCount + 1);
+    dripperRegistry.register(t, new WeakRef(d));
+    return collapse(d);
+}
+
+
 
 type JSHTMLExtractedElementSource = [tag: string, children: JSHTMLNodeSource, attrs?: JSHTMLAttributeMapSource];
 
@@ -328,7 +349,7 @@ const extractElementSource = (s:JSHTMLElementSource) : JSHTMLExtractedElementSou
 }
 
 // 属性別の更新方法を振り分けたハンドラ
-const attrUpdteHandler = {
+const attrUpdateHandler = {
     "classList": ([n,v,e]:[string,any,HTMLElement]) => gen_className_setter(v)(e),
     "dataset": ([n,v,e]:[string,any,HTMLElement]) => gen_dataset_setter(v)(e),
     "style": ([n,v,e]:[string,any,HTMLElement]) => gen_style_setter(v)(e),
@@ -354,10 +375,10 @@ const attrUpdteHandler = {
 const update_attr = ([n,v]:T_ATTRSET) => (e:HTMLElement) => {
     if(v == null)
         e.removeAttribute(n);
-    else if(n in attrUpdteHandler)
-        attrUpdteHandler[n]([n,v,e]);
+    else if(n in attrUpdateHandler)
+        attrUpdateHandler[n]([n,v,e]);
     else
-        attrUpdteHandler.default([n,v,e]);
+        attrUpdateHandler.default([n,v,e]);
 };
 
 class PromisedElement extends HTMLElement {
@@ -479,4 +500,4 @@ const jshtmlWithPrefixAuto = (prefix: string) => (node: JSHTMLNodeSource): Node 
 };
 
 
-export {collapse, promised, jshtml, mutations, events, jshtmlWithPrefixAuto, getBoundProps};
+export {collapse, promised, jshtml, mutations, events, jshtmlWithPrefixAuto, getBoundProps, getCollapseDrippers};

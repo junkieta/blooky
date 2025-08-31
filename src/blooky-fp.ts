@@ -178,7 +178,8 @@ const merge = <A> (f?:(a:A,b:A)=>A) => (s:Stream<A>[]) : MergedStream<A> => {
  * @param s 
  * @returns 
  */
-const filter = <A>(f:((v:A)=>boolean)|RegExp|A) => typeof f !== "function"
+const filter = <A>(f:((v:A)=>boolean)|RegExp|A) : (s:Stream<A>)=>FilterStream<A> => 
+    typeof f !== "function"
     ? (filter(f instanceof RegExp ? (v:A)=>f.test(String(v)) : (v:A) => v === f))
     : (s:Stream<A>) : FilterStream<A> => {
         const _s: FilterStream<A> = {
@@ -213,8 +214,8 @@ const map = <A,B>(f:((v:B)=>A)|Prop<A>|A): ((s:Stream<B>)=>MappedStream<A,B>) =>
 const junction = <A,B>(records: Map<B,Stream<A>>|Record<string,Stream<A>>) => {
     if(!(records instanceof Map)) return junction(new Map(Object.entries(records)));
     return (p:Prop<B>) => {
-        const streams = [...records.entries()].map(([k,s]:[B,Stream<A>])=>filter(()=>p()===k)(s));
-        const merged = merge()(streams);
+        const streams = [...records.entries()].map(([k,s]:[B,Stream<A>])=>filter<A>(()=>p()===k)(s));
+        const merged = merge<A>()(streams);
         merged[STREAM_CLEANER] = () => streams.forEach((s)=>clear(s));
         return merged;
     };
@@ -237,7 +238,6 @@ function pipe<A,B,C,D>(value:A,op1:(a:A)=>B,op2:(b:B)=>C,op3:(c:C)=>D):D;
 function pipe<A,B,C,D,E>(value:A,op1:(a:A)=>B,op2:(b:B)=>C,op3:(c:C)=>D,op4:(d:D)=>E):E;
 function pipe<A,B,C,D,E,F>(value:A,op1:(a:A)=>B,op2:(b:B)=>C,op3:(c:C)=>D,op4:(d:D)=>E,op5:(e:E)=>F):F;
 function pipe(v,...fns) { return fns.reduce((v,f)=>f(v),v) }
-
 
 /**
  * 引数がストリームであるかを判別する。
