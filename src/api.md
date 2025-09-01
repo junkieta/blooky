@@ -6,8 +6,6 @@
 
 ## 中心となる概念
 
-`blooky-fp`は、\*\*`Stream`**と**`Prop`\*\*という2つの中心的な概念に基づいています。
-
   * **`Stream` - イベントの流れ**:
     未来に発生する一連のイベントを表現するデータ構造です。`Stream`自体は値を持たず、「これから値が流れてくる可能性がある」という**可能性**や**設計図**を定義します。`map`や`filter`といったオペレーターを繋げることで、イベントの流れを合成・変換していくための基本単位となります。
 
@@ -28,58 +26,18 @@
 | **`hold<A>(initialValue)(s: Stream<A>)`** | `Stream<A>`を受け取り、その`Stream`から流れてきた最新の値を保持する`Prop<A>`を生成します。 |
 | **`accum<S, A>(reducer, seed)(s: Stream<A>)`** | `Stream<A>`から流れてくる値を`reducer`関数で畳み込み、その結果を保持する`Prop<S>`を生成します。 |
 
-**使用例:**
-
-```typescript
-// カウントアップ/ダウンイベントのためのStream
-const increment$ = stream<void>();
-const decrement$ = stream<void>();
-
-// Streamをマージし、値に変換する
-const change$ = merge<number>()([
-  map(() => 1)(increment$),
-  map(() => -1)(decrement$)
-]);
-
-// StreamからProp（状態）を生成
-const $count = accum((current, value) => current + value, 0)(change$);
-
-console.log($count()); // -> 0
-```
-
 -----
 
 ### Streamオペレーター
 
-`Stream`を受け取り、新しい`Stream`を返す純粋な関数です。カリー化されているため、`pipe`ユーティリティと組み合わせることで、宣言的なデータフローを構築できます。
+`Stream`を受け取り、新しい`Stream`を返す純粋な関数です。
 
 | 関数 | 説明 |
 | :--- | :--- |
-| **`map<A, B>(fn: (v: B) => A)(s: Stream<B>)`** | `Stream<B>`の各値を`fn`で変換し、新しい`Stream<A>`を返します。 |
-| **`filter<A>(predicate: (v: A) => boolean)(s: Stream<A>)`** | `Stream<A>`から、`predicate`を満たす値だけを通過させる新しい`Stream<A>`を返します。 |
+| **`map<A, B>(fn)(s: Stream<B>)`** | `Stream<B>`の各値を`fn`で変換し、新しい`Stream<A>`を返します。 |
+| **`filter<A>(predicate)(s: Stream<A>)`** | `Stream<A>`から、`predicate`を満たす値だけを通過させる新しい`Stream<A>`を返します。 |
 | **`merge<A>(streams: Stream<A>[])`** | 複数の`Stream`を一つに合流させた、新しい`Stream<A>`を返します。 |
-
-**使用例:**
-
-```typescript
-import { pipe } from "./blooky-fp"; // pipeユーティリティを想定
-
-const input$ = stream<string>();
-
-const result$ = pipe(
-  input$,
-  map(text => parseInt(text, 10)), // string -> number
-  filter(num => !isNaN(num)),       // "abc"のような無効な値を除外
-  filter(num => num > 10)           // 10より大きい数値のみを通過
-);
-
-result$.subscribe(value => {
-  console.log("Valid number > 10:", value);
-});
-
-// drip(input$)("20"); // -> "Valid number > 10: 20" とログに出力
-// drip(input$)("5");  // -> (何も出力されない)
-```
+| **`junction<A, B>(records)(p: Prop<B>)`** | `Prop<B>`の現在の値に応じて、どの`Stream<A>`を有効にするかを動的に切り替える、高度な`Stream`を生成します。 |
 
 -----
 
@@ -89,22 +47,29 @@ result$.subscribe(value => {
 
 | 関数 | 説明 |
 | :--- | :--- |
-| **`remap<A, B>(fn: (v: B) => A)(p: Prop<B>)`** | `Prop<B>`から、その現在の値に`fn`を適用して変換する、新しい派生`Prop<A>`を生成します。 |
+| **`remap<A, B>(fn)(p: Prop<B>)`** | `Prop<B>`から、その現在の値に`fn`を適用して変換する、新しい派生`Prop<A>`を生成します。 |
 | **`lift<A>(fn)(props: Prop<any>[])`** | 複数の`Prop`を元に、それらの現在の値すべてに`fn`を適用して単一の値を計算する、新しい派生`Prop<A>`を生成します。 |
+
+-----
+
+### 高度なプリミティブと出口（Exit Points）
+
+`blooky.js`の世界と、外部のJavaScriptの世界を繋ぐための、より高度な関数です。
+
+| 関数 | 説明 |
+| :--- | :--- |
+| **`proxy<T, K>(obj, key)`** | 既存のオブジェクトのプロパティを、`blooky.js`が扱える`[DripperStream, Prop]`のペアに変換します。これにより、Reactの`useState`のような、命令的なオブジェクトの状態をリアクティブなデータフローに統合できます。 |
+| **`when<A>(predicate)(p: Prop<A>)`** | `Prop<A>`を監視し、その値が`predicate`を満たすと値が更新される（`PromisedProp`）を返します。その他のPropと違い、次にpredicateが満たされた時に解決される`Promise<A>`を返すためのメソッド、`then`を持っています。特定の**未来の状態**を待つための高レベルな出口です。 |
 
 **使用例:**
 
 ```typescript
-const $firstName = hold("Blooky")(...);
-const $lastName = hold("JS")(...);
+const $progress = hold(0)(...);
 
-// remapで、Propから新しいPropを作る
-const $upperFirstName = remap(name => name.toUpperCase())($firstName);
-console.log($upperFirstName()); // -> "BLOOKY"
-
-// liftで、複数のPropから新しいPropを作る
-const $fullName = lift(([first, last]) => `${first} ${last}`)([$firstName, $lastName]);
-console.log($fullName()); // -> "Blooky JS"
+// `when`を使って、プログレスバーが100%になったら通知する
+when(p => p >= 100)($progress).then(() => {
+  console.log("Loading complete!");
+});
 ```
 
 -----
@@ -113,7 +78,7 @@ console.log($fullName()); // -> "Blooky JS"
 
 | 関数 | 説明 |
 | :--- | :--- |
-| **`drip<A>(value: A)(s: DripperStream<A>)`** | **`blooky-fp`における、状態変更を要求する唯一の正規の入り口**です。指定された`Stream`に値を流した場合に、どの`Prop`がどのように更新されるべきか、という\*\*「実行計画書（`DripEffect`オブジェクト）」**を生成します。この関数は副作用を**実行しません\*\*。実際の実行は、`calendar`スケジューラが担当します。 |
+| **`drip<A>(value)(s: DripperStream<A>)`** | **`blooky-fp`における、状態変更を要求する唯一の正規の入り口**です。指定された`Stream`に値を流した場合に、どの`Prop`がどのように更新されるべきか、という\*\*「実行計画書（`DripEffect`オブジェクト）」**を生成します。この関数は副作用を**実行しません\*\*。実際の実行は、`calendar`スケジューラが担当します。 |
 
 -----
 
@@ -121,9 +86,22 @@ console.log($fullName()); // -> "Blooky JS"
 
 | API | 説明 |
 | :--- | :--- |
-| **`clock`** | `requestAnimationFrame`に同期して現在のタイムスタンプを保持する、公開された`Prop<number>`。全ての時間ベースのリアクティブ処理の基準点となります。 |
-| **`moments`** | `clock`を元に、便利な時間ベースの`Stream`を生成するためのファクトリオブジェクトです。\<br\>• **`.timeout(ms)`**: 指定時間後に一度だけ発火する`Stream`を返します。\<br\>• **`.interval(ms)`**: 指定した間隔で発火し続ける`Stream`を返します。 |
+| **`clock`** | `requestAnimationFrame`に同期して現在のタイムスタンプを保持する、公開された`Prop<number>`。 |
+| **`moments`** | `clock`を元に、便利な時間ベースの`Stream`を生成するためのファクトリオブジェクトです。（`.timeout(ms)`, `.interval(ms)`） |
 
+-----
+
+### ユーティリティ関数
+
+`blooky.js`の内部構造を安全に操作・判別するためのヘルパー関数です。
+
+| 関数 | 説明 |
+| :--- | :--- |
+| **`isStream(v)`** | 値が`Stream`であるか（`true`/`false`）を返します。 |
+| **`isDripperStream(v)`** | 値が`DripperStream`であるかを返します。 |
+| **`isChainedProp(v)`** | 値が`Stream`に接続された`Prop`であるかを返します。`fc`モジュールでの`Prop`の自動検出などに使われます。 |
+| **`hasReferences(s)`** | 指定された`Stream`が、`Prop`や他の`Stream`から参照されているかを返します。デバッグやライフサイクル管理に役立ちます。 |
+| **`countReferences(s)`** | 指定された`Stream`の参照数を返す`Prop<number>`を生成します。 |
 
 -----
 
