@@ -287,33 +287,35 @@ const context = fc.build(fc.blueprint({
     }
   })),
   
-  // メインのフローで使うStream
-  save$: stream<void>(),
+  // メインのフローで開始条件に使うProp
+  $saveStarted: hold(false)(...),
 }));
 
 // 2. メインのフローを記述
-const FxFlow = fc.prime(context)(c => 
+const FxFlow = fc.prime(context)({$saveStarted}} => 
   jshtml({
     "fx-effect": {
       "fx-loop": {
-        $: { while: () => true },
-        "fx-sequence": [
-          { "fx-wait": { $: { until: c.save$ } } },
+        "fx-sequence": 
+        [
+          { "fx-wait": jshtml.$({ until: $saveStarted }) },
           // 1. `confirmDialogFlow`に処理を委譲（yield）
-          { "fx-yield": {
+          { "fx-yield": "本当に保存しますか？",
             $: {
               id: "isConfirmed", // returnされた値が#isConfirmedに保存される
               for: "confirmDialogFlow",
-              value: "本当に保存しますか？"
             }
-          }},
+          },
           // 2. 戻り値を使って、処理を分岐
           { "fx-if": {
-            $: { when: ref("#isConfirmed") },
-            "fx-call": { $: { fn: () => console.log("Saved!") } }
-          }}
+              "fx-call": '"Saved!"',
+              $: { fn: (v) => console.log(v) }
+            },
+            $: { when: ref("#isConfirmed") }
+          }
         ]
-      }
+      },
+      $: { while: () => true },
     }
   })
 );
