@@ -36,6 +36,13 @@ function _init(ctx: object): void {
  * @param ctx 記録したいコンテキスト
  */
 export function snapshot(ctx: object): Promise<StateSnapshot> {
+  // 関数の冒頭で、コンテキストが凍結されたものか検証する
+  if (!Object.isFrozen(ctx)) {
+    throw new TypeError(
+      "The context passed to ft.snapshot() must be frozen. " +
+      "Please ensure it was created with fc.build() or Object.freeze()"
+    );
+  }
   return new Promise((resolve) => {
     if (!BRANCHES.has(ctx)) _init(ctx);
     const unregister = registerTickHandler((allDripEffects) => {

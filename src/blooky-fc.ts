@@ -1,6 +1,6 @@
 // blooky-fc.ts
 
-import { isChainedProp, isStream, Prop } from "./blooky-fp";
+import { isChainedProp, isStream } from "./blooky-fp";
 
 // --- 型定義 ---
 
@@ -91,7 +91,7 @@ const is = {
  * 最終的なコンテキストオブジェクトを生成（具現化）する。
  * ここで生成されるコンテキストは不変(frozen)となる。
  * @param spec プロパティディスクリプタで構成された設計図
- * @param options オプション（継承する親オブジェクト、適用するProxyHandler）
+ * @param options オプション（継承する親オブジェクト、契約を明示するバリデータオブジェクト）
  */
 function build<T extends object>(
   spec: Blueprint<T>,
@@ -142,7 +142,8 @@ const prime = <T extends object>(context: T) => <R>(func: (context: T) => R): R 
  */
 const embody = <T extends object>(context: T) => <F extends (this: T, ...args: any[]) => any>(func: F): F => func.bind(context) as F;
 
-const template = <R,T extends Record<string,any>>(fn:(v:T)=>R) => (ctx:T) => fn(ctx);
+// primeの引数順を逆にしたバージョン。テンプレートを宣言して、適したコンテキストを後から受け取って実行する。
+const template = <R,T extends object>(fn:(v:T)=>R) => (ctx:T) => fn(ctx);
 
 // 高階関数の引数順を入れ替える
 // ex. reverse(prime) // === template
