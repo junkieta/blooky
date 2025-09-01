@@ -46,7 +46,7 @@
 
 以下は、`blooky.js`の要素を使った、シンプルなカウンターアプリケーションの例です。
 
-#### `index.html`
+### `index.html`
 
 ```html
 <!doctype html>
@@ -62,7 +62,7 @@
 </html>
 ```
 
-#### `src/main.ts`
+### `src/main.ts`
 
 ```typescript
 import { stream, accum, merge, map } from "./blooky-fp";
