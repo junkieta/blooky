@@ -31,8 +31,6 @@ const unenumerable = (keysToHide: string[]) => <A extends Object>(blueprint: Blu
   return newBlueprint;
 }
 
-
-
 /**
  * 設計図の中から、指定されたキーを消去した設計図を返す
  * @param keys 削除したいキーの配列
@@ -91,6 +89,7 @@ const is = {
 /**
  * 完成した設計図（ディスクリプタとオプションのProxy）から、
  * 最終的なコンテキストオブジェクトを生成（具現化）する。
+ * ここで生成されるコンテキストは不変(frozen)となる。
  * @param spec プロパティディスクリプタで構成された設計図
  * @param options オプション（継承する親オブジェクト、適用するProxyHandler）
  */
@@ -98,7 +97,6 @@ function build<T extends object>(
   spec: Blueprint<T>,
   options: {
     parent?: object
-    proxy?: ProxyHandler<T>
     contract?: { [key: string]: (value: any) => boolean }
   } = {}
 ): T {
@@ -127,10 +125,7 @@ function build<T extends object>(
                 throw new TypeError(`Context build failed: The type of "${key}" is incorrect.`);
         }
     }
-    const o = Object.create("parent" in options ? options.parent || null : Object.prototype, spec);
-    return options.proxy
-        ? new Proxy(o, options.proxy) as T
-        : o as T;
+    return Object.freeze(Object.create("parent" in options ? options.parent || null : Object.prototype, spec));
 }
 
 /**
