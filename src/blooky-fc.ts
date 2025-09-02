@@ -145,14 +145,10 @@ const embody = <T extends object>(context: T) => <F extends (this: T, ...args: a
 // primeの引数順を逆にしたバージョン。テンプレートを宣言して、適したコンテキストを後から受け取って実行する。
 const template = <R,T extends object>(fn:(v:T)=>R) => (ctx:T) => fn(ctx);
 
-// 高階関数の引数順を入れ替える
-// ex. reverse(prime) // === template
-const reverse = <A,B,C>(f:(a:A)=>(b:B)=>C) => (b:B) => (a:A) => f(a)(b);
-
 
 export {
     Blueprint,
-    blueprint,build,prime,embody,template,reverse,
+    blueprint,build,prime,embody,template,
     omit,pick,unenumerable,
     is
 }

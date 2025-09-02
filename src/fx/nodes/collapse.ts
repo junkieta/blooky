@@ -1,7 +1,6 @@
 import type { FxNode, FxRef, FxExecutionContext} from '../types';
-import { calendar, drip, DripperStream } from '../../blooky-fp';
+import { collapse, drip, DripperStream } from '../../blooky-fp';
 import { NodeDefinition } from '../NodeDefinition';
-import { DripResult } from '../../blooky-types';
 type ThisNode = Extract<FxNode, { type: 'collapse' }>;
 type ThisCompiledNode = Extract<FxNode, { type: 'collapse' }>;
 
@@ -20,6 +19,6 @@ export class CollapseNodeDefinition extends NodeDefinition<'collapse'> {
     const dripper = context.resolve(node.dripper);
     const acceptPromise = node.promise ? context.resolve(node.promise)() : 'deny';
     const result = await drip(value(), { acceptPromise })(dripper());
-    await calendar.schedule(result);
+    await collapse(result);
   }
 }

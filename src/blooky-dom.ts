@@ -4,7 +4,7 @@
  * 簡易な仕様でDOMを構築しつつ、Streamを利用した更新管理も行う。
  */
 import type { V_DATASET, V_STYLE, V_CLASSLIST, V_EVENTLISTENER, V_STRING, WritableCSSProperty, JSHTMLElementSource, JSHTMLAttrSource, JSHTMLNodeSource, JSHTMLAttributeMapSource, T_ATTRSET } from "./blooky-dom-types";
-import { type Stream, type Prop, type DripperStream, stream, drip, isChainedProp, filter, isDripperStream, when, registerTickHandler, calendar, getPropId, hasReferences } from "./blooky-fp";
+import { type Stream, type Prop, type DripperStream, stream, drip, isChainedProp, filter, isDripperStream, when, registerTickHandler, getPropId, hasReferences, collapse } from "./blooky-fp";
 
 // DOMをfpのtickに結び付ける
 registerTickHandler((effectList) => {
@@ -217,7 +217,7 @@ class DatasetPropBridge extends AbstractAttrPropBridge<V_STRING> {
 
 // PROPの観測。イベントリスナーとして登録する想定。
 // ex) onclick: collapse(eventDripperStream)
-const collapse = <A>(d: DripperStream<A>) => (v: A) => {
+const createTracableListener = <A>(d: DripperStream<A>) => (v: A) => {
     const dripEffect = drip(v)(d);
     if(v instanceof Event) {
         const collapseEvt = new CustomEvent("blooky-collapse", {
@@ -226,8 +226,17 @@ const collapse = <A>(d: DripperStream<A>) => (v: A) => {
         });
         if(!v.target?.dispatchEvent(collapseEvt)) return;
     }
-    calendar.schedule(dripEffect);
+    collapse(dripEffect);
 }
+
+// DripperStreamにdripするリスナーを生成する
+const getTracableListener = (d:DripperStream<any>) => (t:EventTarget) => {
+    const currentCount = ACTIVE_DRIPPERS.get(d) || 0;
+    ACTIVE_DRIPPERS.set(d, currentCount + 1);
+    dripperRegistry.register(t, new WeakRef(d));
+    return createTracableListener(d);
+}
+
 
 /**
  * tag指定がjshtmlの仕様に沿わなかった場合に生成される要素の定義。
@@ -294,17 +303,6 @@ const gen_listener_setter =
         : v && (typeof v === "function" || typeof v.handleEvent === "function")
         ? (e:EventTarget) => e.addEventListener(n.slice(2), v as EventListener)
         : (e:Element) => e.setAttribute(n,v+"");
-
-
-// DripperStreamにdripするリスナーを生成する
-const getTracableListener = (d:DripperStream<any>) => (t:EventTarget) => {
-    const currentCount = ACTIVE_DRIPPERS.get(d) || 0;
-    ACTIVE_DRIPPERS.set(d, currentCount + 1);
-    dripperRegistry.register(t, new WeakRef(d));
-    return collapse(d);
-}
-
-
 
 type JSHTMLExtractedElementSource = [tag: string, children: JSHTMLNodeSource, attrs?: JSHTMLAttributeMapSource];
 
@@ -459,7 +457,7 @@ jshtml.$ = (attrs: JSHTMLAttributeMapSource) => new EmptyElementAttributeMapSour
  */
 const mutations = (init: MutationObserverInit) => (n: Node) : [Stream<MutationRecord[]>,()=>void] => {
     const s = stream<MutationRecord[]>();
-    const o = new MutationObserver(collapse(s));
+    const o = new MutationObserver(createTracableListener(s));
     o.observe(n, init);
     return [s, o.disconnect.bind(o)];
 };
@@ -467,7 +465,7 @@ const mutations = (init: MutationObserverInit) => (n: Node) : [Stream<MutationRe
 // addEventListenerを介して、DOMイベントをイベントストリームに接続する。
 const events = <T extends string, E = T extends keyof HTMLElementEventMap ? HTMLElementEventMap[T] : Event>(t: T) => (target:EventTarget) : [Stream<E>,()=>void] => {
     const s = stream<E>();
-    const l = collapse(s) as EventListener;
+    const l = createTracableListener(s) as EventListener;
     target.addEventListener(t, l, false);
     return [s, target.removeEventListener.bind(target,t,l,false)];
 }
@@ -500,4 +498,4 @@ const jshtmlWithPrefixAuto = (prefix: string) => (node: JSHTMLNodeSource): Node 
 };
 
 
-export {collapse, promised, jshtml, mutations, events, jshtmlWithPrefixAuto, getBoundProps, getCollapseDrippers};
+export {createTracableListener, promised, jshtml, mutations, events, jshtmlWithPrefixAuto, getBoundProps, getCollapseDrippers};

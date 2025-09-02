@@ -66,61 +66,36 @@
 
 ```typescript
 import { stream, accum, merge, map } from "./blooky-fp";
-import { jshtml, collapse } from "./blooky-dom";
-import { fc } from "./blooky-fc";
+import { jshtml } from "./blooky-dom";
 import { ft } from "./blooky-ft";
 
-// --- 1. アプリケーションの「文脈（Context）」を定義する ---
-// fc.blueprint()を使い、プレーンなオブジェクトから「設計図」を作成し、
-// fc.build()で最終的なコンテキストを具現化する。
-// 変数の命名ルール: fpのDripperStreamは末尾に$を、Propは先頭に$をそれぞれ付加している。(推奨)
+// --- 1. コンテキストを定義する ---
+// 複雑なものが必要なら、fc.plueprint->buildを用いた設計と生成がよい。ここではシンプルに変数を用いる。
 
-const appContextSpec = fc.blueprint({
-  // `fp`で状態とイベントを定義
-  increment$: stream<void>(),
-  decrement$: stream<void>(),
-  
-  get $count() {
-    // ゲッタープロパティとしてPropを定義
-    return accum(
-      (c, v) => c + v, 0
-    )(merge<number>()([
+// 変数の推奨命名ルール: fpのDripperStreamは末尾に$
+const increment$ = stream<void>();
+const decrement$ = stream<void>();
+// 変数の推奨命名ルール: fpのPropは先頭に$
+const $count = 
+  accum((c, v) => c + v, 0)
+    (merge<number>()([
       map(() => 1)(this.increment$),
       map(() => -1)(this.decrement$)
     ]));
-  },
-  
-  log: (message: string) => console.log(message)
-});
-
-const context = fc.build(appContextSpec);
-
+const log = (msg) => console.log(msg);
 
 // --- 2. UIを定義する ---
-// fc.prime()を使い、コンテキストをUIテンプレートに注入する。
+const AppUI = jshtml({
+  main: [
+    { h1: ["Count: ", $count] },
+    // UIイベントをStreamに接続
+    { button: "+", $: { onclick: increment$ } },
+    { button: "-", $: { onclick: decrement$ } },
+    // Prop($count)は直接呼び出してもよい
+    { button: "Log", $: { onclick: () => log(`Count is: ${$count()}`) } }
+  ]
+});
 
-const AppUI = fc.prime(context)(({ $count, increment$, decrement$, log }) => 
-  jshtml({
-    main: [
-      { h1: ["Count: ", $count] },
-      // UIイベントをStreamに接続
-      { button: "+", $: { onclick: increment$ } },
-      { button: "-", $: { onclick: decrement$ } },
-      // コンテキストの関数を直接呼び出す
-      { button: "Log", $: { onclick: () => log(`Count is: ${$count()}`) } }
-    ]
-  })
-);
-
-
-// --- 3. 時間旅行の準備 ---
-// (例) 5秒ごとに自動でスナップショットを記録する
-setInterval(() => {
-  ft.snapshot(context);
-  console.log("Snapshot taken!");
-}, 5000);
-
-
-// --- 4. マウント ---
+// --- 3. マウント ---
 document.getElementById('app')?.append(AppUI);
 ```

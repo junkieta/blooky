@@ -239,6 +239,39 @@ function pipe<A,B,C,D,E>(value:A,op1:(a:A)=>B,op2:(b:B)=>C,op3:(c:C)=>D,op4:(d:D
 function pipe<A,B,C,D,E,F>(value:A,op1:(a:A)=>B,op2:(b:B)=>C,op3:(c:C)=>D,op4:(d:D)=>E,op5:(e:E)=>F):F;
 function pipe(v,...fns) { return fns.reduce((v,f)=>f(v),v) }
 
+
+// 高階関数の引数順を入れ替えて、メソッドチェーン的な書き味に
+type StreamOperators<A> = {
+    map: <B>(f:((v:A)=>B)|Prop<B>|B) => StreamOperators<B>,
+    filter: (f:((v:A)=>boolean)|RegExp|A) => StreamOperators<A>,
+    hold: (v:A) => PropOperators<A>,
+    accum: <S>(f:(s:S,v:A)=>S,s:S) => PropOperators<S>,
+    drip?: <M extends 'deny' | 'allow' | 'await' = 'deny'>(value:A, options?: { acceptPromise?: M }) => DripResult<A,M>
+}
+type PropOperators<A> = {
+    value: ()=>A
+    remap: <B>(f:(v:A,p?:A)=>B) => PropOperators<B>,
+    when: (predicate: (v: A) => boolean) => PropOperators<A|typeof NotThen>,
+    then?: PromiseLike<A>["then"]
+}
+
+const streamOp = <A>(_s:Stream<A> = stream()) : StreamOperators<A> => ({
+    map: <B>(f:((v:A)=>B)|Prop<B>|B) => streamOp(map(f)(_s)),
+    filter: (f:((v:A)=>boolean)|RegExp|A) => streamOp(filter(f)(_s)),
+    hold: (v:A) => propOp(hold(v)(_s)),
+    accum: <S>(f:(s:S,v:A)=>S,s:S) => propOp(accum(f,s)(_s)),
+    ...(isDripperStream(_s) ? {
+        drip: <M extends 'deny' | 'allow' | 'await' = 'deny'>(value:A, options?: { acceptPromise?: M }) => drip(value,options)(_s)
+    } : {})
+})
+const propOp = <A>(prop:Prop<A> | (Prop<A> & PromiseLike<A>)) : PropOperators<A> => ({
+    value: prop,
+    remap: <B>(f:(v:A,p?:A)=>B) => propOp(remap(f)(prop)),
+    when: (predicate:(v:A)=>boolean) => propOp(when(predicate)(prop)),
+    ...("then" in prop ? { then: prop.then.bind(prop) } : {})
+});
+
+
 /**
  * 引数がストリームであるかを判別する。
  * @param v 
@@ -574,8 +607,9 @@ const when = <A>(predicate: (v: A) => boolean) => (p: Prop<A>): PromisedProp<A> 
     
     const source = PROP_FROM.get(p)!;
     const _s = filter(predicate)(source);
+    _s[STREAM_CLEANER] = () => source.next.delete(_s);
     STREAM_PROP_RELATIONS.set(_s,[_p]);
-    cleanupRegistry.register(_p,new WeakRef(_p));
+    cleanupRegistry.register(_p,new WeakRef(_s));
 
     const resolvers: ((v:ThenOrNotThen)=>void)[] = [(v:ThenOrNotThen)=>thenOrNotThen=v];
     const callResolvers = (v:ThenOrNotThen) => {
@@ -695,13 +729,12 @@ const _beat$ = stream<void>();
  */
 const clock: Prop<number> = () => performance.now();
 
-const calendar = {
-    reservations: new Map<DripResult<any>, { resolve: (v:number)=>void, reject: (v:number) => void, at: number }>(),
-    schedule: async (r:DripResult<any>, at = clock()) => new Promise((resolve, reject)=>{
-        calendar.reservations.set(r, { resolve, reject, at });
-        if(clock() >= at) requestAnimationFrame(tick);
-    })
-}
+const RESERVATIONS = new Map<DripEffect<any>, { resolve: (v:number)=>void, reject: (v:number) => void, at: number }>();
+
+const collapse = async (r:DripEffect<any>, at = clock()) => new Promise((resolve, reject) => {
+    RESERVATIONS.set(r, { resolve, reject, at });
+    if(clock() >= at) requestAnimationFrame(tick);
+});
 
 type MomentStream = Stream<number> & {};
 
@@ -733,8 +766,7 @@ function registerTickHandler(handler: (effects: DripResult<any>[]) => void) {
 function tick(_now: number) {
     const now = clock();
     const beat_effect = drip<void>(void 0)(_beat$);
-    const resevations = [...calendar.reservations]
-        .flatMap(([effect, {at,resolve,reject}]) => at <= now ? [[effect,resolve,reject] as [DripResult<any>,(v:number)=>void,(v:number)=>void]] : [])
+    const resevations = [...RESERVATIONS].flatMap(([effect, {at,resolve,reject}]) => at <= now ? [[effect,resolve,reject] as [DripResult<any>,(v:number)=>void,(v:number)=>void]] : [])
     const queue = beat_effect.effects.length
         ? [beat_effect,...resevations.map(([effect])=>effect)]
         : resevations.map(([effect])=>effect);
@@ -743,11 +775,11 @@ function tick(_now: number) {
     // ハンドラーの呼び出し
     tickHandlers.forEach((handler)=>handler(queue));
     // 処理済みの予定を消去
-    resevations.forEach(([effect])=>calendar.reservations.delete(effect));
+    resevations.forEach(([effect])=>RESERVATIONS.delete(effect));
     // 完了通知
     resevations.forEach(([_,resolve])=>resolve(now));
     // 時間ベースのイベントが残っていれば、次のtickを予約する
-    if (beat_effect.effects.length || calendar.reservations.size) requestAnimationFrame(tick);
+    if (beat_effect.effects.length || RESERVATIONS.size) requestAnimationFrame(tick);
 }
 
 const nextState = (s:MomentState) => (n:number) : MomentState => 
@@ -820,8 +852,8 @@ export {
     merge,junction,map,filter,
     hold,accum,lift,remap,when,
     proxy,
-    pipe,
-    clock,moments,calendar,registerTickHandler
+    pipe,streamOp,propOp,
+    clock,moments,collapse,registerTickHandler
 };
 
 export type {
