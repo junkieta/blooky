@@ -266,6 +266,10 @@ const streamOp = <A>(_s:Stream<A> = stream()) : StreamOperators<A> => ({
         drip: <M extends 'deny' | 'allow' | 'await' = 'deny'>(value:A, options?: { acceptPromise?: M }) => drip(value,options)(_s)
     } : {})
 })
+
+streamOp.merge = <A>(s:(Stream<A>|StreamOperators<A>)[], f?:(a:A,b:A)=>A) : StreamOperators<A> =>
+    streamOp(merge(f)(s.map((s)=>isStream<A>(s) ? s : s.value)));
+
 const propOp = <A>(prop:Prop<A> | (Prop<A> & PromiseLike<A>)) : PropOperators<A> => ({
     value: prop,
     remap: <B>(f:(v:A,p?:A)=>B) => propOp(remap(f)(prop)),
@@ -273,6 +277,8 @@ const propOp = <A>(prop:Prop<A> | (Prop<A> & PromiseLike<A>)) : PropOperators<A>
     ...("then" in prop ? { then: prop.then.bind(prop) } : {})
 });
 
+propOp.lift = <A>(props: (Prop<any>|PropOperators<any>)[], f: (values: any[]) => A) : PropOperators<A> =>
+    propOp(lift(f)(props.map((p) => isChainedProp<any>(p) ? p : p.value )));
 
 /**
  * 引数がストリームであるかを判別する。
