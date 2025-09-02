@@ -242,6 +242,7 @@ function pipe(v,...fns) { return fns.reduce((v,f)=>f(v),v) }
 
 // 高階関数の引数順を入れ替えて、メソッドチェーン的な書き味に
 type StreamOperators<A> = {
+    value: Stream<A>
     map: <B>(f:((v:A)=>B)|Prop<B>|B) => StreamOperators<B>,
     filter: (f:((v:A)=>boolean)|RegExp|A) => StreamOperators<A>,
     hold: (v:A) => PropOperators<A>,
@@ -256,6 +257,7 @@ type PropOperators<A> = {
 }
 
 const streamOp = <A>(_s:Stream<A> = stream()) : StreamOperators<A> => ({
+    value: _s,
     map: <B>(f:((v:A)=>B)|Prop<B>|B) => streamOp(map(f)(_s)),
     filter: (f:((v:A)=>boolean)|RegExp|A) => streamOp(filter(f)(_s)),
     hold: (v:A) => propOp(hold(v)(_s)),
