@@ -1,5 +1,5 @@
 import { nodeDefinitionMap } from "./fx/nodes";
-import { accum, drip, DripperStream, Prop, stream } from "./blooky-fp";
+import { accum, collapse, drip, DripperStream, Prop, stream } from "./blooky-fp";
 import { FxNode, AppContext, CancelToken, ExecContext, FxExecutionContext, FxResult, YieldRequest, ExecutionHandle, PreparedFx, FxFactoryMap } from "./fx/types";
 
 // 参照オブジェクトの型を定義（ブランド化して、他のオブジェクトと区別する）
@@ -149,7 +149,7 @@ async function _internal_execute(
     // nodeにidがあれば、その結果をruntimeState$にdripする
     if (node.id) {
       // このdripは、エンジン内部の通信のため、同期的に実行する必要がある
-      drip({ id: node.id, value: nextValue })(this.runtimeState$).effects.forEach(e => e.update(e.nextValue, e.prevValue));
+      await collapse(drip({ id: node.id, value: nextValue })(this.runtimeState$));
     }
 
     await yieldToMainThread();

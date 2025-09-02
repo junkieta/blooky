@@ -385,10 +385,8 @@ const streamToFlowingState = <A>(v:A) => (s:Stream<A>) : FlowingState => {
     const p = STREAM_PROP_RELATIONS.get(s)!;
     const effect: PropEffect<any>[] = p.map((prop)=>({
         prop,
-        created: Date.now(),
         nextValue: v,
-        prevValue: prop(),
-        update: PROP_UPDATE.get(prop)!.bind(null, v)
+        prevValue: prop()
     }));
     return [effect,waiting];
 }
@@ -532,10 +530,7 @@ function drip<
 /**
  * 同期的なdrip。最速だが、Promiseの扱いに注意。
  */
-const dripSync = <A>(value:A, allowPromise = false) => (dripper:DripperStream<A>) => ({
-    trigger: { value, dripper },
-    effects : flowLazy(value, allowPromise)(dripper)[0],
-});
+const dripSync = <A>(value:A, allowPromise = false) => (dripper:DripperStream<A>) : DripEffect => flowLazy(value, allowPromise)(dripper)[0];
 
 /**
  * 非同期版のdrip。flowAsyncを呼び出し、EffectのPromiseを返す。
@@ -546,7 +541,7 @@ const dripAsync = <A>(value: A) => async (dripper: DripperStream<A>) => {
   for await (const effect of flowAsync(value, dripper)) {
     effects.push(effect);
   }
-  return { trigger: { value, dripper }, effects, };
+  return effects;
 };
 
 /**
@@ -737,11 +732,17 @@ const _beat$ = stream<void>();
  */
 const clock: Prop<number> = () => performance.now();
 
-const RESERVATIONS = new Map<DripEffect<any>, { resolve: (v:number)=>void, reject: (v:number) => void, at: number }>();
+const RESERVATIONS = new Map<DripEffect, { resolve: (v:number)=>void, reject: (v:number) => void, at: number }>();
 
-const collapse = async (r:DripEffect<any>, at = clock()) => new Promise((resolve, reject) => {
+const DEFAULT_TICK_CALLER = "requestAnimationFrame" in window
+    ? requestAnimationFrame
+    : (this as any).process
+    ? ((f:(t:number)=>void) => { (this as any).process.nextTick(()=>f(performance.now())); })
+    : ((f:(t:number)=>void) => { setTimeout(() => f(performance.now())) });
+
+const collapse = async (r:DripEffect, at = clock()) => new Promise((resolve, reject) => {
     RESERVATIONS.set(r, { resolve, reject, at });
-    if(clock() >= at) requestAnimationFrame(tick);
+    if(clock() >= at) DEFAULT_TICK_CALLER(tick);
 });
 
 type MomentStream = Stream<number> & {};
@@ -757,13 +758,13 @@ const moment$ : MomentStream = map<number, void>(clock)(_beat$);
 PROP_FROM.set(clock, moment$);
 
 // Effect処理のミドルウェア
-const tickHandlers = new Set<(effects: DripResult<any>[]) => void>();
+const tickHandlers = new Set<(effects: DripEffect[]) => void>();
 // デフォルトの処理の登録
-const defaultTickHandler = (e)=>e.forEach((e)=>e.effects.forEach((e)=>e.update(e.nextValue,e.prevValue)));
+const defaultTickHandler = (e)=>e.forEach((e)=>e.forEach((e)=>PROP_UPDATE.get(e.prop)!(e.nextValue,e.prevValue)));
 tickHandlers.add(defaultTickHandler);
 
 // ミドルウェアの登録用関数
-function registerTickHandler(handler: (effects: DripResult<any>[]) => void) {
+function registerTickHandler(handler: (effects: DripEffect[]) => void) {
   tickHandlers.add(handler);
   return () => tickHandlers.delete(handler);
 }
@@ -774,8 +775,8 @@ function registerTickHandler(handler: (effects: DripResult<any>[]) => void) {
 function tick(_now: number) {
     const now = clock();
     const beat_effect = drip<void>(void 0)(_beat$);
-    const resevations = [...RESERVATIONS].flatMap(([effect, {at,resolve,reject}]) => at <= now ? [[effect,resolve,reject] as [DripResult<any>,(v:number)=>void,(v:number)=>void]] : [])
-    const queue = beat_effect.effects.length
+    const resevations = [...RESERVATIONS].flatMap(([effect, {at,resolve,reject}]) => at <= now ? [[effect,resolve,reject] as [DripEffect,(v:number)=>void,(v:number)=>void]] : [])
+    const queue = beat_effect.length
         ? [beat_effect,...resevations.map(([effect])=>effect)]
         : resevations.map(([effect])=>effect);
     // 実行キューが空なら終了
@@ -787,7 +788,7 @@ function tick(_now: number) {
     // 完了通知
     resevations.forEach(([_,resolve])=>resolve(now));
     // 時間ベースのイベントが残っていれば、次のtickを予約する
-    if (beat_effect.effects.length || RESERVATIONS.size) requestAnimationFrame(tick);
+    if (beat_effect.length || RESERVATIONS.size) requestAnimationFrame(tick);
 }
 
 const nextState = (s:MomentState) => (n:number) : MomentState => 

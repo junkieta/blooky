@@ -8,7 +8,7 @@ import { type Stream, type Prop, type DripperStream, stream, drip, isChainedProp
 
 // DOMをfpのtickに結び付ける
 registerTickHandler((effectList) => {
-    const effects = effectList.flatMap((e) => e.effects);
+    const effects = effectList.flatMap((e) => e);
     const id_list = effects.map((e)=>getPropId(e.prop));
     const update_target = id_list.flatMap((id) => id in PROP_BRIDGE_RECORD ? PROP_BRIDGE_RECORD[id]! : []);
 

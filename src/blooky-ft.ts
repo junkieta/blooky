@@ -1,12 +1,12 @@
 // blooky-ft.ts
-import { PropEffect } from "./blooky-types";
-import { collapse, getPropId, isChainedProp, Prop } from "./blooky-fp";
+import { DripEffect, PropEffect } from "./blooky-types";
+import { accum, clock, collapse, drip, getPropId, isChainedProp, Prop, stream } from "./blooky-fp";
 import { registerTickHandler } from "./blooky-fp";
 
 // --- 型定義 ---
 type StateSnapshot = {
-  readonly id: string;
-  [key:symbol]: PropEffect<any>;
+  id: string
+  [key:symbol]: PropEffect<any>
 };
 
 // --- モジュール内部状態 ---
@@ -14,6 +14,15 @@ type StateSnapshot = {
 const ALL_SNAPSHOTS = new Map<string, StateSnapshot>();
 const BRANCHES = new Map<object, Record<string, string>>(); // context -> { branchName: snapshotId }
 const HEAD = new Map<object, string>(); // context -> branchName
+
+type Worldline = Record<string,string>;
+const WORLDLINES = new Map<object, Worldline>();
+
+const snapshotStream = stream<StateSnapshot>();
+const $ALL_SNAPSHOT_ITEMS = accum((items: { [key:string]: StateSnapshot }, snapshot: StateSnapshot) => {
+  items[snapshot.id] = snapshot;
+  return items;
+}, {})(snapshotStream);
 
 // --- API ---
 
@@ -23,19 +32,6 @@ const HEAD = new Map<object, string>(); // context -> branchName
  */
 function _init(ctx: object): void {
   if (BRANCHES.has(ctx)) return;
-
-  const rootSnapshot: StateSnapshot = { id: `snap_root_${Math.random().toString(36).slice(2)}` };
-  ALL_SNAPSHOTS.set(rootSnapshot.id, rootSnapshot);
-  
-  BRANCHES.set(ctx, { "main": rootSnapshot.id });
-  HEAD.set(ctx, "main");
-}
-
-/**
- * 指定されたコンテキストの現在の状態をスナップショットとして記録する。
- * @param ctx 記録したいコンテキスト
- */
-export function snapshot(ctx: object): Promise<StateSnapshot> {
   // 関数の冒頭で、コンテキストが凍結されたものか検証する
   if (!Object.isFrozen(ctx)) {
     throw new TypeError(
@@ -43,13 +39,35 @@ export function snapshot(ctx: object): Promise<StateSnapshot> {
       "Please ensure it was created with fc.build() or Object.freeze()"
     );
   }
+  const id = `snap_root_${Math.random().toString(36).slice(2)}`;
+  const rootSnapshot = {
+    id,
+    trigger: {
+      created: clock(),
+      dripper: snapshotStream,
+    },
+  } as StateSnapshot;
+  getContextProps(ctx).forEach((p)=>rootSnapshot[getPropId(p)]={
+    prop: p,
+    nextValue: p(),
+    prevValue: p()
+  });
+  ALL_SNAPSHOTS.set(rootSnapshot.id, rootSnapshot);
+  BRANCHES.set(ctx, { "main": rootSnapshot.id });
+  HEAD.set(ctx, "main");
+  collapse(drip(rootSnapshot)(snapshotStream));
+}
+
+/**
+ * 指定されたコンテキストの現在の状態をスナップショットとして記録する。
+ * @param ctx 記録したいコンテキスト
+ */
+export function snapshot(ctx: object): Promise<StateSnapshot> {
+  if(!BRANCHES.has(ctx)) _init(ctx);
   return new Promise((resolve) => {
-    if (!BRANCHES.has(ctx)) _init(ctx);
     const unregister = registerTickHandler((allDripEffects) => {
       const props = getContextProps(ctx);
-      const relevantEffects = allDripEffects.flatMap(drip =>
-        drip.effects.filter(effect => props.has(effect.prop))
-      );
+      const relevantEffects = allDripEffects.flatMap(effects => effects.filter(effect => props.has(effect.prop)));
 
       // 変更がなければ、スナップショットは作らない
       if (relevantEffects.length === 0) {
@@ -121,11 +139,7 @@ export function checkout(ctx: object, targetBranchOrId: string): void {
     });  
 
   if(effectsToApply.length) {
-    collapse({
-      trigger: { dripper: null as any, value: `checkout to ${targetBranchOrId}` },
-      effects: effectsToApply
-    })
-    .then(()=>{
+    collapse(effectsToApply).then(()=>{
       HEAD.set(ctx, branches[targetBranchOrId] ? targetBranchOrId : 'detached');
     });
   } else {
