@@ -1,6 +1,5 @@
 import type { FxExecutionContext, FxNode, FxRef, FxSwitchNode } from '../types';
 import { NodeDefinition } from '../NodeDefinition';
-import { Prop } from '../../blooky-fp';
 type ThisNode = Extract<FxNode, { type: 'switch' }>;
 
 export class SwitchNodeDefinition extends NodeDefinition<'switch'> {

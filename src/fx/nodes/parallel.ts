@@ -11,7 +11,7 @@ export class ParallelNodeDefinition extends NodeDefinition<'parallel'> {
 
   public async handle({ node, execute }: FxExecutionContext & { node: ThisNode }): Promise<any[]> {
     // すべてのPromiseが完了するのを待つ
-    return Promise.all(node.steps.map(execute));
+    return Promise.all(node.steps.map((n)=>execute(n)));
   }  
 
 }

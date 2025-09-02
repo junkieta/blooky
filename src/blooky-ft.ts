@@ -1,6 +1,6 @@
 // blooky-ft.ts
 import { PropEffect } from "./blooky-types";
-import { calendar, getPropId, isChainedProp, Prop } from "./blooky-fp";
+import { collapse, getPropId, isChainedProp, Prop } from "./blooky-fp";
 import { registerTickHandler } from "./blooky-fp";
 
 // --- 型定義 ---
@@ -121,7 +121,7 @@ export function checkout(ctx: object, targetBranchOrId: string): void {
     });  
 
   if(effectsToApply.length) {
-    calendar.schedule({
+    collapse({
       trigger: { dripper: null as any, value: `checkout to ${targetBranchOrId}` },
       effects: effectsToApply
     })

@@ -1,6 +1,6 @@
 import type { FxNode, FxRef, FxExecutionContext, YieldRequest, FxYieldNode, FxContextNode, FxResult } from '../types';
 import { NodeDefinition } from '../NodeDefinition';
-import { execute, prepare } from '../engine';
+import { execute, prepare } from '../../blooky-fx';
 import { RETURN_VALUE } from './return';
 type ThisNode = Extract<FxNode, { type: 'yield' }>;
 

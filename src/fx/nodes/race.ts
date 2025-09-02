@@ -1,6 +1,6 @@
 import type { CancelToken, FxExecutionContext, FxNode } from '../types';
 import { NodeDefinition } from '../NodeDefinition';
-import { createCancelToken } from '../engine';
+import { createCancelToken } from '../../blooky-fx';
 type ThisNode = Extract<FxNode, { type: 'race' }>;
 
 export class RaceNodeDefinition extends NodeDefinition<'race'> {

@@ -1,11 +1,11 @@
 // -- 0. 事前ロード ---
 import { stream, accum, merge, hold, map, remap, when, lift } from "./blooky-fp";
-import { collapse, jshtml } from "./blooky-dom";
-import type { FxContext, FxEffect } from "./blooky-fxdom";
+import { jshtml } from "./blooky-dom";
+import type { FxEffect } from "./blooky-fxdom";
 import { fxdom,EffectElementTagNameMap, dumpGraphDOT } from "./blooky-devtools";
 // dot視覚化用にviz
 import { instance as viz_instance } from "@viz-js/viz";
-import { fx, ref } from "./fx/engine";
+import { fx, ref } from "./blooky-fx";
 import { FxContextNode } from "./fx/types";
 
 // debuggerとしてdefine
@@ -32,9 +32,9 @@ const AppUI = jshtml({
     { p: ["Count: ", $count] },
     
     // イベントをStreamに接続
-    { button: "+", $: { onclick: collapse(increment$) } },
-    { button: "-", $: { onclick: collapse(decrement$) } },
-    { button: "Save", $: { onclick: collapse(save$), style: { marginLeft: '1em' } } },
+    { button: "+", $: { onclick: increment$ } },
+    { button: "-", $: { onclick: decrement$ } },
+    { button: "Save", $: { onclick: save$, style: { marginLeft: '1em' } } },
     
     // 副作用の状態を表示
     { div: $statusMessage, $: { id: "status" } },
@@ -65,7 +65,7 @@ const useKeys = Object.keys(rootContext);
 const fxEffectElement = jshtml({
     $: {
         use: useKeys.join(),
-        "onsave": collapse(save$),
+        "onsave": save$,
     },
     "fx-effect": 
     [
