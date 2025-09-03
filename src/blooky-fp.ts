@@ -19,7 +19,7 @@ const PROP_FROM = new WeakMap<Prop<any>, Stream<any>>();
 /**
  * Propの値を更新する
  */
-const PROP_UPDATE = new WeakMap<Prop<any>, ((v:any)=>void)|((next:any,prev:any)=>void)>();
+const PROP_UPDATE = new WeakMap<Prop<any>, ((v:any)=>void)>();
 
 // 各PropのIDとして機能するsymbolを保管する
 const PROP_IDENTIFIER = new WeakMap<Prop<any>, symbol>();
@@ -383,11 +383,7 @@ const streamToFlowingState = <A>(v:A) => (s:Stream<A>) : FlowingState => {
     const waiting = [...s.lazyNext].map((s) => [s,v] as [MergedStream<A>,A]);
     if(!STREAM_PROP_RELATIONS.has(s)) return [[], waiting];
     const p = STREAM_PROP_RELATIONS.get(s)!;
-    const effect: PropEffect<any>[] = p.map((prop)=>({
-        prop,
-        nextValue: v,
-        prevValue: prop()
-    }));
+    const effect: DripEffect = p.map((prop)=>([prop,v]));
     return [effect,waiting];
 }
 
@@ -509,7 +505,7 @@ async function* flowAsync<A>(v: A, s: Stream<A>): AsyncGenerator<PropEffect<unkn
 
 
 /**
- * 起点となるストリームに時変値を流し込み、関連するオブザーバの呼び出しと時変値で構成されたEffectを返す。
+ * 起点となるストリームに時変値を流し込み、関連する時変値で構成されたEffectを返す。
  * @param s 
  * @returns 
  */
@@ -732,17 +728,21 @@ const _beat$ = stream<void>();
  */
 const clock: Prop<number> = () => performance.now();
 
-const RESERVATIONS = new Map<DripEffect, { resolve: (v:number)=>void, reject: (v:number) => void, at: number }>();
+const RESERVATIONS : { 
+    effect: DripEffect,
+    resolve: (v:number)=>void,
+    reject: (v:number) => void
+}[] = [];
 
-const DEFAULT_TICK_CALLER = "requestAnimationFrame" in window
+const DEFAULT_TICK_CALLER = typeof globalThis.requestAnimationFrame === "function"
     ? requestAnimationFrame
-    : (this as any).process
-    ? ((f:(t:number)=>void) => { (this as any).process.nextTick(()=>f(performance.now())); })
+    : typeof globalThis.process === "object"
+    ? ((f:(t:number)=>void) => { globalThis.process.nextTick(()=>f(performance.now())); })
     : ((f:(t:number)=>void) => { setTimeout(() => f(performance.now())) });
 
-const collapse = async (r:DripEffect, at = clock()) => new Promise((resolve, reject) => {
-    RESERVATIONS.set(r, { resolve, reject, at });
-    if(clock() >= at) DEFAULT_TICK_CALLER(tick);
+const collapse = async (effect:DripEffect) => new Promise((resolve, reject) => {
+    if(!RESERVATIONS.length) DEFAULT_TICK_CALLER(tick);
+    RESERVATIONS.push({ effect, resolve, reject });
 });
 
 type MomentStream = Stream<number> & {};
@@ -758,13 +758,16 @@ const moment$ : MomentStream = map<number, void>(clock)(_beat$);
 PROP_FROM.set(clock, moment$);
 
 // Effect処理のミドルウェア
-const tickHandlers = new Set<(effects: DripEffect[]) => void>();
+const tickHandlers = new Set<(effect: DripEffect) => void>();
+
 // デフォルトの処理の登録
-const defaultTickHandler = (e)=>e.forEach((e)=>e.forEach((e)=>PROP_UPDATE.get(e.prop)!(e.nextValue,e.prevValue)));
+const defaultTickHandler:(effect: DripEffect) => void = 
+    (e)=>e.forEach(([p,v])=>PROP_UPDATE.get(p)!(v));
+
 tickHandlers.add(defaultTickHandler);
 
 // ミドルウェアの登録用関数
-function registerTickHandler(handler: (effects: DripEffect[]) => void) {
+function registerTickHandler(handler: (effect: DripEffect) => void) {
   tickHandlers.add(handler);
   return () => tickHandlers.delete(handler);
 }
@@ -772,23 +775,23 @@ function registerTickHandler(handler: (effects: DripEffect[]) => void) {
 /**
  * 1フレーム分の処理。この関数内が、一つの「瞬間（Moment）」となる。
  */
-function tick(_now: number) {
+function tick() {
     const now = clock();
     const beat_effect = drip<void>(void 0)(_beat$);
-    const resevations = [...RESERVATIONS].flatMap(([effect, {at,resolve,reject}]) => at <= now ? [[effect,resolve,reject] as [DripEffect,(v:number)=>void,(v:number)=>void]] : [])
-    const queue = beat_effect.length
-        ? [beat_effect,...resevations.map(([effect])=>effect)]
-        : resevations.map(([effect])=>effect);
+    const queue = RESERVATIONS.flatMap((e)=>e.effect).concat(beat_effect);
+    const resolvers = RESERVATIONS.map(({resolve})=>resolve);
+
     // 実行キューが空なら終了
     if(!queue.length) return;
+    // 処理済みの予定を消去
+    RESERVATIONS.length = 0;
     // ハンドラーの呼び出し
     tickHandlers.forEach((handler)=>handler(queue));
-    // 処理済みの予定を消去
-    resevations.forEach(([effect])=>RESERVATIONS.delete(effect));
     // 完了通知
-    resevations.forEach(([_,resolve])=>resolve(now));
+    resolvers.forEach((r)=>r(now));
+
     // 時間ベースのイベントが残っていれば、次のtickを予約する
-    if (beat_effect.length || RESERVATIONS.size) requestAnimationFrame(tick);
+    if (beat_effect.length || RESERVATIONS.length) DEFAULT_TICK_CALLER(tick);
 }
 
 const nextState = (s:MomentState) => (n:number) : MomentState => 

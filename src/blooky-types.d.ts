@@ -13,11 +13,7 @@ interface Branch {
 // 副作用の集合体
 type DripEffect = PropEffect<any>[]
 
-type PropEffect<A> = {
-    prop: Prop<A>
-    nextValue: A
-    prevValue: A
-} 
+type PropEffect<A> = [Prop<A>,A]
 
 type DripResult<A,M="deny"> = M extends 'await'
   ? Promise<DripEffect>

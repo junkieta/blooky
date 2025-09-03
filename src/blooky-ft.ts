@@ -47,11 +47,7 @@ function _init(ctx: object): void {
       dripper: snapshotStream,
     },
   } as StateSnapshot;
-  getContextProps(ctx).forEach((p)=>rootSnapshot[getPropId(p)]={
-    prop: p,
-    nextValue: p(),
-    prevValue: p()
-  });
+  getContextProps(ctx).forEach((p)=>rootSnapshot[getPropId(p)]=[p,p()]);
   ALL_SNAPSHOTS.set(rootSnapshot.id, rootSnapshot);
   BRANCHES.set(ctx, { "main": rootSnapshot.id });
   HEAD.set(ctx, "main");
@@ -67,7 +63,7 @@ export function snapshot(ctx: object): Promise<StateSnapshot> {
   return new Promise((resolve) => {
     const unregister = registerTickHandler((allDripEffects) => {
       const props = getContextProps(ctx);
-      const relevantEffects = allDripEffects.flatMap(effects => effects.filter(effect => props.has(effect.prop)));
+      const relevantEffects = allDripEffects.flatMap(effects => effects.filter(([p]) => props.has(p)));
 
       // 変更がなければ、スナップショットは作らない
       if (relevantEffects.length === 0) {
@@ -82,7 +78,7 @@ export function snapshot(ctx: object): Promise<StateSnapshot> {
       const newSnapshot: StateSnapshot = Object.create(ALL_SNAPSHOTS.get(parentSnapshotId)!, {
         id: { value: `snap_${Math.random().toString(36).slice(2)}` },
       });
-      relevantEffects.forEach((e)=>newSnapshot[getPropId(e.prop)]=e);
+      relevantEffects.forEach(([p,v])=>newSnapshot[getPropId(p)]=v);
       
       ALL_SNAPSHOTS.set(newSnapshot.id, newSnapshot);
       BRANCHES.get(ctx)![headBranchName] = newSnapshot.id;
@@ -120,7 +116,7 @@ export function checkout(ctx: object, targetBranchOrId: string): void {
   const targetSnapshot = ALL_SNAPSHOTS.get(targetSnapshotId);
   if (!targetSnapshot) throw new Error(`Target "${targetBranchOrId}" not found.`);
 
-  const effectsToApply: PropEffect<any>[] = 
+  const effectsToApply: DripEffect = 
     [...getContextProps(ctx)].flatMap((prop) => {
       const propId = getPropId(prop);
       if (!(propId in targetSnapshot)) {
@@ -130,12 +126,9 @@ export function checkout(ctx: object, targetBranchOrId: string): void {
           `The context's shape must remain consistent.`
         );
       }
-      const recordedEffect = targetSnapshot[propId];
-      const currentValue = prop();
+      const effect = targetSnapshot[propId];
       // 目的の値と現在の値が違う場合のみ、Effectを生成
-      return currentValue === recordedEffect.nextValue
-        ? []
-        : { ...recordedEffect, prevValue: currentValue };
+      return prop() === effect[1] ? [] : [effect];
     });  
 
   if(effectsToApply.length) {

@@ -7,9 +7,8 @@ import type { V_DATASET, V_STYLE, V_CLASSLIST, V_EVENTLISTENER, V_STRING, Writab
 import { type Stream, type Prop, type DripperStream, stream, drip, isChainedProp, filter, isDripperStream, when, registerTickHandler, getPropId, hasReferences, collapse } from "./blooky-fp";
 
 // DOMをfpのtickに結び付ける
-registerTickHandler((effectList) => {
-    const effects = effectList.flatMap((e) => e);
-    const id_list = effects.map((e)=>getPropId(e.prop));
+registerTickHandler((effects) => {
+    const id_list = effects.map(([p])=>getPropId(p));
     const update_target = id_list.flatMap((id) => id in PROP_BRIDGE_RECORD ? PROP_BRIDGE_RECORD[id]! : []);
 
     // ツリーから外れたものと、更新の発生したPropに包含されているPropはbindから外す
@@ -27,12 +26,11 @@ registerTickHandler((effectList) => {
                 PROP_BRIDGE_RECORD[id] = filtered;
         }
     });
-    effects.forEach((effect,index)=>{
+    effects.forEach(([p,v],index)=>{
         if(!(id_list[index] in PROP_BRIDGE_RECORD)) return;
-        const a = effect.nextValue as any;
-        const b = effect.prevValue as any;
-        const bridges = update_target.filter((bridge)=>effect.prop === bridge.prop);
-        bridges.forEach((bridge)=>bridge.update(a,b));
+        const prev = p() as any;
+        const bridges = update_target.filter((bridge)=>bridge.prop === p);
+        bridges.forEach((bridge)=>bridge.update(v,prev));
     });
 })
 
