@@ -3,7 +3,7 @@ import { EffectElementTagNameMap as DefaultEffectElementTagNameMap, EffectElemen
 import { FxNode, FxMiddleware, ExecContext } from "./fx/types";
 
 const FxNodeMap = new WeakMap<FxNode, EffectElement>();
-const getElement = (n: FxNode) : EffectElement | undefined => FxNodeMap.get(n);
+const getFxElement = (n: FxNode) : EffectElement | undefined => FxNodeMap.get(n);
 
 const DebEffectElementStyleSheet = new CSSStyleSheet();
 DebEffectElementStyleSheet.replaceSync(`
@@ -83,7 +83,7 @@ document.adoptedStyleSheets.push(sheet);
 
 const debugMiddleware: FxMiddleware = async (ctx, next) => {
   const { node } = ctx;
-  const element = getElement(node);
+  const element = getFxElement(node);
   if(!element) return await next();
 
   let result: any = null;
@@ -176,11 +176,11 @@ EffectElementTagNameMap["fx-collapse"] = class extends (EffectElementTagNameMap[
 const ExecContextForDebug : Partial<ExecContext> = {
   middlewares: [debugMiddleware],
   onNodeEnter(node: FxNode): void {
-    const element = getElement(node);
+    const element = getFxElement(node);
     element?.classList.add('is-running');
   },
   onNodeExit(node: FxNode, reason?: any, error?: any): void {
-    const element = getElement(node);
+    const element = getFxElement(node);
     if(!element) return;
     element.classList.remove('is-running');
     if (error) {
