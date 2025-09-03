@@ -1,13 +1,13 @@
-import { DripperStream, isDripperStream, isStream, type Prop, type Stream } from "./blooky-fp";
+import { DripperStream, type Prop, type Stream } from "./blooky-fp";
 import { jshtml } from "./blooky-dom";
 import { 
   prepare, 
   execute, 
   fx, 
-  ref, // ★
+  ref,
   FxRef
 } from "./blooky-fx";
-import { FxNode, FxDispatchSettings, ExecContext, PreparedFx, ExecutionHandle } from "./fx/types";
+import { FxNode, ExecContext, PreparedFx, ExecutionHandle } from "./fx/types";
 
 // ---- Abstract Base ----
 
@@ -21,7 +21,7 @@ export abstract class EffectElement extends HTMLElement {
   }
 }
 
-// ---- Core Elements (リファクタリング後) ----
+// ---- Core Elements----
 
 class FxSequence extends EffectElement {
   toFxNode(): FxNode {
@@ -39,7 +39,6 @@ class FxRace extends EffectElement {
     return fx.race(this.childrenToFxNodes());
   }
 }
-// ... FxParallel, FxRace は変更なし ...
 
 class FxWait extends EffectElement {
   toFxNode(): FxNode {
@@ -77,13 +76,12 @@ class FxCall extends EffectElement {
   }
 }
 
-
 /**
  * 読み込んだフローのDOMテンプレートをキャッシュするためのMap
  * string: JSONファイルのsrc
  * HTMLTemplateElement: パース済みのDOMフラグメントを保持するtemplate要素
  */
-const flowTemplateCache = new Map<string, HTMLTemplateElement>();
+const FLOW_TEMPLATE_CACHE = new Map<string, HTMLTemplateElement>();
 
 
 class FxInclude extends EffectElement { // FxFlowからFxIncludeにリネーム
@@ -124,13 +122,13 @@ class FxInclude extends EffectElement { // FxFlowからFxIncludeにリネーム
       return;
     }
 
-    let template = flowTemplateCache.get(src);
+    let template = FLOW_TEMPLATE_CACHE.get(src);
     if (!template) {
       try {
         const response = await fetch(src, { headers: { Accept: "application/json" } });
         if (!response.ok) throw new Error(`Fetch failed: ${response.statusText}`);
         template = jshtml({ template: await response.json() }) as HTMLTemplateElement;
-        flowTemplateCache.set(src, template);
+        FLOW_TEMPLATE_CACHE.set(src, template);
       } catch (error) {
         console.error(`Error processing include from "${src}":`, error);
         this.replaceChildren(); // エラー時も内容を空にする
@@ -319,8 +317,6 @@ class FxEffect extends FxContext {
   }
 
 }
-
-// ... (EffectElementTagNameMapとfxdomの定義は変更なし) ...
 
 const fxdom = {
 
