@@ -42,7 +42,7 @@ type FxContextNode = FxNodeBase<"context",  { context: AppContext, child: FxNode
 type FxReturnNode = FxNodeBase<"return",  { value: FxRef<any> }>;
 
 /**
- * ユーザーが定義する、コンパイル前の副作用フローのノードを表す合併型
+ * 副作用フローのノードを表す合併型
  */
 type FxNode =
   | FxNoneNode
