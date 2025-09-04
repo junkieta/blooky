@@ -83,6 +83,12 @@ interface INodeDefinition<T extends FxNode['type']> {
   step(
     context: FxExecutionContext & { node: Extract<FxNode, { type: T }> }
   ): Generator<FxNode, any, any>;
+
+  /**
+   * nodeが直接所有する別のFxNodeの配列、なければnullを返す
+   * @param node 
+   */
+  getChildNodes(node: Extract<FxNode, { type: T }>) : null|FxNode[]
   
   /**
    * ノードを実行するハンドラ
@@ -124,8 +130,6 @@ interface ExecContext {
   middlewares?: FxMiddleware[];
   onNodeEnter?: (node: FxNode) => void;
   onNodeExit?: (node: FxNode, result?:any, error?: Error) => void;
-  runtimeState$: DripperStream<FxResult>; // 結果報告用
-  yieldChannel?: (req:YieldRequest) => void
 }
 
 // ミドルウェアに渡される、各ステップの情報
@@ -162,13 +166,7 @@ interface ExecutionHandle {
    * フローの実行をキャンセルする。
    */
   cancel: () => void;
-
-  /**
-   * フローが生成するid付きの結果を受け取るためのStream。
-   * UIのリアルタイム更新など、宣言的なリアクティブ連携に。
-   */
-  results$: Stream<FxResult>;
-
+  
   /**
    * 実行の完了を知らせるPromise
    */

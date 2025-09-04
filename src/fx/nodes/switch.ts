@@ -9,6 +9,11 @@ export class SwitchNodeDefinition extends NodeDefinition<'switch'> {
     return { type: 'switch', by, cases, default: defaultNode };
   }
 
+  public getChildNodes(node: FxSwitchNode): null | FxNode[] {
+    const cases = [...node.cases.values()];
+    return node.default ? cases.concat(node.default) : cases;
+  }
+
   public *step({ node,run,context }: FxExecutionContext & { node: FxSwitchNode; }): Generator<FxNode, void, any> {
     const by = context.resolve(node.by)();
     if(node.cases.has(by))

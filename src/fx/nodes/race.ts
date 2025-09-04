@@ -1,4 +1,4 @@
-import type { CancelToken, FxExecutionContext, FxNode } from '../types';
+import type { CancelToken, FxExecutionContext, FxNode, FxRaceNode } from '../types';
 import { NodeDefinition } from '../NodeDefinition';
 import { createCancelToken } from '../../blooky-fx';
 type ThisNode = Extract<FxNode, { type: 'race' }>;
@@ -8,6 +8,10 @@ export class RaceNodeDefinition extends NodeDefinition<'race'> {
 
   public factory(steps: FxNode[]): ThisNode {
     return { type: 'race', steps };
+  }
+
+  public getChildNodes(node: FxRaceNode): null | FxNode[] {
+    return node.steps;
   }
 
   public async handle({ node,context,execute }: FxExecutionContext & { node: ThisNode }): Promise<any> {

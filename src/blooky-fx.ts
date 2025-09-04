@@ -1,5 +1,5 @@
 import { nodeDefinitionMap } from "./fx/nodes";
-import { accum, collapse, drip, DripperStream, Prop, stream } from "./blooky-fp";
+import { accum, collapse, drip, DripperStream, Prop, proxy, stream } from "./blooky-fp";
 import { FxNode, AppContext, CancelToken, ExecContext, FxExecutionContext, FxResult, YieldRequest, ExecutionHandle, PreparedFx, FxFactoryMap } from "./fx/types";
 
 // 参照オブジェクトの型を定義（ブランド化して、他のオブジェクトと区別する）
@@ -41,21 +41,44 @@ function prepare(
   initialAppContext: AppContext,
   parentExecContext?: Partial<ExecContext>
 ): PreparedFx {
-  
-  const cancelToken = createCancelToken();
-  const runtimeState$ = stream<FxResult>();
-  const proxyContext = createProxyContext(initialAppContext, runtimeState$);
-  const execContext: ExecContext = {
-    resolve: (v:FxRef<any>) => resolveValue(v)(proxyContext),
-    ...parentExecContext,
-    cancelToken,
-    runtimeState$,
+
+  // --- 矛盾チェックの準備 ---
+  const checkContext = (node: FxNode) : [string[],string[]] => {
+    // FxRef型の値をチェック
+    const keys = Object.values(node).filter((v) => isFxRef<any>(v) && !(v.key in initialAppContext)).map((v)=>v.key);
+    // idの有無をチェック
+    const id = node.id ? ["#"+node.id] : [];
+    const children = nodeDefinitionMap.get(node.type)!.getChildNodes(node);
+    if(!children) return [keys,id];
+    const child_result = children.map(checkContext);
+    return [
+      keys.concat(child_result.flatMap(([v])=>v)),
+      id.concat(child_result.flatMap(([_,v])=>v))
+    ]
   };
 
+  // 未定義のキー参照を調べる
+  const [keys,idList] = checkContext(flow);
+  if (keys.length && keys.some((k) => !idList.includes(k)))
+      throw new Error(`prepare: context missing keys: ${[...new Set(keys)].join(",")}`);
+
+  const runtimeState: { [key:string]: unknown } = {};
+  const NOT_RESOLVED = Symbol();
+  [...new Set(idList)].forEach((id)=> runtimeState[id] = NOT_RESOLVED);
+  // ノードツリー内で宣言済みのidだけを受け付ける
+  Object.seal(runtimeState);
+
+  const appContext = createProxyContext(initialAppContext, runtimeState);
+  const cancelToken = createCancelToken();
+  const execContext: ExecContext = {
+    resolve: (v:FxRef<any>) => resolveValue(v)(appContext),
+    ...parentExecContext,
+    cancelToken
+  };
   return {
     rootNode: flow,
     execContext,
-    appContext: proxyContext,
+    appContext,
   };
 }
 
@@ -84,7 +107,6 @@ function execute(preparedFx: PreparedFx): ExecutionHandle {
   // 実行ハンドルを同期的に返す
   const handle : ExecutionHandle = {
     cancel: execContext.cancelToken.cancel,
-    results$: execContext.runtimeState$,
     done: resultPromise,
   };
   
@@ -146,10 +168,9 @@ async function _internal_execute(
       }
     }
 
-    // nodeにidがあれば、その結果をruntimeState$にdripする
-    if (node.id) {
-      // このdripは、エンジン内部の通信のため、同期的に実行する必要がある
-      await collapse(drip({ id: node.id, value: nextValue })(this.runtimeState$));
+    // nodeにidがあれば、appContextに反映(厳密には、Proxyしているidレコードにセット)
+    if (node.id && ("#" + node.id) in ctx.appContext) {
+      ctx.appContext["#" + node.id] = nextValue;
     }
 
     await yieldToMainThread();
@@ -196,28 +217,30 @@ function yieldToMainThread(): Promise<void> {
 }
 
 // Proxyコンテキストを生成するヘルパー関数
-const createProxyContext = (appContext: AppContext, runtimeState$: DripperStream<FxResult>): AppContext => {
-  const $runtimeState = accum<Record<string, any>, FxResult>(
-    (acc, res) => ({ ...acc, ["#" + res.id]: res.value }),
-    {}
-  )(runtimeState$);
-  
-
+const createProxyContext = (appContext: AppContext, idState: { [key:string]: unknown }): AppContext => {
   return new Proxy(appContext, {
     get(target, key) {
-      if (typeof key === 'string' && key.startsWith('#')) {
-        return $runtimeState()[key];
+      if (typeof key === 'string' && key in idState) {
+        return idState[key];
       }
       return Reflect.get(target, key);
     },
+    // id参照の更新のみ受け付ける
+    set(_,key,value) {
+      if (typeof key === 'string' && idState.hasOwnProperty(key)) {
+        idState[key] = value;
+        return true;
+      }
+      return false;
+    },
     has(target, key) {
       if (typeof key === 'string' && key.startsWith('#')) {
-        return key in $runtimeState();
+        return key in idState;
       }
       return Reflect.has(target, key);
     },
     ownKeys(target) {
-      return [...Reflect.ownKeys(target), ...Object.keys($runtimeState())];
+      return [...Reflect.ownKeys(target), ...Object.keys(idState)];
     },
   });
 }
