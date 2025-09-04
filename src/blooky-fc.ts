@@ -1,7 +1,5 @@
 // blooky-fc.ts
-
-// --- 型定義 ---
-type Blueprint<A extends Object> = { [key in keyof A]: PropertyDescriptor };
+import { Blueprint } from "./blooky-types";
 
 const blueprint = <A extends Object>(o: A) : Blueprint<A> => {
     const descs : PropertyDescriptorMap[] = [];
@@ -62,9 +60,6 @@ const is: { [key:string]: (v:any)=>boolean } = {
 
 };
 
-
-
-
 /**
  * 完成した設計図（ディスクリプタとオプションのProxy）から、最終的なコンテキストオブジェクトを生成（具現化）する。
  * 生成されるコンテキストは不変(frozen)となる。
@@ -78,61 +73,60 @@ function build<T extends object>(
     contract?: { [key: string]: (value: any) => boolean }
   } = {}
 ): Readonly<T> {
-    // 仕様書（contract）が渡されていれば、検証を実行
-    if (options.contract) {
-        const contract = options.contract;
-        for (const key in contract) {
-            // a) 必須キーの存在チェック
-            if (!(key in spec)) {
-                throw new TypeError(`Context build failed: Required key "${key}" is missing from the blueprint.`);
-            }
-            // b) 列挙可能性のチェック
-            const descriptor = spec[key];
-            if(!descriptor.enumerable) {
-                throw new TypeError(`Context build failed: Required key "${key}" is unenumarable.`);
-            }
-            // c) 型の整合性チェック
-            const validator = contract[key];
-            // `value`か`get`を持つディスクリプタのみを対象とする
-            const isValid = "get" in descriptor
-                ? validator(descriptor.get())
-                : "value" in descriptor
-                ? validator(descriptor.value)
-                : true;
-            if(!isValid)
-                throw new TypeError(`Context build failed: The type of "${key}" is incorrect.`);
-        }
+  // 仕様書（contract）が渡されていれば、検証を実行
+  if (options.contract) {
+    const contract = options.contract;
+    for (const key in contract) {
+      // a) 必須キーの存在チェック
+      if (!(key in spec)) {
+          throw new TypeError(`Context build failed: Required key "${key}" is missing from the blueprint.`);
+      }
+      // b) 列挙可能性のチェック
+      const descriptor = spec[key];
+      if(!descriptor.enumerable) {
+          throw new TypeError(`Context build failed: Required key "${key}" is unenumarable.`);
+      }
+      // c) 型の整合性チェック
+      const validator = contract[key];
+      // `value`か`get`を持つディスクリプタのみを対象とする
+      const isValid = "get" in descriptor
+          ? validator(descriptor.get())
+          : "value" in descriptor
+          ? validator(descriptor.value)
+          : true;
+      if(!isValid)
+          throw new TypeError(`Context build failed: The type of "${key}" is incorrect.`);
     }
-    return Object.freeze(Object.create("parent" in options ? options.parent || null : Object.prototype, spec));
+  }
+  return Object.freeze(Object.create("parent" in options ? options.parent || null : Object.prototype, spec));
 }
 
 /**
  * コンテキストを関数の第一引数に注入（prime）し、関数を実行する。
- * @param context 任意の凍結済みコンテキストオブジェクト
+ * @param context 任意のコンテキストオブジェクト
  * @param func コンテキストを第一引数として受け取る関数
  */
-const prime = <T extends Readonly<object>>(context: T) => <R>(func: (context: T) => R): R  => func(context);
+const prime = <T extends object>(context: T) => <R>(func: (context: T) => R): R  => func(context);
 
 /**
  * コンテキストを関数の`this`に宿らせ（embody）、新しい関数を返す。
- * @param context 任意の凍結済みコンテキストオブジェクト
+ * @param context 任意のコンテキストオブジェクト
  * @param func コンテキストを`this`として受け取る関数
  */
-const embody = <T extends Readonly<object>>(context: T) => <F extends (this: T, ...args: any[]) => any>(func: F): F => func.bind(context) as F;
+const embody = <T extends object>(context: T) => <F extends (this: T, ...args: any[]) => any>(func: F): F => func.bind(context) as F;
 
 /**
  * primeの引数順を逆にしたバージョン。テンプレートを宣言して、適したコンテキストを後から受け取って実行する。
- * @param context 任意の凍結済みコンテキストオブジェクト
+ * @param context 任意のコンテキストオブジェクト
  * @param func コンテキストを第一引数として受け取る関数
  */
-const template = <R,T extends Readonly<object>>(fn:(v:T)=>R) => (ctx:T) => fn(ctx);
+const template = <R,T extends object>(fn:(v:T)=>R) => (ctx:T) => fn(ctx);
 
-
-export {
-    Blueprint,
-    blueprint,build,
-    omit,pick,
-    prime,embody,template,
-    is
+// 名前空間としてexport
+export const fc = {
+  blueprint,build,
+  omit,pick,
+  prime,embody,template,
+  is
 }
 

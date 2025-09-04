@@ -228,8 +228,8 @@ EffectElementTagNameMap["fx-effect"] = class extends (EffectElementTagNameMap["f
 export {fxdom,EffectElementTagNameMap,debugMiddleware};
 
 // グラフ描画
-function dumpGraphDOT(entries: Record<string, Stream<any> | Prop<any>>): string {
-  const names = new WeakMap(Object.entries(entries).map(([k,v])=>[v,k]));
+function dumpGraphDOT(entries: Record<string, Stream<any> | Prop<any> | unknown>): string {
+  const names = new WeakMap(Object.entries(entries).map(([k,v])=>[Object(v),k]));
   const visited = new WeakMap<any, string>(); // obj → nodeId
   const edges: string[] = [];
   const nodes: string[] = [];

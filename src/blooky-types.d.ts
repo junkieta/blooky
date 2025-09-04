@@ -19,8 +19,11 @@ type DripResult<A,M="deny"> = M extends 'await'
   ? Promise<DripEffect>
   : DripEffect;
  
+type Blueprint<A extends Object> = { [key in keyof A]: PropertyDescriptor };
+
 
 export {
   DripEffect,DripperStream, PropEffect,DripResult,
   Branch,
+  Blueprint
 }

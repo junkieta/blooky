@@ -7,6 +7,7 @@ import { fxdom,EffectElementTagNameMap, dumpGraphDOT } from "./blooky-devtools";
 import { instance as viz_instance } from "@viz-js/viz";
 import { fx, ref } from "./blooky-fx";
 import { FxContextNode } from "./fx/types";
+import { fc } from "./blooky-fc";
 
 // debuggerとしてdefine
 fxdom.defineEffectElements(EffectElementTagNameMap);
@@ -24,49 +25,44 @@ const $count = accum((current: number, val: number) => current + val, 0)(changeC
 const $statusMessage = hold('Ready.')(statusMessageStream$);
 const $finalMessage = remap<string,number>((v) => `Saved Count:${v}`)($count);
 
-// --- 2. UIの定義 (jshtml) ---
-
-const AppUI = jshtml({
-  div: [
-    // 状態(Prop)をUIにバインド
-    { p: ["Count: ", $count] },
-    
-    // イベントをStreamに接続
-    { button: "+", $: { onclick: increment$ } },
-    { button: "-", $: { onclick: decrement$ } },
-    { button: "Save", $: { onclick: save$, style: { marginLeft: '1em' } } },
-    
-    // 副作用の状態を表示
-    { div: $statusMessage, $: { id: "status" } },
-
-  ]
-});
-
 // confirmの呼び出しを別ツリーのフローとして宣言
 const fxConfirm = fx.context({},fx.sequence([
     fx.call((text)=>confirm(text) ? "yes" : "no", { arg: ref("yieldedValue"), id: "confirmResult" }),
     fx.return(ref("#confirmResult")),
 ])) as FxContextNode;
 
-// コンテキストとして渡すためのJSオブジェクト
-const rootContext = {
-    log: (s:unknown)=>console.log(s),
-    fxConfirm,
+const context = {
+    increment$,
+    decrement$,
     save$,
     $triggerSave,
     statusMessageStream$,
+    changeCountStream,
     $count,
-    $finalMessage
+    $statusMessage,
+    $finalMessage,
+    fxConfirm,
+    log: (s:unknown)=>console.log(s),
 };
 
-const useKeys = Object.keys(rootContext);
+// --- 2. UIの定義 (jshtml) ---
+
+const AppUI = fc.prime(context)(({$count,increment$,decrement$,save$,$statusMessage}) => jshtml({
+  div: [
+    // 状態(Prop)をUIにバインド
+    { p: ["Count: ", $count] },
+    // イベントをStreamに接続
+    { button: "+", $: { onclick: increment$ } },
+    { button: "-", $: { onclick: decrement$ } },
+    { button: "Save", $: { onclick: save$, style: { marginLeft: '1em' } } },
+    // 副作用の状態を表示
+    { div: $statusMessage, $: { id: "status" } },
+  ]
+}));
 
 // --- 副作用フローの宣言的な定義 (fxdom) ---
 const fxEffectElement = jshtml({
-    $: {
-        use: useKeys.join(),
-        "onsave": save$,
-    },
+    $: { "onsave": save$, },
     "fx-effect": 
     [
         { "fx-wait": jshtml.$({ "until": "$triggerSave" }) },
@@ -92,16 +88,7 @@ const fxEffectElement = jshtml({
 }) as FxEffect;
 
 // Stream/Prop構造のdot
-const dot = dumpGraphDOT({
-    increment$,
-    decrement$,
-    changeCountStream,
-    $count,
-    statusMessageStream$,
-    $statusMessage,
-    $finalMessage
-});
-
+const dot = dumpGraphDOT(context);
 
 const renderDot = async (dot: string) => {
     const viz = await viz_instance();
@@ -111,7 +98,7 @@ const renderDot = async (dot: string) => {
 // --- 3. アプリケーションのマウントとコンテキスト設定 ---
 
 // コンテキストの設定
-fxEffectElement.setContext(rootContext);
+fxEffectElement.setContext(context);
 
 // UIをDOMにマウントする
 document.body.append(AppUI, fxEffectElement, jshtml(renderDot(dot)));

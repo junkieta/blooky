@@ -30,7 +30,6 @@ const PROP_IDENTIFIER = new WeakMap<Prop<any>, symbol>();
 type StreamBase<A,T> = {
     /**
      * ガベージコレクション
-     * @returns 
      */
     [STREAM_CLEANER]?: ()=>void
     /**
