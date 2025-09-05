@@ -79,8 +79,8 @@ const decrement$ = stream<void>();
 const $count = 
   accum((c, v) => c + v, 0)
     (merge<number>()([
-      map(() => 1)(this.increment$),
-      map(() => -1)(this.decrement$)
+      map(() => 1)(increment$),
+      map(() => -1)(decrement$)
     ]));
 const log = (msg) => console.log(msg);
 
