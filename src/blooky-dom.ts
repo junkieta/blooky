@@ -182,7 +182,7 @@ class AttrPropBridge extends AbstractAttrPropBridge<JSHTMLAttrSource> {
             if(isDripperStream(next))
                 next = this.generatedListener = getTracableListener(next)(this.target);
         }
-        update_attr([this.name,next] as T_ATTRSET)(this.target);
+        updateAttr([this.name,next] as T_ATTRSET)(this.target);
         this.dispatchModifiedEvent("attr-prop-modified", next, prev);
     }
     contains(p: PropBridge) {
@@ -199,7 +199,7 @@ class AttrPropBridge extends AbstractAttrPropBridge<JSHTMLAttrSource> {
 class StylePropBridge extends AbstractAttrPropBridge<V_STRING> {
     update(v: V_STRING, prev: V_STRING) {
         if(v === prev) return;
-        set_css_property(this.name, v != null ? v + "" : "")(this.target.style);
+        setCSSProperty(this.name, v != null ? v + "" : "")(this.target.style);
         this.dispatchModifiedEvent("style-prop-update", v, prev);
     }
 }
@@ -244,7 +244,7 @@ customElements.define("jshtml-unknown", JSHTMLUnknownElement);
 
 
 // class属性の設定用関数を生成する
-const gen_className_setter = (v:V_CLASSLIST|V_STRING) :(e:Element)=>void => 
+const genClassNameSetter = (v:V_CLASSLIST|V_STRING) :(e:Element)=>void => 
     v == null
     ? (e:Element) => e.removeAttribute("class")
     : Array.isArray(v)
@@ -254,7 +254,7 @@ const gen_className_setter = (v:V_CLASSLIST|V_STRING) :(e:Element)=>void =>
         : v + "";
 
 // datasetの設定用関数を生成する
-const gen_dataset_setter =
+const genDatasetSetter =
     (v:V_DATASET|null) =>
         v == null
         ? (e:HTMLElement) => Object.keys(e.dataset).forEach((k)=> delete e.dataset[k])
@@ -270,7 +270,7 @@ const gen_dataset_setter =
         }
 
 // インラインスタイルの設定用関数を生成する
-const gen_style_setter =
+const genStyleSetter =
     (v:V_STYLE) =>
         v == null
         ? (e:HTMLElement) => e.removeAttribute("style")
@@ -281,11 +281,11 @@ const gen_style_setter =
                     bindRecord(v, new StylePropBridge(v,e,k));
                     v = v();
                 }
-                set_css_property(k,v != null ? v + "": "")(e.style);
+                setCSSProperty(k,v != null ? v + "": "")(e.style);
             })
         }
 
-const set_css_property = (n: WritableCSSProperty|string, v: string) => (d: CSSStyleDeclaration) => {
+const setCSSProperty = (n: WritableCSSProperty|string, v: string) => (d: CSSStyleDeclaration) => {
     if(n.startsWith("--"))
         d.setProperty(n, v);
    else
@@ -294,7 +294,7 @@ const set_css_property = (n: WritableCSSProperty|string, v: string) => (d: CSSSt
  
 
 // イベントリスナーの設定用関数を生成する
-const gen_listener_setter =
+const genListenerSetter =
     (v:V_EVENTLISTENER, n: string) => 
         isDripperStream(v)
         ? (e:EventTarget) => e.addEventListener(n.slice(2), getTracableListener(v)(e))
@@ -318,7 +318,7 @@ const element = (s:JSHTMLElementSource) => {
                 bindRecord(v, new AttrPropBridge(v as Prop<JSHTMLAttrSource>, elm, k));
                 v = v() as T_ATTRSET[1];
             }
-            update_attr([k,v] as T_ATTRSET)(elm);
+            updateAttr([k,v] as T_ATTRSET)(elm);
         })
     }
     if(children)
@@ -344,16 +344,19 @@ const extractElementSource = (s:JSHTMLElementSource) : JSHTMLExtractedElementSou
         : [tag,children,attrs];
 }
 
+
 // 属性別の更新方法を振り分けたハンドラ
 const attrUpdateHandler = {
-    "classList": ([n,v,e]:[string,any,HTMLElement]) => gen_className_setter(v)(e),
-    "dataset": ([n,v,e]:[string,any,HTMLElement]) => gen_dataset_setter(v)(e),
-    "style": ([n,v,e]:[string,any,HTMLElement]) => gen_style_setter(v)(e),
+    "classList": ([n,v,e]:[string,any,HTMLElement]) => genClassNameSetter(v)(e),
+    "dataset": ([n,v,e]:[string,any,HTMLElement]) => genDatasetSetter(v)(e),
+    "style": ([n,v,e]:[string,any,HTMLElement]) => genStyleSetter(v)(e),
     "default": ([n,v,e]:[string,any,HTMLElement]) => {
+        if(n in ATTRIBUTE_HANDLER_RREGISTRY && ATTRIBUTE_HANDLER_RREGISTRY[n](v,e) === true)
+            return;
         if(typeof v === "boolean")
             e.toggleAttribute(n, v);
         else if(/^on+/.test(n))
-            gen_listener_setter(v as V_EVENTLISTENER, n)(e);
+            genListenerSetter(v as V_EVENTLISTENER, n)(e);
         else if(!(v instanceof Object))
             e.setAttribute(n, v + "");
         else {
@@ -363,12 +366,21 @@ const attrUpdateHandler = {
     }
 }
 
+const ATTRIBUTE_HANDLER_RREGISTRY: { [key:string]: (value: any, target: HTMLElement) => boolean } = Object.create(null);
+const defineAttrUpdateHandlers = (handlers: { [key:string]: (value: any, target: HTMLElement) => boolean }) => {
+    const defined = Object.keys(handlers).filter((k)=>k in ATTRIBUTE_HANDLER_RREGISTRY);
+    if(defined.length)
+        throw new Error(`"${defined.join('","')}" already defined attr handler name`);
+    Object.assign(ATTRIBUTE_HANDLER_RREGISTRY, handlers);
+}
+
+
 /**
  * HTML要素の属性値を更新する
  * @param e 
  * @returns 
  */
-const update_attr = ([n,v]:T_ATTRSET) => (e:HTMLElement) => {
+const updateAttr = ([n,v]:T_ATTRSET) => (e:HTMLElement) => {
     if(v == null)
         e.removeAttribute(n);
     else if(n in attrUpdateHandler)
@@ -495,5 +507,4 @@ const jshtmlWithPrefixAuto = (prefix: string) => (node: JSHTMLNodeSource): Node 
     return jshtml(mappedNode);
 };
 
-
-export {createTracableListener, promised, jshtml, mutations, events, jshtmlWithPrefixAuto, getBoundProps, getCollapseDrippers};
+export {defineAttrUpdateHandlers,createTracableListener, promised, jshtml, mutations, events, jshtmlWithPrefixAuto, getBoundProps, getCollapseDrippers};
