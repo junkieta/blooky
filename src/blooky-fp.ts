@@ -289,12 +289,11 @@ const isStream = <A>(v:unknown) : v is Stream<A> =>
 
 /**
  * 引数がドリッパーであるかを判別する。
- * @param v 
- * @returns 
  */
 const isDripperStream = <A>(v:unknown) : v is DripperStream<A> =>
     isStream<A>(v) && v[IS_DRIPPER] === IS_DRIPPER;
 
+// 引数がStreamから接続されたPropか判別する
 const isChainedProp = <A>(v: unknown): v is Prop<A> => PROP_UPDATE.has(v as Prop<A>);
 
 const getPropId = (p:Prop<any>)=>{
@@ -302,6 +301,34 @@ const getPropId = (p:Prop<any>)=>{
     return PROP_IDENTIFIER.get(p)!;
 }
 
+type Vertex = {
+    source: Stream<any>
+    from?: Vertex
+    next?: Vertex[]
+    lazyNext?: Vertex[]
+    props?: Prop<any>[]
+};
+const vertex = (s:Stream<any>): Vertex => {
+    const vertex_map = new WeakMap<Stream<any>, Vertex>();
+    const buildVertex = (source:Stream<any>, from?: Vertex) => {
+        if(vertex_map.has(source)) return vertex_map.get(source)!;
+        const vert: Vertex = {
+            source,
+            from,
+            props: STREAM_PROP_RELATIONS.get(source)
+        };
+        vertex_map.set(source, vert);
+        if(source.next.size)
+            vert.next = [...source.next].map((s)=>buildVertex(s, vert));
+        if(source.lazyNext.size)
+            vert.lazyNext = [...source.lazyNext].map((s)=>buildVertex(s,vert));
+        return vert;
+    }
+    return buildVertex(s);
+}
+
+// dripと同様の処理を、全ての関連フローを記録してグラフ生成する
+// 高負荷になるので、データフロー履歴が欲しい場面でだけ使用する
 const dripGraph = <A>(value: A) => (dripper: DripperStream<A>) => {
     const lazy = new Map<MergedStream<any>,any[]>();
     const streams = new Map<Stream<any>, any>();
@@ -854,7 +881,7 @@ const moments = {
 
 
 export {
-    drip,dripGraph,stream,
+    drip,dripGraph,vertex,stream,
     isStream,isDripperStream,isChainedProp,getPropId,
     countReferences,hasReferences,clear,
     merge,junction,map,filter,
@@ -867,5 +894,6 @@ export {
 export type {
     Stream,FilterStream,MappedStream,MergedStream,DripperStream,
     Prop,PromisedProp,
+    Vertex,
     TickStateStream as MomentStream,MomentState,
 };
