@@ -302,36 +302,34 @@ const getPropId = (p:Prop<any>)=>{
     return PROP_IDENTIFIER.get(p)!;
 }
 
-/**
- * 指定されたStreamまたはPropから派生する、
- * すべてのPropを再帰的に列挙する
- */
-export function* walkRelatedProps(
-  entry: Stream<any> | Prop<any>,
-  visited = new WeakSet()
-): Generator<Prop<any>, void, unknown> {
+const dripGraph = <A>(value: A) => (dripper: DripperStream<A>) => {
+    const lazy = new Map<MergedStream<any>,any[]>();
+    const streams = new Map<Stream<any>, any>();
+    const effect = new Map<Prop<any>,any>();
+    const walk = (v:any) => (s:Stream<any>) => {
+        streams.set(s,v);
+        STREAM_PROP_RELATIONS.get(s)?.forEach((p)=>effect.set(p, v));
+        if(s.lazyNext.size) s.lazyNext.forEach((s)=>{
+            if(lazy.has(s))
+                lazy.get(s)!.push(v);
+            else
+                lazy.set(s, [v]);
+        });
+        if(s.next.size) [...s.next]
+            .filter((s) => !("filterFn" in s) || s.filterFn(v))
+            .forEach((s) => walk("mapFn" in s ? s.mapFn(v) : v)(s));
+    };
 
-  if (visited.has(entry)) return;
-  visited.add(entry);
+    walk(value)(dripper);
+    while(lazy.size) {
+        const entries = [...lazy];
+        lazy.clear();
+        entries.forEach(([s,v])=>walk(v.reduce(s.reduceFn))(s));
+    }
 
-  if (typeof entry === 'function') { // entryがPropの場合
-    yield entry;
-    const sourceStream = PROP_FROM.get(entry);
-    if (sourceStream) {
-      yield* walkRelatedProps(sourceStream, visited);
-    }
-  } else { // entryがStreamの場合
-    const relatedProps = STREAM_PROP_RELATIONS.get(entry) || [];
-    for (const prop of relatedProps) {
-      yield* walkRelatedProps(prop, visited);
-    }
-    // さらに下流のStreamもたどる
-    for (const nextStream of [...entry.next, ...entry.lazyNext]) {
-      yield* walkRelatedProps(nextStream, visited);
-    }
-  }
-
+    return { dripper, streams, effect };
 }
+
 
 /**
  * ストリームがオブザーバかプロパティによってどれだけ参照されているかを調べる
@@ -501,7 +499,6 @@ async function* flowAsync<A>(v: A, s: Stream<A>): AsyncGenerator<PropEffect<unkn
     }
   }
 }
-
 
 /**
  * 起点となるストリームに時変値を流し込み、関連する時変値で構成されたEffectを返す。
@@ -857,7 +854,7 @@ const moments = {
 
 
 export {
-    drip,stream,
+    drip,dripGraph,stream,
     isStream,isDripperStream,isChainedProp,getPropId,
     countReferences,hasReferences,clear,
     merge,junction,map,filter,
