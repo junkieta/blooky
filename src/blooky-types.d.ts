@@ -10,9 +10,12 @@ interface Branch {
   commitId: string; // このブランチが指し示すスナップショットのID
 }
 
-// 副作用の集合体
-type DripEffect = PropEffect<any>[]
-
+// Drip一回分のEffect
+type DripEffect = {
+  dripper: DripperStream<any>
+  effects: Map<Prop<any>,any>;
+}
+// 各Propとその値を示す、最小のEffect。
 type PropEffect<A> = [Prop<A>,A]
 
 type DripResult<A,M="deny"> = M extends 'await'

@@ -308,8 +308,8 @@ type Vertex = {
     lazyNext?: Vertex[]
     props?: Prop<any>[]
 };
-const vertex = (s:Stream<any>): Vertex => {
-    const vertex_map = new WeakMap<Stream<any>, Vertex>();
+
+const vertex = (stream:Stream<any>, vertex_map = new Map<Stream<any>, Vertex>()): Map<Stream<any>, Vertex> => {
     const buildVertex = (source:Stream<any>, from?: Vertex) => {
         if(vertex_map.has(source)) return vertex_map.get(source)!;
         const vert: Vertex = {
@@ -317,25 +317,27 @@ const vertex = (s:Stream<any>): Vertex => {
             from,
             props: STREAM_PROP_RELATIONS.get(source)
         };
-        vertex_map.set(source, vert);
         if(source.next.size)
             vert.next = [...source.next].map((s)=>buildVertex(s, vert));
         if(source.lazyNext.size)
             vert.lazyNext = [...source.lazyNext].map((s)=>buildVertex(s,vert));
+        vertex_map.set(source, vert);
         return vert;
     }
-    return buildVertex(s);
+    buildVertex(stream);
+    return vertex_map;
 }
+
 
 // dripと同様の処理を、全ての関連フローを記録してグラフ生成する
 // 高負荷になるので、データフロー履歴が欲しい場面でだけ使用する
-const dripGraph = <A>(value: A) => (dripper: DripperStream<A>) => {
+const dripGraph = <A>(value: A) => (dripper: DripperStream<A>) : DripEffect & { streams: Map<Stream<any>,any> } => {
     const lazy = new Map<MergedStream<any>,any[]>();
     const streams = new Map<Stream<any>, any>();
-    const effect = new Map<Prop<any>,any>();
+    const effects = new Map<Prop<any>,any>();
     const walk = (v:any) => (s:Stream<any>) => {
         streams.set(s,v);
-        STREAM_PROP_RELATIONS.get(s)?.forEach((p)=>effect.set(p, v));
+        STREAM_PROP_RELATIONS.get(s)?.forEach((p)=>effects.set(p, v));
         if(s.lazyNext.size) s.lazyNext.forEach((s)=>{
             if(lazy.has(s))
                 lazy.get(s)!.push(v);
@@ -354,7 +356,7 @@ const dripGraph = <A>(value: A) => (dripper: DripperStream<A>) => {
         entries.forEach(([s,v])=>walk(v.reduce(s.reduceFn))(s));
     }
 
-    return { dripper, streams, effect };
+    return { dripper, streams, effects };
 }
 
 
@@ -407,7 +409,7 @@ const streamToFlowingState = <A>(v:A) => (s:Stream<A>) : FlowingState => {
     const waiting = [...s.lazyNext].map((s) => [s,v] as [MergedStream<A>,A]);
     if(!STREAM_PROP_RELATIONS.has(s)) return [[], waiting];
     const p = STREAM_PROP_RELATIONS.get(s)!;
-    const effect: DripEffect = p.map((prop)=>([prop,v]));
+    const effect: PropEffect<A>[] = p.map((prop)=>([prop,v]));
     return [effect,waiting];
 }
 
@@ -540,28 +542,19 @@ function drip<
     const mode = options?.acceptPromise ?? 'deny';
     return (mode === 'await'
         // "await"モードの場合は、非同期エンジンを呼び出し、Promise<Effect>を返す
-        ? (dripper:DripperStream<A>) => dripAsync(value)(dripper)
+        ? async (dripper:DripperStream<A>) => {
+            const effects = new Map<Prop<any>,any>();
+            for await (const [p,v] of flowAsync(value, dripper)) effects.set(p,v);
+            return { dripper, effects }
+        }
         // "deny" または "allow" の場合は、同期的エンジンを呼び出し、Effectを返す
-        : (dripper:DripperStream<A>) => dripSync(value, mode === 'allow')(dripper)
+        : (dripper:DripperStream<A>) => ({
+            dripper,
+            effects: new Map(flowLazy(value, mode === "allow")(dripper)[0])
+        })
     ) as (d:DripperStream<A>) => DripResult<A,M>;
 }
 
-/**
- * 同期的なdrip。最速だが、Promiseの扱いに注意。
- */
-const dripSync = <A>(value:A, allowPromise = false) => (dripper:DripperStream<A>) : DripEffect => flowLazy(value, allowPromise)(dripper)[0];
-
-/**
- * 非同期版のdrip。flowAsyncを呼び出し、EffectのPromiseを返す。
- */
-const dripAsync = <A>(value: A) => async (dripper: DripperStream<A>) => {
-  const effects: PropEffect<any>[] = [];
-  // for await...of で非同期ジェネレータを処理する
-  for await (const effect of flowAsync(value, dripper)) {
-    effects.push(effect);
-  }
-  return effects;
-};
 
 /**
  * イベントストリームからプロパティを作る
@@ -754,7 +747,7 @@ const clock: Prop<number> = () => performance.now();
 const RESERVATIONS : { 
     effect: DripEffect,
     resolve: (v:number)=>void,
-    reject: (v:number) => void
+    reject: (v:number)=>void
 }[] = [];
 
 const DEFAULT_TICK_CALLER = typeof globalThis.requestAnimationFrame === "function"
@@ -781,16 +774,16 @@ const moment$ : MomentStream = map<number, void>(clock)(_beat$);
 PROP_FROM.set(clock, moment$);
 
 // Effect処理のミドルウェア
-const tickHandlers = new Set<(effect: DripEffect) => void>();
+const tickHandlers = new Set<(effect: DripEffect[]) => void>();
 
 // デフォルトの処理の登録
-const defaultTickHandler:(effect: DripEffect) => void = 
-    (e)=>e.forEach(([p,v])=>PROP_UPDATE.get(p)!(v));
+const defaultTickHandler:(effect: DripEffect[]) => void = 
+    (e)=>e.forEach((e)=>e.effects.forEach((v,p)=>PROP_UPDATE.get(p)!(v)));
 
 tickHandlers.add(defaultTickHandler);
 
 // ミドルウェアの登録用関数
-function registerTickHandler(handler: (effect: DripEffect) => void) {
+function registerTickHandler(handler: (effect: DripEffect[]) => void) {
   tickHandlers.add(handler);
   return () => tickHandlers.delete(handler);
 }
@@ -799,14 +792,16 @@ function registerTickHandler(handler: (effect: DripEffect) => void) {
  * 1フレーム分の処理。この関数内が、一つの「瞬間（Moment）」となる。
  */
 function tick() {
+    const queue = RESERVATIONS.map((e)=>e.effect);
     const now = clock();
     const beat_effect = drip<void>(void 0)(_beat$);
-    const queue = RESERVATIONS.flatMap((e)=>e.effect).concat(beat_effect);
-    const resolvers = RESERVATIONS.map(({resolve})=>resolve);
-
+    if(beat_effect.effects.size) queue.push(beat_effect);
     // 実行キューが空なら終了
     if(!queue.length) return;
-    // 処理済みの予定を消去
+
+    // 完了通知先を保管
+    const resolvers = RESERVATIONS.map(({resolve})=>resolve);
+    // 予定の予約は消去
     RESERVATIONS.length = 0;
     // ハンドラーの呼び出し
     tickHandlers.forEach((handler)=>handler(queue));
@@ -814,7 +809,7 @@ function tick() {
     resolvers.forEach((r)=>r(now));
 
     // 時間ベースのイベントが残っていれば、次のtickを予約する
-    if (beat_effect.length || RESERVATIONS.length) DEFAULT_TICK_CALLER(tick);
+    if (beat_effect.effects.size || RESERVATIONS.length) DEFAULT_TICK_CALLER(tick);
 }
 
 const nextState = (s:MomentState) => (n:number) : MomentState => 
