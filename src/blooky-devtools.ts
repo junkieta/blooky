@@ -171,7 +171,19 @@ EffectElementTagNameMap["fx-switch"] = class extends (EffectElementTagNameMap["f
 
 // collapseはターゲットのStreamのグラフと紐づける
 EffectElementTagNameMap["fx-collapse"] = class extends (EffectElementTagNameMap["fx-collapse"] as typeof ConcreteEffectElementConstructor) {
-  static observedAttributes = ["class"];
+  constructor() {
+    super();
+    this.addEventListener("changestate", (e) => {
+      const state = (e as CustomEvent<string>).detail;
+      if(state !== "running") return;
+      const streamKey = (e.currentTarget as HTMLElement).getAttribute("dripper")!; if(!streamKey) return;
+      const nodeElement = document.getElementById(`node-${streamKey}`); if(!nodeElement) return;
+      nodeElement.classList.add('is-emitting');
+      // アニメーションが終わったらclassを削除
+      setTimeout(() => nodeElement.classList.remove('is-emitting'), 1500);
+    });
+  }
+  /*
   attributeChangedCallback(name: string, oldValue: string, newValue: string) {
     if(name !== "class" || newValue !== "is-running") return;
     const streamKey = this.getAttribute("dripper")!; if(!streamKey) return;
@@ -180,6 +192,7 @@ EffectElementTagNameMap["fx-collapse"] = class extends (EffectElementTagNameMap[
     // アニメーションが終わったらclassを削除
     setTimeout(() => nodeElement.classList.remove('is-emitting'), 1500);
   }
+  */
 }
 
 
@@ -189,6 +202,10 @@ const ExecContextForDebug : Partial<ExecContext> = {
     const element = getFxElement(node)!;
     if(FxElementStates.has(element))
       FxElementStates.get(element)!.add('running');
+    element.dispatchEvent(new CustomEvent("changestate", {
+      bubbles: true,
+      detail: "running"
+    }))
   },
   onNodeExit(node: FxNode, reason?: any, error?: any): void {
     const element = getFxElement(node);
