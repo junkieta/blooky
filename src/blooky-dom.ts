@@ -8,7 +8,7 @@ import { type Stream, type Prop, type DripperStream, stream, drip, isChainedProp
 
 // DOMをfpのtickに結び付ける
 registerTickHandler((effects) => {
-    const update_target = effects.flatMap(([p]) => PROP_BRIDGE_RECORD.has(p) ? PROP_BRIDGE_RECORD.get(p)! : []);
+    const update_target = effects.flatMap((e) => [...e.effects.keys()].flatMap((p)=>PROP_BRIDGE_RECORD.has(p) ? PROP_BRIDGE_RECORD.get(p)! : []));
 
     // ツリーから外れたものと、更新の発生したPropに包含されているPropはbindから外す
     const isGCTarget = (a:PropBridge) => !a.isConnected() || update_target.some((b)=>b.contains(a)&&a!==b);
@@ -25,12 +25,12 @@ registerTickHandler((effects) => {
                 PROP_BRIDGE_RECORD[id] = filtered;
         }
     });
-    effects.forEach(([p,v])=>{
+    effects.forEach((e)=>e.effects.forEach((v,p)=>{
         if(!PROP_BRIDGE_RECORD.has(p)) return;
         const prev = p() as any;
         const bridges = update_target.filter((bridge)=>bridge.prop === p);
         bridges.forEach((bridge)=>bridge.update(v,prev));
-    });
+    }));
 })
 
 
