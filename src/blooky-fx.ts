@@ -46,12 +46,14 @@ function prepare(
   if (required.length && required.some((k) => !idList.includes(k)))
       throw new Error(`prepare: context missing keys: ${[...new Set(required)].join(",")}`);
 
+  // id所持ノードの結果を格納するRecord
   const idRecord: { [key:string]: unknown } = {};
   const NOT_RESOLVED = Symbol();
   [...new Set(idList)].forEach((id)=> idRecord[id] = NOT_RESOLVED);
   // ノードツリー内で宣言済みのidだけを受け付ける
   Object.seal(idRecord);
 
+  // 受け取り済みのコンテキストにidRecordの参照を紐づける
   const appContext = createProxyContext(initialAppContext, idRecord);
   const cancelToken = createCancelToken();
   const execContext: ExecContext = {
@@ -86,12 +88,12 @@ function execute(preparedFx: PreparedFx): ExecutionHandle {
     appContext
   };
 
-  const resultPromise:Promise<AppContext> = runtimeContext.execute(rootNode);
+  const done:Promise<AppContext> = runtimeContext.execute(rootNode);
 
   // 実行ハンドルを同期的に返す
   const handle : ExecutionHandle = {
     cancel: execContext.cancelToken.cancel,
-    done: resultPromise,
+    done
   };
   
   return handle;
@@ -124,14 +126,14 @@ async function _internal_execute(
       if(!(definition))
         throw new Error(`error: "${node.type}" is not unknown node type`);
 
-      // ★各ステップの情報をまとめたFxExecutionContextを生成
+      // 各ステップの情報をまとめたFxExecutionContextを生成
       const fxec: FxExecutionContext = { ...ctx, node };
 
       // ミドルウェアパイプラインの実行
       const runNextMiddleware = async (i: number): Promise<any> => {
         const middleware = allMiddlewares[i];
         return i === allMiddlewares.length
-          ? await definition.handle(fxec as any)
+          ? await definition.handle(fxec)
           : middleware
           ? await middleware(fxec, () => runNextMiddleware(i + 1))
           : undefined;

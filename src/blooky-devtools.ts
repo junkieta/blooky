@@ -1,8 +1,9 @@
-import { isChainedProp, isDripperStream, isStream, Prop, Stream } from "./blooky-fp";
+import { isChainedProp, isDripperStream, isStream, isVertex, Prop, Stream, Vertex, vertex } from "./blooky-fp";
 import { EffectElementTagNameMap as DefaultEffectElementTagNameMap, EffectElement, FxEffect as ConcreteEffectElementConstructor, fxdom } from "./blooky-fxdom";
 import { FxNode, FxMiddleware, ExecContext } from "./fx/types";
 
 const FxNodeMap = new WeakMap<FxNode, EffectElement>();
+const FxElementStates = new WeakMap<EffectElement, CustomStateSet>();
 const getFxElement = (n: FxNode) : EffectElement | undefined => FxNodeMap.get(n);
 
 const DebEffectElementStyleSheet = new CSSStyleSheet();
@@ -30,31 +31,31 @@ DebEffectElementStyleSheet.replaceSync(`
   font-family: monospace;
 }
 /* 実行状態のスタイル */
-:host(.is-running) {
+:host(:state(running)) {
   border-color: var(--fx-running-border-color, #007bff);
   box-shadow: 0 0 5px var(--fx-running-shadow-color, rgba(0, 123, 255, 0.5));
 }
-:host(.is-canceled) {
+:host(:state(canceled)) {
   border-style: dashed;
   border-color: var(--fx-canceled-border-color, #bbbbbbff);
 }
 
-:host(.is-paused) {
+:host(:state(paused)) {
   border-style: dashed;
   border-color: var(--fx-paused-border-color, #ffc107);
 }
-:host(.is-paused)::before {
+:host(:state(paused))::before {
   content: attr(data-fx-type) "(paused)";
 }
-:host(.is-completed) {
+:host(:state(completed)) {
   border-left: 5px solid var(--fx-completed-border-color, #28a745);
 }
 /* is-completed と is-recovered が両方付いた場合のスタイル */
-:host(.is-completed.is-recovered) {
+:host(:state(completed):state(recovered)) {
   border-left-color: var(--fx-completed-border-color, #28a745);
   box-shadow: 0 0 5px var(--fx-paused-border-color, #ffc107);
 }
-:host(.is-completed.is-recovered)::before {
+:host(:state(completed):state(recovered))::before {
   content: attr(data-fx-type) " (recovered)";
 }
 :host([slot])::before {
@@ -85,19 +86,21 @@ const debugMiddleware: FxMiddleware = async (ctx, next) => {
   const { node } = ctx;
   const element = getFxElement(node);
   if(!element) return await next();
+  const states = FxElementStates.get(element)!;
 
   let result: any = null;
   try {
     // --- 内側の処理（次のMiddlewareまたはコア）を呼び出す ---
     if(node.type === "wait" || node.type === "yield") {
-      element?.classList.add("is-paused");
+      states.add("paused");
       result = await next();
-      element?.classList.remove("is-paused");
+      states.delete("paused");
     } else {
       result = await next();
     }
   } catch (err) {
     // --- 後処理（エラー時） ---
+    states.add("failed");
     if(!element || element.dispatchEvent(new CustomEvent("throw", {
         cancelable: true,
         bubbles: true,
@@ -113,11 +116,11 @@ const debugMiddleware: FxMiddleware = async (ctx, next) => {
         throw err; // 回復不能なエラー。is-failedは残ったままフローが停止する
     }
     // 回復された場合は、catchブロックから抜けて正常系の処理に戻る
-    element?.classList.add("is-recovered");
+    states.delete("failed");
+    states.add("recovered");
   }
   return result;
 };
-
 
 // EffectElementを全て動的にデバッグ用途にextendsさせる
 const EffectElementTagNameMap = Object.fromEntries(new Map(Object.entries(DefaultEffectElementTagNameMap)));
@@ -126,6 +129,13 @@ Object.entries(EffectElementTagNameMap).forEach(([tag,fxClass])=>{
   // 具体的なクラス型にキャストする。これにより、super.toFxNode()の呼び出しが
   // 型安全に解決され、かつ基底クラスのabstract制約も維持される。    
   EffectElementTagNameMap[tag] = class extends (fxClass as typeof ConcreteEffectElementConstructor) {
+
+    // CustomStateSetを利用する
+    constructor() {
+      super();
+      FxElementStates.set(this, this.attachInternals().states);
+    }
+
     connectedCallback() {
       super.connectedCallback?.();
       // Shadow DOMがまだなければ、ここで生成する
@@ -176,21 +186,23 @@ EffectElementTagNameMap["fx-collapse"] = class extends (EffectElementTagNameMap[
 const ExecContextForDebug : Partial<ExecContext> = {
   middlewares: [debugMiddleware],
   onNodeEnter(node: FxNode): void {
-    const element = getFxElement(node);
-    element?.classList.add('is-running');
+    const element = getFxElement(node)!;
+    if(FxElementStates.has(element))
+      FxElementStates.get(element)!.add('running');
   },
   onNodeExit(node: FxNode, reason?: any, error?: any): void {
     const element = getFxElement(node);
     if(!element) return;
-    element.classList.remove('is-running');
+    const states = FxElementStates.get(element)!;
+    states.delete('running');
     if (error) {
-      element.classList.add('is-failed');
+      states.add('failed');
     }
     else if(reason) {
-      element.classList.add('is-'+reason);
+      states.add(reason);
     }
     else {
-      element.classList.add("is-completed");
+      states.add("completed");
     }
   }
 }
@@ -229,7 +241,9 @@ export {fxdom,EffectElementTagNameMap,debugMiddleware};
 
 // グラフ描画
 function dumpGraphDOT(entries: Record<string, Stream<any> | Prop<any> | unknown>): string {
-  const names = new WeakMap(Object.entries(entries).map(([k,v])=>[Object(v),k]));
+  const vertex_map: [string, Vertex|Prop<any>|unknown][] = Object.entries(entries).map(([k,v])=> !isStream(v) ? [k,v] : [k,vertex(v)]);
+
+  const names = new WeakMap(vertex_map.map(([k,v])=>[Object(v),k]));
   const visited = new WeakMap<any, string>(); // obj → nodeId
   const edges: string[] = [];
   const nodes: string[] = [];
@@ -241,9 +255,7 @@ function dumpGraphDOT(entries: Record<string, Stream<any> | Prop<any> | unknown>
     return id;
   }
 
-  function getShape(node: Stream<any>|Prop<any>) {
-    if(isChainedProp(node))
-        return "box";
+  function getShape(node: Stream<any>) {
     if(isDripperStream(node))
         return "ellipse";
     if("mapFn" in node)
@@ -255,34 +267,39 @@ function dumpGraphDOT(entries: Record<string, Stream<any> | Prop<any> | unknown>
     return "plain";
   }
 
-  function visit(obj: any, label: string) {
+  function visit(obj: Vertex|Prop<any>, label: string) {
     if (visited.has(obj)) return visited.get(obj)!;
 
-    const shape = getShape(obj);
-    let id: string;
-    if (isStream(obj)) {
-      id = addNode(label, shape);
+    if (isChainedProp<any>(obj)) {
+      const id = addNode(label, "box");
       visited.set(obj, id);
-
-      for (const relType of ["next", "lazyNext"]) {
-        const set = obj[relType] as Set<any>;
-        if (!set) continue;
-        for (const target of set) {
-          const targetLabel = names.get(target) || (isChainedProp(target) ? "Prop" : "Stream");
-          const targetId = visit(target, targetLabel);
-          edges.push(`${id} -> ${targetId}`);
-        }
-      }
-    } else {
-      id = addNode(label, shape);
-      visited.set(obj, id);
+      return id;
     }
 
+    if(!isVertex(obj)) {
+      const id = addNode(label, "circle");
+      visited.set(obj, id);
+      return id;
+    }
+
+    const id = addNode(label, names.has(obj) ? getShape(obj.source) : "point");
+    visited.set(obj, id);
+
+    for (const relType of ["next", "lazyNext"]) {
+      const next = obj[relType] as Vertex[];
+      if (next) edges.push(...next.map((target)=>{
+        const targetLabel = names.get(target) || "Stream";
+        const targetId = visit(target, targetLabel);
+        return `${id} -> ${targetId}`;
+      }));
+    }
+    const props = obj.props;
+    if(props) edges.push(...props.map((p) => `${id} -> ${visit(p, names.get(p) || "none")}`));
     return id;
   }
 
-  Object.entries(entries).forEach(([name,streamOrProp]) => {
-    visit(streamOrProp, name);
+  vertex_map.forEach(([name,streamOrProp]) => {
+    visit(streamOrProp as Vertex|Prop<any>, name);
   })
 
   return `digraph BlookyGraph {\nrankdir=LR;\n${nodes.join("\n")}\n${edges.join("\n")}\n}`;

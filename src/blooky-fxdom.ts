@@ -1,5 +1,5 @@
 import { DripperStream, type Prop, type Stream } from "./blooky-fp";
-import { jshtml } from "./blooky-dom";
+import { jshtml, JSHTML_ATTR_HANDLER, JSHTML_ELEMENT_HANDLER, JSHTMLAttrRuntime, JSHTMLNodeRuntime } from "./blooky-dom";
 import { 
   prepare, 
   execute, 
@@ -7,7 +7,7 @@ import {
   ref,
   FxRef
 } from "./blooky-fx";
-import { FxNode, ExecContext, PreparedFx, ExecutionHandle } from "./fx/types";
+import { FxNode, ExecContext, PreparedFx, ExecutionHandle, AppContext } from "./fx/types";
 
 // ---- Abstract Base ----
 
@@ -40,7 +40,26 @@ class FxRace extends EffectElement {
   }
 }
 
+const CONTEXT_MEMO = new WeakMap<AppContext,AppContext>();
+
+const reverseLookup = (value: unknown) => (ctx: AppContext) => {
+  if(!CONTEXT_MEMO.has(ctx)) CONTEXT_MEMO.set(ctx, new Map(Object.entries(ctx).map(([k,v])=>[v,k])));
+  const reversed = CONTEXT_MEMO.get(ctx)!;
+  return reversed.has(value) ? reversed.get(value) : null;
+}
+// jshtmlでコンテキストから属性に直接マッピングされていた場合、属性値にはコンテキストのキーを用いる
+const attrValueToContextKey = ({target,name,value,context}: JSHTMLAttrRuntime<any>): boolean | void => {
+  if(!context) return true;
+  const context_key = reverseLookup(value)(context);
+  if(!context_key) return true;
+  target.setAttribute(name, context_key);
+  return false;
+};
+
 class FxWait extends EffectElement {
+
+  static [JSHTML_ATTR_HANDLER] = { until: attrValueToContextKey }
+
   toFxNode(): FxNode {
     const msAttr = this.getAttribute("ms");
     let ms : FxRef<number>;
@@ -57,6 +76,9 @@ class FxWait extends EffectElement {
 }
 
 class FxCall extends EffectElement {
+
+  static [JSHTML_ATTR_HANDLER] = { fn: attrValueToContextKey, arg: attrValueToContextKey }
+
   toFxNode(): FxNode {
     const fnAttr = this.getAttribute("fn");
     if (!fnAttr) return fx.none();
@@ -83,7 +105,6 @@ class FxCall extends EffectElement {
  */
 const FLOW_TEMPLATE_CACHE = new Map<string, HTMLTemplateElement>();
 
-
 class FxInclude extends EffectElement { // FxFlowからFxIncludeにリネーム
 
   // 'src'属性の変更を監視対象に含める
@@ -102,20 +123,20 @@ class FxInclude extends EffectElement { // FxFlowからFxIncludeにリネーム
   connectedCallback() {
     this.attachShadow({ mode: 'open' });
     this.shadowRoot!.innerHTML = `<slot></slot>`;
-    this._updateContent(); // 内部メソッドを呼び出す
+    this.updateContent(); // 内部メソッドを呼び出す
   }
 
   attributeChangedCallback(name: string, oldValue: string, newValue: string) {
     // src属性が変更され、かつ新しい値がセットされた場合にのみ更新
     if (name === 'src' && oldValue !== newValue) {
-      this._updateContent(); // 内部メソッドを呼び出す
+      this.updateContent(); // 内部メソッドを呼び出す
     }
   }
   
   /**
    * src属性に基づいて、要素の内容を更新する内部メソッド
    */
-  private async _updateContent() {
+  private async updateContent() {
     const src = this.getAttribute("src");
     if (!src) {
       this.replaceChildren(); // srcがなければ内容を空にする
@@ -143,6 +164,7 @@ class FxInclude extends EffectElement { // FxFlowからFxIncludeにリネーム
 
 
 class FxIf extends EffectElement {
+  static [JSHTML_ATTR_HANDLER] = { when: attrValueToContextKey }
   toFxNode(): FxNode {
     const whenAttr = this.getAttribute("when");
     if (!whenAttr) return fx.none();
@@ -163,6 +185,7 @@ class FxIf extends EffectElement {
 }
 
 class FxSwitch extends EffectElement {
+  static [JSHTML_ATTR_HANDLER] = { by: attrValueToContextKey }
   toFxNode(): FxNode {
     const byAttr = this.getAttribute("by");
     if (!byAttr) return fx.none();
@@ -182,15 +205,16 @@ class FxSwitch extends EffectElement {
 }
 
 class FxLoop extends EffectElement {
+  static [JSHTML_ATTR_HANDLER] = { while: attrValueToContextKey }
     toFxNode(): FxNode {
         const whileAttr = this.getAttribute("while");
         if (!whileAttr) return fx.none();
-        // ★ while属性をrefとして渡すだけ
         return fx.loop(ref<boolean>(whileAttr), fx.sequence(this.childrenToFxNodes()));
     }
 }
 
 class FxCollapse extends EffectElement {
+  static [JSHTML_ATTR_HANDLER] = { dripper: attrValueToContextKey, value: attrValueToContextKey }
   toFxNode(): FxNode {
     const streamKey = this.getAttribute("dripper");
     if (!streamKey) return fx.none();
@@ -211,6 +235,7 @@ class FxCollapse extends EffectElement {
 
 
 class FxYield extends EffectElement {
+  static [JSHTML_ATTR_HANDLER] = { for: attrValueToContextKey }
   toFxNode(): FxNode {
     const id = this.id;
     const forAttr = this.getAttribute("for");
@@ -229,6 +254,7 @@ class FxYield extends EffectElement {
 }
 
 class FxReturn extends EffectElement {
+  static [JSHTML_ATTR_HANDLER] = { value: attrValueToContextKey }
   toFxNode(): FxNode {
     return fx.return(this.hasAttribute("value") ? ref(this.getAttribute("value")!) : undefined);
   }
@@ -238,13 +264,8 @@ class FxContext extends EffectElement {
 
   static noneResult = Symbol("none")
 
-  protected context: Record<string, any>;
-
-  constructor(context?: Record<string, any>) {
-    super();
-    this.context = context || {};
-  }
-
+  protected context: Record<string, any> = {};
+  
   parentContext() : FxContext | null {
     return this.parentElement ? this.parentElement.closest("fx-context,fx-effect") : null;
   }
@@ -256,6 +277,10 @@ class FxContext extends EffectElement {
       : nodes.length === 1
       ? nodes[0]
       : fx.sequence(nodes);
+  }
+
+  [JSHTML_ELEMENT_HANDLER](context?: AppContext) {
+    if(context) this.setContext(context);
   }
 
   // use属性値を最低限必要なキーとして使う

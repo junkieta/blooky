@@ -301,23 +301,30 @@ const getPropId = (p:Prop<any>)=>{
     return PROP_IDENTIFIER.get(p)!;
 }
 
+// memo
+const VERTEX_MAP = new WeakMap<Stream<any>,Vertex>();
+const VERTEX_SYM = Symbol("IS_VERTEX");
+const isVertex = (v: unknown) : v is Vertex => v && v[VERTEX_SYM];
+
 type Vertex = {
+    [VERTEX_SYM]: true
     source: Stream<any>
     from?: Vertex
     next?: Vertex[]
     lazyNext?: Vertex[]
     props?: Prop<any>[]
 };
+
 const vertex = (s:Stream<any>): Vertex => {
-    const vertex_map = new WeakMap<Stream<any>, Vertex>();
     const buildVertex = (source:Stream<any>, from?: Vertex) => {
-        if(vertex_map.has(source)) return vertex_map.get(source)!;
+        if(VERTEX_MAP.has(source)) return VERTEX_MAP.get(source)!;
         const vert: Vertex = {
+            [VERTEX_SYM]: true,
             source,
             from,
             props: STREAM_PROP_RELATIONS.get(source)
         };
-        vertex_map.set(source, vert);
+        VERTEX_MAP.set(source, vert);
         if(source.next.size)
             vert.next = [...source.next].map((s)=>buildVertex(s, vert));
         if(source.lazyNext.size)
@@ -882,7 +889,7 @@ const moments = {
 
 export {
     drip,dripGraph,vertex,stream,
-    isStream,isDripperStream,isChainedProp,getPropId,
+    isStream,isDripperStream,isChainedProp,getPropId,isVertex,
     countReferences,hasReferences,clear,
     merge,junction,map,filter,
     hold,accum,lift,remap,when,

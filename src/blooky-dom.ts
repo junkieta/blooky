@@ -8,8 +8,7 @@ import { type Stream, type Prop, type DripperStream, stream, drip, isChainedProp
 
 // DOMをfpのtickに結び付ける
 registerTickHandler((effects) => {
-    const id_list = effects.map(([p])=>getPropId(p));
-    const update_target = id_list.flatMap((id) => id in PROP_BRIDGE_RECORD ? PROP_BRIDGE_RECORD[id]! : []);
+    const update_target = effects.flatMap(([p]) => PROP_BRIDGE_RECORD.has(p) ? PROP_BRIDGE_RECORD.get(p)! : []);
 
     // ツリーから外れたものと、更新の発生したPropに包含されているPropはbindから外す
     const isGCTarget = (a:PropBridge) => !a.isConnected() || update_target.some((b)=>b.contains(a)&&a!==b);
@@ -26,8 +25,8 @@ registerTickHandler((effects) => {
                 PROP_BRIDGE_RECORD[id] = filtered;
         }
     });
-    effects.forEach(([p,v],index)=>{
-        if(!(id_list[index] in PROP_BRIDGE_RECORD)) return;
+    effects.forEach(([p,v])=>{
+        if(!PROP_BRIDGE_RECORD.has(p)) return;
         const prev = p() as any;
         const bridges = update_target.filter((bridge)=>bridge.prop === p);
         bridges.forEach((bridge)=>bridge.update(v,prev));
@@ -46,38 +45,19 @@ type PropBridgeInterface<A> = {
 type PropBridge = (RangePropBridge | AttrPropBridge | StylePropBridge);
 
 // 最適化用に共用型
-const PROP_BRIDGE_RECORD = {} as { [key:symbol]: PropBridge|PropBridge[] };
+const PROP_BRIDGE_RECORD = new Map<Prop<any>, PropBridge|PropBridge[]>();
 const bindRecord = (p:Prop<any>, b:PropBridge) => {
-    const id = getPropId(p);
-    if(Array.isArray(PROP_BRIDGE_RECORD[id]))
-        PROP_BRIDGE_RECORD[id].push(b);
-    else
-        PROP_BRIDGE_RECORD[id] = (id in PROP_BRIDGE_RECORD) ? [PROP_BRIDGE_RECORD[id],b] : b;
+    if(!PROP_BRIDGE_RECORD.has(p)) {
+        PROP_BRIDGE_RECORD.set(p, b);
+    } else {
+        const value = PROP_BRIDGE_RECORD.get(p)!;
+        if(Array.isArray(value)) {
+            value.push(b);
+        } else {
+            PROP_BRIDGE_RECORD.set(p, [value, b]);
+        }
+    }
 }
-// バインド中のPROPを全て取得して返す
-const getBoundProps = () : Set<Prop<any>> => 
-    new Set(Object.getOwnPropertySymbols(PROP_BRIDGE_RECORD).flatMap((id)=>PROP_BRIDGE_RECORD[id]).map((p)=>p.prop));
-
-// アクティブなDripperStreamと、それがいくつのDOM要素から
-// 参照されているかをカウントする台帳
-const ACTIVE_DRIPPERS = new Map<DripperStream<any>, number>();
-
-const getCollapseDrippers = (): Set<DripperStream<any>> => new Set(ACTIVE_DRIPPERS.keys());
-
-// DOM要素がGCされた時に、後片付け処理（デクリメント）を
-// 実行するためのレジストリ
-const dripperRegistry = new FinalizationRegistry((dripperRef: WeakRef<DripperStream<any>>) => {
-  const dripperToDecrement = dripperRef.deref();
-  if(!dripperToDecrement) return;
-  const currentCount = ACTIVE_DRIPPERS.get(dripperToDecrement) || 1;
-  if (currentCount <= 1) {
-    // 参照が0になったら、台帳から完全に削除
-    ACTIVE_DRIPPERS.delete(dripperToDecrement);
-  } else {
-    ACTIVE_DRIPPERS.set(dripperToDecrement, currentCount - 1);
-  }
-});
-
 
 // aにbが含まれているならtrue
 const contains_range = (a:Range) => (b: Range) => {
@@ -176,13 +156,14 @@ class AttrPropBridge extends AbstractAttrPropBridge<JSHTMLAttrSource> {
     generatedListener?: (v:Event)=>void
     update(next: JSHTMLAttrSource, prev: JSHTMLAttrSource){
         if(next === prev) return;
+        const {name,target} = this;
         if(this.generatedListener) {
-            this.target.removeEventListener(this.name.slice(2), this.generatedListener);
+            target.removeEventListener(name.slice(2), this.generatedListener);
             delete this.generatedListener;
             if(isDripperStream(next))
-                next = this.generatedListener = getTracableListener(next)(this.target);
+                next = this.generatedListener = createTracableListener(next);
         }
-        updateAttr([this.name,next] as T_ATTRSET)(this.target);
+        updateAttr({ name, target, value: next, context:{} });
         this.dispatchModifiedEvent("attr-prop-modified", next, prev);
     }
     contains(p: PropBridge) {
@@ -212,7 +193,6 @@ class DatasetPropBridge extends AbstractAttrPropBridge<V_STRING> {
     }
 }
 
-
 // PROPの観測。イベントリスナーとして登録する想定。
 // ex) onclick: collapse(eventDripperStream)
 const createTracableListener = <A>(d: DripperStream<A>) => (v: A) => {
@@ -227,21 +207,12 @@ const createTracableListener = <A>(d: DripperStream<A>) => (v: A) => {
     collapse(dripEffect);
 }
 
-// DripperStreamにdripするリスナーを生成する
-const getTracableListener = (d:DripperStream<any>) => (t:EventTarget) => {
-    const currentCount = ACTIVE_DRIPPERS.get(d) || 0;
-    ACTIVE_DRIPPERS.set(d, currentCount + 1);
-    dripperRegistry.register(t, new WeakRef(d));
-    return createTracableListener(d);
-}
-
 
 /**
  * tag指定がjshtmlの仕様に沿わなかった場合に生成される要素の定義。
  */
 class JSHTMLUnknownElement extends HTMLElement {}
 customElements.define("jshtml-unknown", JSHTMLUnknownElement);
-
 
 // class属性の設定用関数を生成する
 const genClassNameSetter = (v:V_CLASSLIST|V_STRING) :(e:Element)=>void => 
@@ -297,34 +268,12 @@ const setCSSProperty = (n: WritableCSSProperty|string, v: string) => (d: CSSStyl
 const genListenerSetter =
     (v:V_EVENTLISTENER, n: string) => 
         isDripperStream(v)
-        ? (e:EventTarget) => e.addEventListener(n.slice(2), getTracableListener(v)(e))
+        ? (e:EventTarget) => e.addEventListener(n.slice(2), createTracableListener(v))
         : v && (typeof v === "function" || typeof v.handleEvent === "function")
         ? (e:EventTarget) => e.addEventListener(n.slice(2), v as EventListener)
         : (e:Element) => e.setAttribute(n,v+"");
 
 type JSHTMLExtractedElementSource = [tag: string, children: JSHTMLNodeSource, attrs?: JSHTMLAttributeMapSource];
-
-/**
- * 仕様に沿った要素を生成する
- * @param s 
- * @returns 
- */
-const element = (s:JSHTMLElementSource) => {
-    const [tag,children,attrs] = extractElementSource(s);
-    const elm = document.createElement(tag);
-    if(attrs) {
-        Object.entries(attrs).forEach(([k,v])=> {
-            if(isChainedProp(v)) {
-                bindRecord(v, new AttrPropBridge(v as Prop<JSHTMLAttrSource>, elm, k));
-                v = v() as T_ATTRSET[1];
-            }
-            updateAttr([k,v] as T_ATTRSET)(elm);
-        })
-    }
-    if(children)
-        elm.append(jshtml(children));
-    return elm;
-}
 
 /**
  * JSHTMLElementSourceを部品に分割して返す
@@ -344,29 +293,7 @@ const extractElementSource = (s:JSHTMLElementSource) : JSHTMLExtractedElementSou
         : [tag,children,attrs];
 }
 
-
-// 属性別の更新方法を振り分けたハンドラ
-const attrUpdateHandler = {
-    "classList": ([n,v,e]:[string,any,HTMLElement]) => genClassNameSetter(v)(e),
-    "dataset": ([n,v,e]:[string,any,HTMLElement]) => genDatasetSetter(v)(e),
-    "style": ([n,v,e]:[string,any,HTMLElement]) => genStyleSetter(v)(e),
-    "default": ([n,v,e]:[string,any,HTMLElement]) => {
-        if(n in ATTRIBUTE_HANDLER_RREGISTRY && ATTRIBUTE_HANDLER_RREGISTRY[n](v,e) === true)
-            return;
-        if(typeof v === "boolean")
-            e.toggleAttribute(n, v);
-        else if(/^on+/.test(n))
-            genListenerSetter(v as V_EVENTLISTENER, n)(e);
-        else if(!(v instanceof Object))
-            e.setAttribute(n, v + "");
-        else {
-            console.log(n,v);
-            throw new Error("unknown attribute's value");
-        }
-    }
-}
-
-const ATTRIBUTE_HANDLER_RREGISTRY: { [key:string]: (value: any, target: HTMLElement) => boolean } = Object.create(null);
+const ATTRIBUTE_HANDLER_RREGISTRY: { [key:string]: <V>(runtime:JSHTMLAttrRuntime<V>) => boolean|void } = Object.create(null);
 const defineAttrUpdateHandlers = (handlers: { [key:string]: (value: any, target: HTMLElement) => boolean }) => {
     const defined = Object.keys(handlers).filter((k)=>k in ATTRIBUTE_HANDLER_RREGISTRY);
     if(defined.length)
@@ -375,18 +302,35 @@ const defineAttrUpdateHandlers = (handlers: { [key:string]: (value: any, target:
 }
 
 
+const jshtmlAttrHandler = {
+    "classList": ({value,target}:JSHTMLAttrRuntime<V_CLASSLIST>) => genClassNameSetter(value)(target),
+    "dataset": ({value,target}:JSHTMLAttrRuntime<V_DATASET>) => genDatasetSetter(value)(target),
+    "style": ({value,target}:JSHTMLAttrRuntime<V_STYLE>) => genStyleSetter(value)(target),
+}
+
 /**
  * HTML要素の属性値を更新する
  * @param e 
  * @returns 
  */
-const updateAttr = ([n,v]:T_ATTRSET) => (e:HTMLElement) => {
-    if(v == null)
-        e.removeAttribute(n);
-    else if(n in attrUpdateHandler)
-        attrUpdateHandler[n]([n,v,e]);
-    else
-        attrUpdateHandler.default([n,v,e]);
+const updateAttr = <V>(runtime: JSHTMLAttrRuntime<V>) => {
+    const {value,name,target} = runtime;
+    if(value == null)
+        target.removeAttribute(name);
+    else if(name in jshtmlAttrHandler)
+        jshtmlAttrHandler[name](runtime);
+    else if(name in ATTRIBUTE_HANDLER_RREGISTRY && ATTRIBUTE_HANDLER_RREGISTRY[name](runtime) === false)
+        return;
+    else if(typeof value === "boolean")
+        target.toggleAttribute(name, value);
+    else if(/^on/.test(name))
+        genListenerSetter(value as V_EVENTLISTENER, name)(target);
+    else if(!(value instanceof Object))
+        target.setAttribute(name, value + "");
+    else {
+        console.log(name,value);
+        throw new Error("unknown attribute's value");
+    }
 };
 
 class PromisedElement extends HTMLElement {
@@ -397,8 +341,19 @@ class PromisedElement extends HTMLElement {
     }
     connectedCallback() {
         this.promise.then((n)=>{
-            if(this.parentNode) this.parentNode.replaceChild(n instanceof Node ? n : jshtml(n), this);
-        })
+            const node = n instanceof Node ? n : jshtml(n);
+            this.dispatchEvent(new CustomEvent("resolvepromise", {
+                bubbles: true,
+                detail: { value: node }
+            }));
+            if(this.parentNode) this.parentNode.replaceChild(node, this);
+        }).catch((error)=>{
+            if(this.dispatchEvent(new CustomEvent("rejectpromise", {
+                cancelable: true,
+                bubbles: true,
+                detail: { error }
+            }))) throw error;
+        });
     }
 }
 customElements.define("promised-placeholder", PromisedElement);
@@ -412,53 +367,12 @@ const promised = (p: Promise<JSHTMLNodeSource|Node>, msg: JSHTMLNodeSource) => {
     return element;
 }
 
-/**
- * jshtml仕様に沿ったDOMを生成して返し、Propは生成結果をバインディングする。
- * @param s 
- * @returns 
- */
-function jshtml(s:Node|JSHTMLNodeSource|Prop<JSHTMLNodeSource>): Node {
-    if(s instanceof Node)
-        return s instanceof HTMLTemplateElement ? s.content.cloneNode(true) : s;
-    if(s instanceof Promise)
-        return new PromisedElement(s);
-    if(typeof s === "function") {
-        let n = jshtml(s());
-        let p: [Node,Node];
-        if(n.nodeType !== n.DOCUMENT_FRAGMENT_NODE) {
-            p = [n,n];
-        }
-        else if(n.hasChildNodes()) {
-            p = [n.firstChild!,n.lastChild!];
-        }
-        else { // 子要素のないDocumentFragmentはプレースホルダーとみなす
-            n = new Comment("[jshtml::placeholder]");
-            p = [n,n];
-        }
-        bindRecord(s, new RangePropBridge(s, p));
-        return n;
-    }
-    if(Array.isArray(s)) {
-        const df = document.createDocumentFragment();
-        df.append(...s.map((s)=>jshtml(s)));
-        return df;
-    }
-    if(s == null || s == undefined) {
-        return new Comment("[jshtml::null]");
-    }
-    if(typeof s !== "object") {
-        return new Text(s+"");
-    }
-    return element(s);
-}
-
 export class EmptyElementAttributeMapSource {
     source: JSHTMLAttributeMapSource
     constructor(source:JSHTMLAttributeMapSource){
         this.source = source;
     }
 }
-jshtml.$ = (attrs: JSHTMLAttributeMapSource) => new EmptyElementAttributeMapSource(attrs);
 
 /**
  * MutationObserverを介して、DOMの変異をイベントストリームに接続する。
@@ -480,31 +394,114 @@ const events = <T extends string, E = T extends keyof HTMLElementEventMap ? HTML
     return [s, target.removeEventListener.bind(target,t,l,false)];
 }
 
-// プレフィクス付きタグ名を自動解決して使うjshtml
-const jshtmlWithPrefixAuto = (prefix: string) => (node: JSHTMLNodeSource): Node  => {
-    if (typeof node === "function") return jshtmlWithPrefixAuto(prefix)(node());
-    if (Array.isArray(node)) {
-        const df = new DocumentFragment();
-        df.append(...node.map(jshtmlWithPrefixAuto(prefix)));
-        return df;
-    }
+type JSHTMLNodeSourceType = 
+    | "node"
+    | "promise"
+    | "prop"
+    | "array"
+    | "nullable"
+    | "text"
+    | "element"
+;
 
-    if (node == null || typeof node !== "object") return jshtml(node);
+type JSHTMLNodeRuntime<T> = {
+    build: (s:JSHTMLNodeSource) => Node
+    source: T
+    context?: Record<string,any>
+}
 
-    const tag = Object.keys(node).find(k => k !== "$");
-    if (!tag) return jshtml(node);
+const JSHTML_ELEMENT_HANDLER = Symbol("JSHTML_ELEMENT_FACTORY");
 
-    const maybeRealTag = `${prefix}-${tag}`;
-    const resolvedTag = customElements.get(maybeRealTag)
-        ? maybeRealTag
-        : tag;
+const JSHTML_ATTR_HANDLER = Symbol("JSHTML_ATTR_HANDLER");
 
-    const mappedNode = {
-        [resolvedTag]: node[tag],
-        $: "$" in node ? node.$ : undefined
+type JSHTMLAttrRuntime<T> = {
+    name: string
+    value: T
+    target: HTMLElement
+    context?: Record<string,any>
+}
+
+/**
+ * jshtml仕様に沿ったDOMを生成して返し、Propは生成結果をバインディングする。
+ * @param s 
+ * @returns 
+ */
+const jshtml = (source: JSHTMLNodeSource, context?: Record<string,any>) => {
+    const build: (source: JSHTMLNodeSource) => Node = (source: JSHTMLNodeSource) => {
+        const type = analyzeNodeSource(source);
+        return nodeFactory[type]({ source, context, build } as JSHTMLNodeRuntime<any>);
     };
+    return build(source);
+}
+jshtml.$ = (attrs: JSHTMLAttributeMapSource) => new EmptyElementAttributeMapSource(attrs);
 
-    return jshtml(mappedNode);
+const analyzeNodeSource = (s: JSHTMLNodeSource): JSHTMLNodeSourceType => {
+    if(s instanceof Node) return "node";
+    if(s instanceof Promise) return "promise";
+    if(typeof s === "function") return "prop";
+    if(Array.isArray(s)) return "array";
+    if(s == null || s == undefined) return "nullable";
+    if(typeof s !== "object") return "text";
+    return "element";
+}
+
+const nodeFactory = {
+    "node": ({source}:JSHTMLNodeRuntime<Node>) => source.nodeName === "TEMPLATE" ? (source as HTMLTemplateElement).content.cloneNode(true) : source,
+    "promise": ({source}:JSHTMLNodeRuntime<Promise<JSHTMLNodeSource>>) => new PromisedElement(source),
+    "prop": ({source,build}:JSHTMLNodeRuntime<Prop<JSHTMLNodeSource>>) => {
+        let n = build(source());
+        let p: [Node,Node];
+        if(n.nodeType !== n.DOCUMENT_FRAGMENT_NODE) {
+            p = [n,n];
+        }
+        else if(n.hasChildNodes()) {
+            p = [n.firstChild!,n.lastChild!];
+        }
+        else { // 子要素のないDocumentFragmentはプレースホルダーとみなす
+            n = new Comment("[jshtml::placeholder]");
+            p = [n,n];
+        }
+        bindRecord(source, new RangePropBridge(source, p));
+        return n;
+    },
+    "array": ({source,build}:JSHTMLNodeRuntime<JSHTMLNodeSource[]>) => { const df = new DocumentFragment(); df.append(...source.map(build)); return df; },
+    "nullable": (_:JSHTMLNodeRuntime<null|undefined>) => new Comment("jshtml:nullable"),
+    "text": ({source}:JSHTMLNodeRuntime<any>) => new Text(source+""),
+    "element": (runtime:JSHTMLNodeRuntime<JSHTMLElementSource>) => {
+        const {source,build,context} = runtime;
+        const [tag,children,attributes] = extractElementSource(source);
+        const elmClass = customElements.get(tag)!;
+        const elm = document.createElement(tag);
+        if(attributes) {
+            const customElementAttrHandler = elmClass && JSHTML_ATTR_HANDLER in elmClass
+                ? elmClass[JSHTML_ATTR_HANDLER] as (v:JSHTMLAttrRuntime<any>)=>boolean|void
+                : {};
+            for(let name in attributes) {
+                let value = attributes[name];
+                const runtime = { target: elm, name, value, context };
+                if(name in customElementAttrHandler && customElementAttrHandler[name](runtime) === false) 
+                    continue; // ハンドラがfalseを返したら、後続の処理はしない
+                if(isChainedProp(value)) {
+                    bindRecord(value, new AttrPropBridge(value as Prop<JSHTMLAttrSource>, elm, name));
+                    updateAttr({...runtime,value:value()});
+                }
+                else updateAttr(runtime);
+            }
+        }
+        if(children)
+            elm.append(build(children));
+        if(elmClass && JSHTML_ELEMENT_HANDLER in elm)
+            (elm[JSHTML_ELEMENT_HANDLER] as Function)(context);
+        return elm;
+    },
+}
+
+
+export {
+    defineAttrUpdateHandlers,
+    createTracableListener,
+    promised, jshtml, mutations, events,
+    JSHTMLNodeRuntime,JSHTMLAttrRuntime,
+    JSHTML_ELEMENT_HANDLER,
+    JSHTML_ATTR_HANDLER 
 };
-
-export {defineAttrUpdateHandlers,createTracableListener, promised, jshtml, mutations, events, jshtmlWithPrefixAuto, getBoundProps, getCollapseDrippers};

@@ -61,11 +61,11 @@ const AppUI = fc.prime(context)(({$count,increment$,decrement$,save$,$statusMess
 }));
 
 // --- 副作用フローの宣言的な定義 (fxdom) ---
-const fxEffectElement = jshtml({
+const effect = jshtml({
     $: { "onsave": save$, },
     "fx-effect": 
     [
-        { "fx-wait": jshtml.$({ "until": "$triggerSave" }) },
+        { "fx-wait": jshtml.$({ "until": $triggerSave }) },
         // 1. 確認メッセージを表示
         { "fx-yield": '"Confirmation needed: Save this count?"', $: { for: "fxConfirm", id: "confirmResult" } },
         { "fx-switch": [
@@ -73,19 +73,19 @@ const fxEffectElement = jshtml({
             { "fx-sequence": [
                 { "fx-collapse": '"Saving..."', $: { "dripper": "statusMessageStream$" } },
                 { "fx-wait": jshtml.$({ ms: 1500 }) },
-                { "fx-collapse": jshtml.$({ "dripper": "statusMessageStream$", value: '$finalMessage' }) },
+                { "fx-collapse": jshtml.$({ "dripper": statusMessageStream$, value: $finalMessage }) },
                 { "fx-call": '"save complete"', $: { fn: "log" } },
                 ], 
                 $: { slot: "yes" }
             },
             // "no"またはdefaultの場合のフロー
             { "fx-collapse": '"Save cancelled."',
-                $: { slot: "default", "dripper": "statusMessageStream$" } }
+                $: { slot: "default", "dripper": statusMessageStream$ } }
             ],
             $: { by: "#confirmResult" }
         }
     ],
-}) as FxEffect;
+}, context) as FxEffect;
 
 // Stream/Prop構造のdot
 const dot = dumpGraphDOT(context);
@@ -95,11 +95,8 @@ const renderDot = async (dot: string) => {
     return viz.renderSVGElement(dot);
 }
 
-// --- 3. アプリケーションのマウントとコンテキスト設定 ---
-
-// コンテキストの設定
-fxEffectElement.setContext(context);
+// --- 3. アプリケーションのマウント ---
 
 // UIをDOMにマウントする
-document.body.append(AppUI, fxEffectElement, jshtml(renderDot(dot)));
+document.body.append(AppUI, effect, jshtml(renderDot(dot))/* jshtmlはPromiseを透過的に処理する */);
 
