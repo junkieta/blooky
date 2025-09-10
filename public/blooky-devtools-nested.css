@@ -1,0 +1,84 @@
+/* EffectElementのShadow DOM内 */
+:host {
+  display: block;
+  line-height: 1;
+  margin: 1em 0 1em 0.5em; /* ネストを表現 */
+  padding: 1.25em 0.5em 0.5em;
+  border: 1px solid var(--fx-border-color, #ccc);
+  border-left-width: 5px; 
+  border-radius: var(--fx-border-radius, 4px);
+  position: relative;
+  transition: all 0.5s ease;
+}
+
+/* 実行状態のスタイル */
+:host(:state(running)) {
+  border-color: var(--fx-running-border-color, #007bff);
+  box-shadow: 0 0 5px var(--fx-running-shadow-color, rgba(0, 123, 255, 0.5));
+}
+
+:host(:state(canceled)) {
+  border-color: var(--fx-canceled-border-color, #bbbbbbff);
+}
+
+:host(:state(paused)) {
+  border-color: var(--fx-paused-border-color, #ffc107);
+  box-shadow: 0 0 5px var(--fx-paused-shadow-color, #ffc10788);
+}
+:host(:state(completed)) {
+  border-color: var(--fx-completed-border-color, #28a745);
+}
+/* is-completed と is-recovered が両方付いた場合のスタイル */
+:host(:state(completed):state(recovered)) {
+  border-left-color: var(--fx-completed-border-color, #28a745);
+}
+
+:host code,
+:host var {
+  font-style: normal; 
+  font-family: monospace;
+}
+:host code.selector {
+  display: block;
+  position: absolute;
+  background-color: white;
+  top: -0.5em;
+}
+:host code.selector > var.tag {
+  font-weight: bold;
+  color: var(--fx-tag-color, #400);
+  margin: 0 0.25em;
+}
+:host code.selector > code {  
+  color: var(--fx-attr-code-color, #888);
+}
+:host code.selector > var.name {
+  color: var(--fx-attr-name-color, #008);
+}
+:host code.selector > var.value {
+  color: var(--fx-attr-name-color, #080);
+}
+
+/* 実行状態の疑似要素 */
+:host code.selector::after {
+  margin: 0 0.25em;
+  padding: 0.25em 0.5em;
+  color: white;
+  background-color: var(--fx-border-color, #ccc);
+}
+:host(:state(running)) code.selector::after {
+  content: "running";
+  background-color: var(--fx-running-border-color, #007bff);
+}
+:host(:state(canceled)) code.selector::after {
+  content: "canceled";
+  background-color: var(--fx-canceled-border-color, #bbbbbbff);
+}
+:host(:state(paused)) code.selector::after {
+  content: "paused";
+  background-color: var(--fx-paused-border-color, #ffc107);
+}
+:host(:state(completed)) code.selector::after {
+  content: "completed";
+  background-color: var(--fx-completed-border-color, #28a745);
+}

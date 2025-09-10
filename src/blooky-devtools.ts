@@ -1,3 +1,4 @@
+import { jshtml } from "./blooky-dom";
 import { isChainedProp, isDripperStream, isStream, isVertex, Prop, Stream, Vertex, vertex } from "./blooky-fp";
 import { EffectElementTagNameMap as DefaultEffectElementTagNameMap, EffectElement, FxEffect as ConcreteEffectElementConstructor, fxdom } from "./blooky-fxdom";
 import { FxNode, FxMiddleware, ExecContext } from "./fx/types";
@@ -6,81 +7,10 @@ const FxNodeMap = new WeakMap<FxNode, EffectElement>();
 const FxElementStates = new WeakMap<EffectElement, CustomStateSet>();
 const getFxElement = (n: FxNode) : EffectElement | undefined => FxNodeMap.get(n);
 
+// fx要素の可視化用スタイルシート
 const DebEffectElementStyleSheet = new CSSStyleSheet();
-DebEffectElementStyleSheet.replaceSync(`
-/* EffectElementのShadow DOM内 */
-:host {
-  display: block;
-  margin: 0.75em 0 0.75em 16px; /* ネストを表現 */
-  padding: 1em;
-  border: 1px solid var(--fx-border-color, #ccc);
-  border-radius: var(--fx-border-radius, 4px);
-  position: relative;
-  transition: all 0.3s ease;
-}
-/* 要素の種類をラベルとして表示 */
-:host::before {
-  content: attr(data-fx-type); /* タグ名などを表示 */
-  position: absolute;
-  top: -0.7em;
-  left: 8px;
-  padding: 0 4px;
-  background: white;
-  color: var(--fx-label-color, #666);
-  font-size: 0.8em;
-  font-family: monospace;
-}
-/* 実行状態のスタイル */
-:host(:state(running)) {
-  border-color: var(--fx-running-border-color, #007bff);
-  box-shadow: 0 0 5px var(--fx-running-shadow-color, rgba(0, 123, 255, 0.5));
-}
-:host(:state(canceled)) {
-  border-style: dashed;
-  border-color: var(--fx-canceled-border-color, #bbbbbbff);
-}
-
-:host(:state(paused)) {
-  border-style: dashed;
-  border-color: var(--fx-paused-border-color, #ffc107);
-}
-:host(:state(paused))::before {
-  content: attr(data-fx-type) "(paused)";
-}
-:host(:state(completed)) {
-  border-left: 5px solid var(--fx-completed-border-color, #28a745);
-}
-/* is-completed と is-recovered が両方付いた場合のスタイル */
-:host(:state(completed):state(recovered)) {
-  border-left-color: var(--fx-completed-border-color, #28a745);
-  box-shadow: 0 0 5px var(--fx-paused-border-color, #ffc107);
-}
-:host(:state(completed):state(recovered))::before {
-  content: attr(data-fx-type) " (recovered)";
-}
-:host([slot])::before {
-  content: attr(data-fx-type) "(slot=[" attr(slot) "])";
-}
-`);
-
-// svg用のスタイル
-const sheet = new CSSStyleSheet();
-sheet.replaceSync(`
-.is-emitting {
-  transition: fill 0.1s;
-  fill: red;
-}
-/* is-emittingクラスが付与されたらアニメーションを適用 */
-.node.is-emitting {
-  animation: pulse 0.5s ease-out;
-}
-@keyframes pulse {
-  0% { stroke: #333; stroke-width: 1px; }
-  50% { stroke: crimson; stroke-width: 3px; }
-  100% { stroke: #333; stroke-width: 1px; }
-}
-`);
-document.adoptedStyleSheets.push(sheet);
+const devtoolsCSSPath = "./blooky-devtools-nested.css";
+fetch(devtoolsCSSPath).then((res)=>res.text()).then((text)=>DebEffectElementStyleSheet.replace(text));
 
 const debugMiddleware: FxMiddleware = async (ctx, next) => {
   const { node } = ctx;
@@ -141,9 +71,27 @@ Object.entries(EffectElementTagNameMap).forEach(([tag,fxClass])=>{
       // Shadow DOMがまだなければ、ここで生成する
       const shadow = this.shadowRoot || this.attachShadow({ mode: 'open' });
       shadow.adoptedStyleSheets.push(DebEffectElementStyleSheet);
+      const tag = { var: this.tagName.toLowerCase(), $: { class: "tag" } };
+      shadow.insertBefore(
+        jshtml({
+          code: this.hasAttributes()
+            ? [
+              tag,
+              Array.from(this.attributes).map(({name,value})=>[
+                { code: "[" },
+                { var: name, $: { class: "name" } },
+                { code: '="' },
+                { var: value, $: { class: "value" } },
+                { code: '"]' }
+              ]),
+            ]
+            : tag,
+          $: { class: "selector" }
+        }),
+        shadow.firstChild
+      );
       if(!shadow.querySelector("slot"))
         shadow.append(document.createElement("slot"));
-      this.setAttribute("data-fx-type", this.tagName.toLowerCase());
     }
     toFxNode() : FxNode {
         const result = super.toFxNode() as FxNode;
@@ -158,13 +106,11 @@ EffectElementTagNameMap["fx-switch"] = class extends (EffectElementTagNameMap["f
   connectedCallback(): void {
     super.connectedCallback();
     this.shadowRoot!.querySelector("slot")?.remove();
-    this.shadowRoot!.append(
-      new Text("by=["+this.getAttribute("by")!+"]"),
-      ...Array.from(this.querySelectorAll("*[slot]")).map((elm)=>{
-        const slot = document.createElement("slot");  
-        slot.name = elm.slot;
-        return slot;
-      })
+    this.shadowRoot!.append(...Array.from(this.querySelectorAll("*[slot]")).map((elm)=>{
+      const slot = document.createElement("slot");  
+      slot.name = elm.slot;
+      return slot;
+    })
     );
   }
 }
@@ -183,16 +129,6 @@ EffectElementTagNameMap["fx-collapse"] = class extends (EffectElementTagNameMap[
       setTimeout(() => nodeElement.classList.remove('is-emitting'), 1500);
     });
   }
-  /*
-  attributeChangedCallback(name: string, oldValue: string, newValue: string) {
-    if(name !== "class" || newValue !== "is-running") return;
-    const streamKey = this.getAttribute("dripper")!; if(!streamKey) return;
-    const nodeElement = document.getElementById(`node-${streamKey}`); if(!nodeElement) return;
-    nodeElement.classList.add('is-emitting');
-    // アニメーションが終わったらclassを削除
-    setTimeout(() => nodeElement.classList.remove('is-emitting'), 1500);
-  }
-  */
 }
 
 
@@ -255,6 +191,26 @@ EffectElementTagNameMap["fx-effect"] = class extends (EffectElementTagNameMap["f
 
 // 呼び出し元で fxdom.defineEffectElements(EffectElmentTagNameMap) すること。
 export {fxdom,EffectElementTagNameMap,debugMiddleware};
+
+
+// svg用のスタイル
+const sheet = new CSSStyleSheet();
+sheet.replaceSync(`
+.is-emitting {
+  transition: fill 0.1s;
+  fill: red;
+}
+/* is-emittingクラスが付与されたらアニメーションを適用 */
+.node.is-emitting {
+  animation: pulse 0.5s ease-out;
+}
+@keyframes pulse {
+  0% { stroke: #333; stroke-width: 1px; }
+  50% { stroke: crimson; stroke-width: 3px; }
+  100% { stroke: #333; stroke-width: 1px; }
+}
+`);
+document.adoptedStyleSheets.push(sheet);
 
 // グラフ描画
 function dumpGraphDOT(entries: Record<string, Stream<any> | Prop<any> | unknown>): string {

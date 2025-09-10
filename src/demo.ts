@@ -62,7 +62,6 @@ const AppUI = fc.prime(context)(({$count,increment$,decrement$,save$,$statusMess
 
 // --- 副作用フローの宣言的な定義 (fxdom) ---
 const effect = jshtml({
-    $: { "onsave": save$, },
     "fx-effect": 
     [
         { "fx-wait": jshtml.$({ "until": $triggerSave }) },
@@ -85,6 +84,7 @@ const effect = jshtml({
             $: { by: "#confirmResult" }
         }
     ],
+    $: { "onsave": save$, },
 }, context) as FxEffect;
 
 // Stream/Prop構造のdot
