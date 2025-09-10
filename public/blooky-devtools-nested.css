@@ -22,6 +22,7 @@
 }
 
 :host(:state(paused)) {
+  border-style: dashed dashed dashed solid  ;
   border-color: var(--fx-paused-border-color, #ffc107);
   box-shadow: 0 0 5px var(--fx-paused-shadow-color, #ffc10788);
 }
@@ -64,6 +65,7 @@
   margin: 0 0.25em;
   padding: 0.25em 0.5em;
   color: white;
+  font-size: smaller;
   background-color: var(--fx-border-color, #ccc);
 }
 :host(:state(running)) code.selector::after {
