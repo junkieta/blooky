@@ -1,5 +1,5 @@
 import { jshtml } from "./blooky-dom";
-import { isChainedProp, isDripperStream, isStream, isVertex, Prop, Stream, Vertex, vertex } from "./blooky-fp";
+import { accum, isChainedProp, isDripperStream, isStream, isVertex, Prop, stream, Stream, Vertex, vertex } from "./blooky-fp";
 import { EffectElementTagNameMap as DefaultEffectElementTagNameMap, EffectElement, FxEffect as ConcreteEffectElementConstructor, fxdom } from "./blooky-fxdom";
 import { FxNode, FxMiddleware, ExecContext } from "./fx/types";
 
@@ -194,27 +194,11 @@ export {fxdom,EffectElementTagNameMap,debugMiddleware};
 
 
 // svg用のスタイル
-const sheet = new CSSStyleSheet();
-sheet.replaceSync(`
-.is-emitting {
-  transition: fill 0.1s;
-  fill: red;
-}
-/* is-emittingクラスが付与されたらアニメーションを適用 */
-.node.is-emitting {
-  animation: pulse 0.5s ease-out;
-}
-@keyframes pulse {
-  0% { stroke: #333; stroke-width: 1px; }
-  50% { stroke: crimson; stroke-width: 3px; }
-  100% { stroke: #333; stroke-width: 1px; }
-}
-`);
-document.adoptedStyleSheets.push(sheet);
+import "./blooky-devtools.css";
 
 // グラフ描画
-function dumpGraphDOT(entries: Record<string, Stream<any> | Prop<any> | unknown>): string {
-  const vertex_map: [string, Vertex|Prop<any>|unknown][] = Object.entries(entries).map(([k,v])=> !isStream(v) ? [k,v] : [k,vertex(v)]);
+function dumpGraphDOT(entries: Record<string, Stream<any> | Prop<any> | unknown>, graphAttrs: Record<string,string> = { rankdir: "LR" }): string {
+  const vertex_map: [string, Vertex|Prop<any>|unknown][] = Object.entries(entries).map(([k,v])=> [k, isStream(v) ? vertex(v) : v]);
 
   const names = new WeakMap(vertex_map.map(([k,v])=>[Object(v),k]));
   const visited = new WeakMap<any, string>(); // obj → nodeId
@@ -222,9 +206,11 @@ function dumpGraphDOT(entries: Record<string, Stream<any> | Prop<any> | unknown>
   const nodes: string[] = [];
   let counter = 0;
 
-  function addNode(label: string, shape = "ellipse") {
+  function addNode(label: string, o: { [key:string]: any }) {
     const id = `n${counter++}`;
-    nodes.push(`${id} [label="${label}", shape=${shape}, id="node-${label}"]`);
+    const attrs : string[] = [`label="${label}"`];
+    if(o) attrs.push(...Object.entries(o).map(([k,v])=>`${k}="${v}"`));
+    nodes.push(`${id} [${attrs.join(" ")}]`);
     return id;
   }
 
@@ -244,28 +230,46 @@ function dumpGraphDOT(entries: Record<string, Stream<any> | Prop<any> | unknown>
     if (visited.has(obj)) return visited.get(obj)!;
 
     if (isChainedProp<any>(obj)) {
-      const id = addNode(label, "box");
+      const value = obj();
+      let valueLabel: string;
+      switch(typeof value) {
+        case "symbol": valueLabel = "symbol(" + value.description + ")"; break;
+        case "string": valueLabel = `\\"${value.replace('"','\\"')}\\"`; break;
+        default: valueLabel = value + ""; break;
+      }
+      const id = addNode(label + "|" + valueLabel, { 
+        id: label,
+        shape: "record", 
+        class: "prop " + (value === null ? "null" : typeof value)
+      });
       visited.set(obj, id);
       return id;
     }
 
     if(!isVertex(obj)) {
-      const id = addNode(label, "circle");
+      const id = addNode(label, { id: names.get(obj) || "unknown", shape: "circle" });
       visited.set(obj, id);
       return id;
     }
 
-    const id = addNode(label, names.has(obj) ? getShape(obj.source) : "point");
+    const nodeAttr = names.has(obj)
+      ? {
+        id: "node-" + label,
+        shape: getShape(obj.source)
+      }
+      : {
+        shape: "point"
+      };
+      
+    const id = addNode(label, nodeAttr);
     visited.set(obj, id);
 
-    for (const relType of ["next", "lazyNext"]) {
-      const next = obj[relType] as Vertex[];
-      if (next) edges.push(...next.map((target)=>{
-        const targetLabel = names.get(target) || "Stream";
-        const targetId = visit(target, targetLabel);
-        return `${id} -> ${targetId}`;
-      }));
-    }
+    const next = obj.next;
+    if (next) edges.push(...next.map((target)=>{
+      const targetLabel = names.get(target) || "Stream";
+      const targetId = visit(target, targetLabel);
+      return `${id} -> ${targetId}`;
+    }));
     const props = obj.props;
     if(props) edges.push(...props.map((p) => `${id} -> ${visit(p, names.get(p) || "none")}`));
     return id;
@@ -275,7 +279,9 @@ function dumpGraphDOT(entries: Record<string, Stream<any> | Prop<any> | unknown>
     visit(streamOrProp as Vertex|Prop<any>, name);
   })
 
-  return `digraph BlookyGraph {\nrankdir=LR;\n${nodes.join("\n")}\n${edges.join("\n")}\n}`;
+
+  const digraph_attrs = Object.entries(graphAttrs).map((v)=>v.join("=")).join(";\n");
+  return `digraph BlookyGraph {\ngraph [\n${digraph_attrs}\n];\n${nodes.join("\n")}\n${edges.join("\n")}\n}`;
 }
 
 

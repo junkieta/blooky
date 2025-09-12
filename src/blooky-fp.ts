@@ -51,7 +51,7 @@ type MergedStream<A> = StreamBase<A,{
     reduceFn: (a:A,b:A)=>A
 }>
 type MappedStream<A,B=any> = StreamBase<A, {
-    mapFn: (v:B)=>A|Promise<A>
+    mapFn: (v:B)=>A
 }>;
 type FilterStream<A> = StreamBase<A,{ 
     /**
@@ -311,7 +311,6 @@ type Vertex = {
     source: Stream<any>
     from?: Vertex
     next?: Vertex[]
-    lazyNext?: Vertex[]
     props?: Prop<any>[]
 };
 
@@ -325,10 +324,8 @@ const vertex = (s:Stream<any>): Vertex => {
             props: STREAM_PROP_RELATIONS.get(source)
         };
         VERTEX_MAP.set(source, vert);
-        if(source.next.size)
-            vert.next = [...source.next].map((s)=>buildVertex(s, vert));
-        if(source.lazyNext.size)
-            vert.lazyNext = [...source.lazyNext].map((s)=>buildVertex(s,vert));
+        const next = [...source.next, ...source.lazyNext];
+        if(next.length) vert.next = next.map((s)=>buildVertex(s,vert));
         return vert;
     }
     return buildVertex(s);
@@ -609,9 +606,7 @@ const lift = <A>(f: (values: any[]) => A) => (props: Prop<any>[]) : Prop<A> => {
 };
 
 const NotThen = Symbol("NotThen");
-interface PromisedProp<T> extends PromiseLike<T> {
-    () : T|typeof NotThen
-};
+type PromisedProp<T> = PromiseLike<T> & Prop<T|typeof NotThen>
 
 // 条件を満たした値だけが更新されるProp。次回更新を待ち受けるPromiseをthenから生成可能。
 const when = <A>(predicate: (v: A) => boolean) => (p: Prop<A>): PromisedProp<A> => {

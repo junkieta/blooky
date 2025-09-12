@@ -1,0 +1,56 @@
+
+.is-emitting {
+  transition: fill 0.1s;
+  fill: red;
+}
+/* is-emittingクラスが付与されたらアニメーションを適用 */
+.node.is-emitting {
+  animation: pulse 0.5s ease-out;
+}
+svg {
+    padding: 1em;
+    width: 100vw;
+    flex-direction: column;
+    justify-content: center;
+    box-sizing: border-box;
+    transition: all 1.5s ease;
+}
+
+svg > g {
+    margin: 0 auto;
+    border: 3px double;
+}
+
+svg g.prop > text:lastChild {
+    stroke-width: 1px;
+}
+svg .string > text:last-child {
+    fill: #800;
+}
+svg .boolean > text:last-child {
+    fill: #880;
+}
+svg .number > text:last-child {
+    fill: #008;
+}
+svg .symbol > text:last-child {
+    fill: #080;
+}
+svg .object > text:last-child {
+    fill: #338;
+}
+
+@keyframes pulse {
+    0% {
+        stroke: #333;
+        stroke-width: 1px;
+    }
+    50% {
+        stroke: crimson;
+        stroke-width: 3px;
+    }
+    100% {
+        stroke: #333;
+        stroke-width: 1px;
+    }
+}

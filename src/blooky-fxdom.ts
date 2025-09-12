@@ -108,9 +108,7 @@ const FLOW_TEMPLATE_CACHE = new Map<string, HTMLTemplateElement>();
 class FxInclude extends EffectElement { // FxFlowからFxIncludeにリネーム
 
   // 'src'属性の変更を監視対象に含める
-  static get observedAttributes() {
-    return ['src'];
-  }
+  static observedAttributes = ['src'];
   
   toFxNode(): FxNode {
     const children = this.childrenToFxNodes();
@@ -272,11 +270,12 @@ class FxContext extends EffectElement {
 
   toFxNode(): FxNode {
     const nodes = this.childrenToFxNodes();
-    return !nodes.length
+    const child = !nodes.length
       ? fx.none() 
       : nodes.length === 1
       ? nodes[0]
       : fx.sequence(nodes);
+    return fx.context(this.context, child, this.id);
   }
 
   [JSHTML_ELEMENT_HANDLER](context?: AppContext) {
@@ -328,6 +327,10 @@ class FxEffect extends FxContext {
   protected _execContext?: Partial<ExecContext>
   protected _preparedFx?: PreparedFx
   protected _handle?: ExecutionHandle
+
+  toFxNode(): FxNode {
+    return FxSequence.prototype.toFxNode.call(this);
+  }
   
   connectedCallback() {
     // 1. prepare: 接続時に一度だけフローを準備（コンパイル）する

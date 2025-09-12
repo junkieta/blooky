@@ -1,14 +1,15 @@
 /* EffectElementのShadow DOM内 */
 :host {
   display: block;
-  line-height: 1;
+  line-height: 2;
   margin: 1em 0 1em 0.5em; /* ネストを表現 */
   padding: 1.25em 0.5em 0.5em;
   border: 1px solid var(--fx-border-color, #ccc);
   border-left-width: 5px; 
   border-radius: var(--fx-border-radius, 4px);
   position: relative;
-  transition: all 0.5s ease;
+  transition: all 0.3s ease;
+  min-height: 1em;
 }
 
 /* 実行状態のスタイル */
@@ -43,7 +44,7 @@
   display: block;
   position: absolute;
   background-color: white;
-  top: -0.5em;
+  top: -1em;
 }
 :host code.selector > var.tag {
   font-weight: bold;
@@ -67,6 +68,7 @@
   color: white;
   font-size: smaller;
   background-color: var(--fx-border-color, #ccc);
+  transition: all 1s ease;
 }
 :host(:state(running)) code.selector::after {
   content: "running";
