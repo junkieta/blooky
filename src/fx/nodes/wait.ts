@@ -1,6 +1,6 @@
 import type { FxRef, FxNode, FxExecutionContext } from '../types';
 import { NodeDefinition } from '../NodeDefinition';
-import { Prop, when } from '../../blooky-fp'; // when関数をインポート
+import { PromisedProp, Prop, when } from '../../blooky-fp'; // when関数をインポート
 type ThisNode = Extract<FxNode, { type: 'wait' }>;
 
 export class WaitNodeDefinition extends NodeDefinition<'wait'> {
@@ -15,9 +15,11 @@ export class WaitNodeDefinition extends NodeDefinition<'wait'> {
     if (ms) {
       await new Promise(res => setTimeout(res, ms()));
     }
-    if (node.until) {
-      const until = context.resolve<Prop<boolean>>(node.until);
+    if (!node.until) return;
+    const until = context.resolve<Prop<boolean>|PromisedProp<any>>(node.until);
+    if("then" in until)
+      await Promise.resolve(until);
+    else
       await Promise.resolve(when(p => p === true)(until));
-    }
   }
 }

@@ -135,7 +135,8 @@ EffectElementTagNameMap["fx-collapse"] = class extends (EffectElementTagNameMap[
 const ExecContextForDebug : Partial<ExecContext> = {
   middlewares: [debugMiddleware],
   onNodeEnter(node: FxNode): void {
-    const element = getFxElement(node)!;
+    const element = getFxElement(node);
+    if(!element) return;
     if(FxElementStates.has(element))
       FxElementStates.get(element)!.add('running');
     element.dispatchEvent(new CustomEvent("changestate", {

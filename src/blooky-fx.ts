@@ -1,21 +1,22 @@
 import { nodeDefinitionMap } from "./fx/nodes";
 import { Prop } from "./blooky-fp";
 import { FxNode, AppContext, CancelToken, ExecContext, FxExecutionContext, ExecutionHandle, PreparedFx, FxFactoryMap } from "./fx/types";
+import { RETURN_VALUE } from "./fx/nodes/return";
 
 // 参照オブジェクトの型を定義（ブランド化して、他のオブジェクトと区別する）
 const FxRefSymbol = Symbol("FxRef");
-type FxRef<T> = { [FxRefSymbol]: true; key: string; } | Prop<T> | T;
+type FxRef<T> = { [K in typeof FxRefSymbol]: true; } & { key: string; } | Prop<T> | T;
 
 /**
  * 実行時に解決されるkeyへの参照オブジェクトを生成する。
  */
 const ref = <T>(key: string): FxRef<T> => ({ [FxRefSymbol]: true, key });
-const isFxRef = <T>(v:unknown) : v is Extract<FxRef<T>,{ [FxRefSymbol]: true; key: string; }> => v && v[FxRefSymbol];
+const isFxRef = <T>(v:unknown) : v is Extract<FxRef<T>,{ [K in typeof FxRefSymbol]: true; } & { key: string; }> => v && (v as any)[FxRefSymbol];
 
 // --- ファクトリ (fxオブジェクト) の動的構築 ---
 const fx = {} as FxFactoryMap;
 nodeDefinitionMap.forEach((def, type) => {
-  fx[type] = def.factory.bind(def);
+  (fx as any)[type] = def.factory.bind(def);
 });
 
 function createCancelToken(parent?: CancelToken): CancelToken {
@@ -26,6 +27,8 @@ function createCancelToken(parent?: CancelToken): CancelToken {
     cancelled: () => isCancelled || (parent ? parent.cancelled() : false),
   }
 }
+
+const NotResolved = Symbol.for("NotResolved");
 
 /**
  * 副作用フローを実行可能な状態に準備し、PreparedFxオブジェクトを返す。
@@ -41,20 +44,26 @@ function prepare(
   initialAppContext: AppContext,
   parentExecContext?: Partial<ExecContext>
 ): PreparedFx {
-  // 未定義のキー参照を調べる
-  const [required,idList] = checkContext(initialAppContext)(flow);
-  if (required.length && required.some((k) => !idList.includes(k)))
-      throw new Error(`prepare: context missing keys: ${[...new Set(required)].join(",")}`);
 
   // id所持ノードの結果を格納するRecord
-  const idRecord: { [key:string]: unknown } = {};
-  const NOT_RESOLVED = Symbol();
-  [...new Set(idList)].forEach((id)=> idRecord[id] = NOT_RESOLVED);
-  // ノードツリー内で宣言済みのidだけを受け付ける
-  Object.seal(idRecord);
-
+  const localRecord: { [key:string|symbol]: unknown } = {
+    yieldedValue: NotResolved,
+    [RETURN_VALUE]: RETURN_VALUE in initialAppContext ? initialAppContext[RETURN_VALUE] : NotResolved
+  };
+  const nodes = flattenFxNode(flow);
+  nodes.filter((n)=>n.id).forEach((n) => localRecord["#"+n.id!] = n.type === "context" ? n : NotResolved);
   // 受け取り済みのコンテキストにidRecordの参照を紐づける
-  const appContext = createProxyContext(initialAppContext, idRecord);
+  const appContext = createProxyContext(initialAppContext, localRecord);
+
+  // 未定義のキー参照を調べる
+  const missingKeys : string[] = nodes.flatMap((n)=>Object.values(n).filter((v) => isFxRef<unknown>(v) && !(v.key in appContext)).map((v)=>v.key));
+  if (missingKeys.length) {
+    throw new Error(`prepare: context missing keys: ${missingKeys.join(",")}`);
+  }
+
+  // ノードツリー内で宣言済みのidだけを受け付ける
+  Object.seal(localRecord);
+
   const cancelToken = createCancelToken();
   const execContext: ExecContext = {
     resolve: (v:FxRef<any>) => resolveValue(v)(appContext),
@@ -82,7 +91,7 @@ function execute(preparedFx: PreparedFx): ExecutionHandle {
       return run.call(context || execContext, { ...runtimeContext, node })
     },
     execute(node: FxNode, context?: ExecContext) {
-      return _internal_execute.call(context || execContext, runtimeContext.run(node), runtimeContext)
+      return _internal_execute.call(context || execContext, runtimeContext.run(node), runtimeContext as FxExecutionContext)
     },
     context: execContext,
     appContext
@@ -203,31 +212,38 @@ function yieldToMainThread(): Promise<void> {
 }
 
 // Proxyコンテキストを生成するヘルパー関数
-const createProxyContext = (appContext: AppContext, idRecord: { [key:string]: unknown }): AppContext => {
+const createProxyContext = (appContext: AppContext, idRecord: { [key:string|symbol]: unknown }): AppContext => {
   return new Proxy(appContext, {
     get(target, key) {
-      if (typeof key === 'string' && key in idRecord) {
+      if (key in idRecord) {
         return idRecord[key];
       }
       return Reflect.get(target, key);
     },
     // id参照の更新のみ受け付ける
     set(_,key,value) {
-      if (typeof key === 'string' && idRecord.hasOwnProperty(key)) {
+      if (key in idRecord) {
         idRecord[key] = value;
         return true;
       }
       return false;
     },
     has(target, key) {
-      if (typeof key === 'string' && key.startsWith('#')) {
-        return key in idRecord;
-      }
-      return Reflect.has(target, key);
+      return key in idRecord || Reflect.has(target, key);
     },
     ownKeys(target) {
       return [...Reflect.ownKeys(target), ...Object.keys(idRecord)];
     },
+    getOwnPropertyDescriptor(target, key) {
+      if(key in idRecord)
+        return {
+          value: idRecord[key],
+          enumerable: true,
+          writable: true,
+          configurable: true
+        }
+      return Reflect.getOwnPropertyDescriptor(target, key);
+    },    
   });
 }
 
@@ -242,20 +258,13 @@ const resolveValue = <T>(value: FxRef<T>) => (context: AppContext) : Prop<T> => 
   return typeof value === "function" ? value as Prop<T> : () => value as T;
 }
 
-// --- 矛盾チェック用キーリストの準備 ---
-const checkContext = (context: AppContext) => (node: FxNode) : [string[],string[]] => {
-  // FxRef型の値をチェック
-  const keys: string[] = Object.values(node).filter((v) => isFxRef<unknown>(v) && !(v.key in context)).map((v)=>v.key);
-  // idの有無をチェック
-  const id = node.id ? ["#"+node.id] : [];
-  const children = nodeDefinitionMap.get(node.type)!.getChildNodes(node);
-  if(!children) return [keys,id];
-  const child_result = children.map(checkContext(context));
-  return [
-    keys.concat(child_result.flatMap(([v])=>v)),
-    id.concat(child_result.flatMap(([_,v])=>v))
-  ]
-};
+
+const flattenFxNode = (n:FxNode): FxNode[] => {
+  const children = nodeDefinitionMap.get(n.type)!.getChildNodes(n);
+  return children
+    ? [n, ...children.flatMap(flattenFxNode)]
+    : [n];
+}
 
 
 export {

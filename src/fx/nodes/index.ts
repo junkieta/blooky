@@ -1,5 +1,5 @@
 // src/blooky-fx/nodes/index.ts
-import type { INodeDefinition } from '../types';
+import type { FxNodeBase, FxNodeType, INodeDefinition } from '../types';
 import {NoneNodeDefinition} from "./none";
 import {SequenceNodeDefinition} from "./sequence";
 import {ParallelNodeDefinition} from "./parallel";
@@ -28,6 +28,6 @@ export const allNodeDefinitions = [
   new CollapseNodeDefinition(),
   new YieldNodeDefinition(),
   new ReturnNodeDefinition()
-].map(def => [def.type, def] as [string, INodeDefinition<any>]); // Mapにしやすいように[key, value]のペアに変換
+].map(def => [def.type, def] as [FxNodeType, INodeDefinition<any>]); // Mapにしやすいように[key, value]のペアに変換
 
-export const nodeDefinitionMap = new Map<string, INodeDefinition<any>>(allNodeDefinitions);
+export const nodeDefinitionMap = new Map<FxNodeType, INodeDefinition<any>>(allNodeDefinitions);

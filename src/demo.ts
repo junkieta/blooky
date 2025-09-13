@@ -1,5 +1,5 @@
 // -- 0. 事前ロード ---
-import { stream, accum, merge, hold, map, remap, when, lift, Prop } from "./blooky-fp";
+import { stream, accum, merge, hold, map, remap, when, lift, Prop, pipe } from "./blooky-fp";
 import { jshtml } from "./blooky-dom";
 import type { FxEffect } from "./blooky-fxdom";
 import { fxdom,EffectElementTagNameMap, dumpGraphDOT } from "./blooky-devtools";
@@ -26,16 +26,18 @@ const $count = accum((current: number, val: number) => current + val, 0)(changeC
 const $statusMessage = hold('Ready.')(statusMessageStream$);
 const $finalMessage = remap<string,number>((v) => `Saved Count:${v}`)($count);
 
-// confirmの呼び出しを別ツリーのフローとして宣言
-const _fxConfirm = fx.context({},fx.sequence([
-    fx.call((text)=>confirm(text) ? "yes" : "no", { arg: ref("yieldedValue"), id: "confirmResult" }),
-    fx.return(ref("#confirmResult")),
-])) as FxContextNode;
 
 // confirmの呼び出しを別ツリーのフローとして宣言
 const confirmQuestionActivated$ = stream<string>();
 const confirmButtonClicked$ = stream<MouseEvent>();
-const $confirmAnswer = when((v)=>v !== undefined)(hold<undefined|boolean>(undefined)(map<boolean|undefined,MouseEvent>((evt) => (evt.target as HTMLButtonElement).value === "yes")(confirmButtonClicked$)));
+const $selectedConfirmAnswer = pipe(
+    confirmButtonClicked$,
+    map((evt)=>(evt.target as HTMLButtonElement).value),
+    hold("yet")
+);
+
+const $confirmAnswerResolved = when((answer)=>answer !== "yet")($selectedConfirmAnswer);
+
 const $confirmQuestionDialogbox = hold<JSHTMLNodeSource>(null)(map<JSHTMLNodeSource, string>((text)=>[
     { p: text },
     { button: "OK", $: { onclick: confirmButtonClicked$, value: "yes" } },
@@ -53,7 +55,8 @@ const context = {
     $statusMessage,
     $finalMessage,
     confirmQuestionActivated$,
-    $confirmAnswer,
+    $selectedConfirmAnswer,
+    $confirmAnswerResolved,
     $confirmQuestionDialogbox,
     log: (s:unknown)=>console.log(s),
 };
@@ -80,8 +83,8 @@ const effect = jshtml({
     [
         { "fx-context": [
             { "fx-collapse": jshtml.$({ dripper: confirmQuestionActivated$, value: "yieldedValue" }) },
-            { "fx-wait": jshtml.$({ until: $confirmAnswer }) },
-            { "fx-return": jshtml.$({ value: $confirmAnswer }) }
+            { "fx-wait": jshtml.$({ until: $confirmAnswerResolved }) },
+            { "fx-return": jshtml.$({ value: $selectedConfirmAnswer }) }
             ],
             $: { id: "fxConfirm" }
         },

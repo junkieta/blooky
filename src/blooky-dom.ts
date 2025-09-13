@@ -3,8 +3,8 @@
  * blookyを用いてリアクティブなDOMを構築するライブラリ。
  * 簡易な仕様でDOMを構築しつつ、Streamを利用した更新管理も行う。
  */
-import type { V_DATASET, V_STYLE, V_CLASSLIST, V_EVENTLISTENER, V_STRING, WritableCSSProperty, JSHTMLElementSource, JSHTMLAttrSource, JSHTMLNodeSource, JSHTMLAttributeMapSource, T_ATTRSET } from "./blooky-dom-types";
-import { type Stream, type Prop, type DripperStream, stream, drip, isChainedProp, filter, isDripperStream, when, registerTickHandler, getPropId, hasReferences, collapse } from "./blooky-fp";
+import type { V_DATASET, V_STYLE, V_CLASSLIST, V_EVENTLISTENER, V_STRING, WritableCSSProperty, JSHTMLElementSource, JSHTMLAttrSource, JSHTMLNodeSource, JSHTMLAttributeMapSource } from "./blooky-dom-types";
+import { type Stream, type Prop, type DripperStream, stream, drip, isChainedProp, isDripperStream, registerTickHandler, collapse } from "./blooky-fp";
 
 // DOMをfpのtickに結び付ける
 registerTickHandler((effects) => {
@@ -12,17 +12,16 @@ registerTickHandler((effects) => {
 
     // ツリーから外れたものと、更新の発生したPropに包含されているPropはbindから外す
     const isGCTarget = (a:PropBridge) => !a.isConnected() || update_target.some((b)=>b.contains(a)&&a!==b);
-    Object.getOwnPropertySymbols(PROP_BRIDGE_RECORD).forEach((id)=>{
-        const bridge = PROP_BRIDGE_RECORD[id];
+    PROP_BRIDGE_RECORD.forEach((bridge,prop)=>{
         if(!Array.isArray(bridge)) {
             if(isGCTarget(bridge))
-                delete PROP_BRIDGE_RECORD[id];
+                PROP_BRIDGE_RECORD.delete(prop);
         } else {
             const filtered = bridge.filter((b)=>!isGCTarget(b));
             if(!filtered.length) 
-                delete PROP_BRIDGE_RECORD[id];
+                PROP_BRIDGE_RECORD.delete(prop);
             else if(filtered.length < bridge.length)
-                PROP_BRIDGE_RECORD[id] = filtered;
+                PROP_BRIDGE_RECORD.set(prop, filtered);
         }
     });
     effects.forEach((e)=>e.effects.forEach((v,p)=>{
@@ -260,7 +259,7 @@ const setCSSProperty = (n: WritableCSSProperty|string, v: string) => (d: CSSStyl
     if(n.startsWith("--"))
         d.setProperty(n, v);
    else
-        d[n] = v;
+        d[n as WritableCSSProperty] = v;
 }
  
 
@@ -317,8 +316,8 @@ const updateAttr = <V>(runtime: JSHTMLAttrRuntime<V>) => {
     const {value,name,target} = runtime;
     if(value == null)
         target.removeAttribute(name);
-    else if(name in jshtmlAttrHandler)
-        jshtmlAttrHandler[name](runtime);
+    else if(typeof jshtmlAttrHandler[name as keyof typeof jshtmlAttrHandler] === "function")
+        jshtmlAttrHandler[name as keyof typeof jshtmlAttrHandler](runtime as any);
     else if(name in ATTRIBUTE_HANDLER_RREGISTRY && ATTRIBUTE_HANDLER_RREGISTRY[name](runtime) === false)
         return;
     else if(typeof value === "boolean")
@@ -474,7 +473,7 @@ const nodeFactory = {
         const elm = document.createElement(tag);
         if(attributes) {
             const customElementAttrHandler = elmClass && JSHTML_ATTR_HANDLER in elmClass
-                ? elmClass[JSHTML_ATTR_HANDLER] as (v:JSHTMLAttrRuntime<any>)=>boolean|void
+                ? elmClass[JSHTML_ATTR_HANDLER] as { [key:string]: (v:JSHTMLAttrRuntime<any>)=>boolean|void }
                 : {};
             for(let name in attributes) {
                 let value = attributes[name];

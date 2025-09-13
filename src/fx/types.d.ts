@@ -41,6 +41,8 @@ type FxYieldNode = FxNodeBase<"yield", { for: FxRef<FxContextNode>, value: FxRef
 type FxContextNode = FxNodeBase<"context",  { context: AppContext, child: FxNode }>;
 type FxReturnNode = FxNodeBase<"return",  { value: FxRef<any> }>;
 
+type FxNodeType = FxNode["type"];
+
 /**
  * 副作用フローのノードを表す合併型
  */
@@ -64,7 +66,7 @@ type FxNode =
 /**
  * 全てのFxNode定義が実装すべき規約
  */
-interface INodeDefinition<T extends FxNode['type']> {
+interface INodeDefinition<T extends FxNodeType> {
   /**
    * ノードの種類を示す一意な文字列
    */
@@ -113,13 +115,13 @@ type CancelToken = {
 };
 
 type FxHandlerMap = {
-  [K in FxNode["type"]]?: (
+  [K in FxNodeType]?: (
     ctx: FxExecutionContext & { node: Extract<FxNode, { type: K }> }
   ) => Promise<any>
 };
 
 type FxFactoryMap = {
-  [K in FxNode["type"]]: (...args: any[]) => Extract<FxNode, { type: K }>
+  [K in FxNodeType]: (...args: any[]) => Extract<FxNode, { type: K }>
 };
 
 
@@ -251,6 +253,7 @@ export {
     FxYieldNode,
     FxContextNode,
 
+    FxNodeType,
     FxRef,
     INodeDefinition,
     FxDispatchSettings,

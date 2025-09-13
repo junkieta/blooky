@@ -278,10 +278,6 @@ class FxContext extends EffectElement {
     return fx.context(this.context, child, this.id);
   }
 
-  [JSHTML_ELEMENT_HANDLER](context?: AppContext) {
-    if(context) this.setContext(context);
-  }
-
   // use属性値を最低限必要なキーとして使う
   setContext(ctx: Record<string, any>) {
     if(this.hasAttribute("use")) {
@@ -328,10 +324,10 @@ class FxEffect extends FxContext {
   protected _preparedFx?: PreparedFx
   protected _handle?: ExecutionHandle
 
-  toFxNode(): FxNode {
-    return FxSequence.prototype.toFxNode.call(this);
+  [JSHTML_ELEMENT_HANDLER](context?: AppContext) {
+    if(context) this.setContext(context);
   }
-  
+
   connectedCallback() {
     // 1. prepare: 接続時に一度だけフローを準備（コンパイル）する
     const flow = this.toFxNode();

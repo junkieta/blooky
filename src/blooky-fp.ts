@@ -35,7 +35,7 @@ type StreamBase<A,T> = {
     /**
      * 連結されたストリーム
      */
-    next: Set<MappedStream<any,A>|FilterStream<A>>
+    next: Set<MappedStream<any>|FilterStream<A>>
     /**
      * 連結先のうち、マージされる可能性のあるストリーム
      */
@@ -50,8 +50,8 @@ type DripperStream<A> = StreamBase<A, {
 type MergedStream<A> = StreamBase<A,{
     reduceFn: (a:A,b:A)=>A
 }>
-type MappedStream<A,B=any> = StreamBase<A, {
-    mapFn: (v:B)=>A
+type MappedStream<A> = StreamBase<A, {
+    mapFn: <B>(v:B)=>A
 }>;
 type FilterStream<A> = StreamBase<A,{ 
     /**
@@ -195,12 +195,12 @@ const filter = <A>(f:((v:A)=>boolean)|RegExp|A) : (s:Stream<A>)=>FilterStream<A>
 /**
  * ストリームを別の流れに変換する
  */
-const map = <A,B>(f:((v:B)=>A)|Prop<A>|A): ((s:Stream<B>)=>MappedStream<A,B>) =>
+const map = <A,B>(f:((v:B)=>A)|Prop<A>|A): ((s:Stream<B>)=>MappedStream<A>) =>
     typeof f !== "function"
     ? map<A,B>(() => f)
-    : (s:Stream<B>) : MappedStream<A,B> => {
-        const _s: MappedStream<A,B> = {
-            mapFn: f as (v:B)=>A,
+    : (s:Stream<B>) : MappedStream<A> => {
+        const _s: MappedStream<A> = {
+            mapFn: f as <B>(v:B)=>A,
             next: new Set(),
             lazyNext: new Set()
         };
@@ -236,7 +236,7 @@ function pipe<A,B,C>(value:A,op1:(a:A)=>B,op2:(b:B)=>C):C;
 function pipe<A,B,C,D>(value:A,op1:(a:A)=>B,op2:(b:B)=>C,op3:(c:C)=>D):D;
 function pipe<A,B,C,D,E>(value:A,op1:(a:A)=>B,op2:(b:B)=>C,op3:(c:C)=>D,op4:(d:D)=>E):E;
 function pipe<A,B,C,D,E,F>(value:A,op1:(a:A)=>B,op2:(b:B)=>C,op3:(c:C)=>D,op4:(d:D)=>E,op5:(e:E)=>F):F;
-function pipe(v,...fns) { return fns.reduce((v,f)=>f(v),v) }
+function pipe<A>(v:A,...fns:any[]) { return fns.reduce((v,f)=>f(v),v) }
 
 
 // 高階関数の引数順を入れ替えて、メソッドチェーン的な書き味に
@@ -291,23 +291,17 @@ const isStream = <A>(v:unknown) : v is Stream<A> =>
  * 引数がドリッパーであるかを判別する。
  */
 const isDripperStream = <A>(v:unknown) : v is DripperStream<A> =>
-    isStream<A>(v) && v[IS_DRIPPER] === IS_DRIPPER;
+    isStream<A>(v) && (v as DripperStream<A>)[IS_DRIPPER] === IS_DRIPPER;
 
 // 引数がStreamから接続されたPropか判別する
 const isChainedProp = <A>(v: unknown): v is Prop<A> => PROP_UPDATE.has(v as Prop<A>);
 
-const getPropId = (p:Prop<any>)=>{
-    if(!PROP_IDENTIFIER.has(p)) PROP_IDENTIFIER.set(p, Symbol("PROP_ID_SYMBOL"));
-    return PROP_IDENTIFIER.get(p)!;
-}
-
 // memo
 const VERTEX_MAP = new WeakMap<Stream<any>,Vertex>();
 const VERTEX_SYM = Symbol("IS_VERTEX");
-const isVertex = (v: unknown) : v is Vertex => v && v[VERTEX_SYM];
+const isVertex = (v: unknown) : v is Vertex =>  v ? (v as Vertex)[VERTEX_SYM] : false;
 
-type Vertex = {
-    [VERTEX_SYM]: true
+type Vertex = { [K in typeof VERTEX_SYM]: true } & {
     source: Stream<any>
     from?: Vertex
     next?: Vertex[]
@@ -753,8 +747,8 @@ const RESERVATIONS : {
 
 const DEFAULT_TICK_CALLER = typeof globalThis.requestAnimationFrame === "function"
     ? requestAnimationFrame
-    : typeof globalThis.process === "object"
-    ? ((f:(t:number)=>void) => { globalThis.process.nextTick(()=>f(performance.now())); })
+    : typeof (globalThis as any).process === "object"
+    ? ((f:(t:number)=>void) => { (globalThis as any).process.nextTick(()=>f(performance.now())); })
     : ((f:(t:number)=>void) => { setTimeout(() => f(performance.now())) });
 
 const collapse = async (effect:DripEffect) => new Promise((resolve, reject) => {
@@ -878,7 +872,7 @@ const moments = {
 
 export {
     drip,dripGraph,vertex,stream,
-    isStream,isDripperStream,isChainedProp,getPropId,isVertex,
+    isStream,isDripperStream,isChainedProp,isVertex,
     countReferences,hasReferences,clear,
     merge,junction,map,filter,
     hold,accum,lift,remap,when,
