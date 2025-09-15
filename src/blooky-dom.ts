@@ -7,7 +7,7 @@ import type { V_DATASET, V_STYLE, V_CLASSLIST, V_EVENTLISTENER, V_STRING, Writab
 import { type Stream, type Prop, type DripperStream, stream, drip, isChainedProp, isDripperStream, registerTickHandler, collapse } from "./blooky-fp";
 
 // DOMをfpのtickに結び付ける
-registerTickHandler((effects) => {
+registerTickHandler("visual", (effects) => {
     const update_target = effects.flatMap((e) => [...e.effects.keys()].flatMap((p)=>PROP_BRIDGE_RECORD.has(p) ? PROP_BRIDGE_RECORD.get(p)! : []));
 
     // ツリーから外れたものと、更新の発生したPropに包含されているPropはbindから外す
@@ -152,17 +152,19 @@ abstract class AbstractAttrPropBridge<A> implements PropBridgeInterface<A> {
 }
 
 class AttrPropBridge extends AbstractAttrPropBridge<JSHTMLAttrSource> {
-    generatedListener?: (v:Event)=>void
+    generatedListener?: EventListenerOrEventListenerObject
     update(next: JSHTMLAttrSource, prev: JSHTMLAttrSource){
         if(next === prev) return;
         const {name,target} = this;
         if(this.generatedListener) {
             target.removeEventListener(name.slice(2), this.generatedListener);
             delete this.generatedListener;
-            if(isDripperStream(next))
-                next = this.generatedListener = createTracableListener(next);
         }
-        updateAttr({ name, target, value: next, context:{} });
+        if(isDripperStream(next))
+            next = this.generatedListener = createTracableListener(next);
+        else if("on".startsWith(name))
+            this.generatedListener = next as EventListenerOrEventListenerObject;
+        updateAttr({ name, target, value: next });
         this.dispatchModifiedEvent("attr-prop-modified", next, prev);
     }
     contains(p: PropBridge) {

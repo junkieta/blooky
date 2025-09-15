@@ -3,11 +3,12 @@
  * 関数型のリアクティブプログラミングをtypescriptで行うためのライブラリ。
  */
 
-import { DripEffect, DripResult, PropEffect } from "./blooky-types";
+import { DripEffect, DripperStream, DripResult, DripStrategy, FilterStream, FlowingState, MappedStream, MergedStream, Prop, PropEffect, Stream } from "./blooky-types";
 
-// ガベージコレクタの格納プロパティ用シンボル
-const STREAM_CLEANER = Symbol("STREAM_CLEANER");
-
+/**
+ * ガベージコレクション用クリーナー関数
+ */
+const STREAM_CLEANERS = new WeakMap<Stream<any>,()=>void>(); 
 /**
  * Stream->Propの接続状況
  */
@@ -21,89 +22,30 @@ const PROP_FROM = new WeakMap<Prop<any>, Stream<any>>();
  */
 const PROP_UPDATE = new WeakMap<Prop<any>, ((v:any)=>void)>();
 
-// 各PropのIDとして機能するsymbolを保管する
-const PROP_IDENTIFIER = new WeakMap<Prop<any>, symbol>();
-
-/**
- * ストリームの状態定義。次のストリームへの接続用情報を保持する。
- */
-type StreamBase<A,T> = {
-    /**
-     * ガベージコレクション
-     */
-    [STREAM_CLEANER]?: ()=>void
-    /**
-     * 連結されたストリーム
-     */
-    next: Set<MappedStream<any>|FilterStream<A>>
-    /**
-     * 連結先のうち、マージされる可能性のあるストリーム
-     */
-    lazyNext: Set<MergedStream<A>>
-} & T;
-
-const IS_DRIPPER = Symbol("IS_DRIPPER");
-
-type DripperStream<A> = StreamBase<A, {
-    [IS_DRIPPER]: typeof IS_DRIPPER
-}>
-type MergedStream<A> = StreamBase<A,{
-    reduceFn: (a:A,b:A)=>A
-}>
-type MappedStream<A> = StreamBase<A, {
-    mapFn: <B>(v:B)=>A
-}>;
-type FilterStream<A> = StreamBase<A,{ 
-    /**
-     * フィルタ。受け入れられる値かを判断する。
-     * @param v 
-     * @returns 
-     */
-    filterFn: (v:A)=>boolean 
-}>
-
-type Stream<A> = 
-   | DripperStream<A>
-   | MappedStream<A>
-   | MergedStream<A>
-   | FilterStream<A>
-
-/**
- * 連結したストリームを辿り、受け取った時変値の処理関数をまとめる
- */
-type FlowingState = [PropEffect<unknown>[], [MergedStream<any>,any][]];
-
-
-/**
- * 時変値を返す関数の型。
- */
-type Prop<A> = ()=>A;
-
 /**
  * ストリーム/プロパティのメモリを解放する。ガベージコレクトの補助。
  * @param s 
  */
 const clear = <A>(s: Stream<A>, recursive = true, visited = new WeakSet<Stream<any>>()) => {
-    if (!isStream(s)) {
+    if (!isStream(s))
         throw new TypeError('clear requires Stream or Prop');
-    } else if (visited.has(s)) {
+    if (visited.has(s))
         return; // 既に訪問済み
-    } else {
-        visited.add(s);
-        if(recursive) {
-            s.next.forEach((nextStream) => clear(nextStream, recursive, visited));
-            s.lazyNext.forEach((nextStream) => clear(nextStream, recursive, visited));
-        }
-        if (s[STREAM_CLEANER]) s[STREAM_CLEANER]();
-        s.next.clear();
-        s.lazyNext.clear();
-        if(STREAM_PROP_RELATIONS.has(s)) {
-            STREAM_PROP_RELATIONS.get(s)!.forEach((p)=>{
-                PROP_FROM.delete(p);
-                PROP_UPDATE.delete(p);
-            });
-            STREAM_PROP_RELATIONS.delete(s);
-        }
+    visited.add(s);
+    if(recursive) {
+        s.next.forEach((nextStream) => clear(nextStream, recursive, visited));
+        s.lazyNext.forEach((nextStream) => clear(nextStream, recursive, visited));
+    }
+    if(STREAM_CLEANERS.has(s))
+        STREAM_CLEANERS.get(s)!();
+    s.next.clear();
+    s.lazyNext.clear();
+    if(STREAM_PROP_RELATIONS.has(s)) {
+        STREAM_PROP_RELATIONS.get(s)!.forEach((p)=>{
+            PROP_FROM.delete(p);
+            PROP_UPDATE.delete(p);
+        });
+        STREAM_PROP_RELATIONS.delete(s);
     }
 };
 
@@ -140,11 +82,11 @@ const cleanupRegistry =
 /**
  * ストリーム状態を生成する。
  */
-const stream = <A>() => {
+const stream = <A>(strategy: DripStrategy = { type: "immediate" }) => {
     const s: DripperStream<A> = {
         next: new Set(),
         lazyNext: new Set(),
-        [IS_DRIPPER]: IS_DRIPPER
+        dripStrategy: strategy
     };
     // StreamがGCされたら自動clear
     cleanupRegistry.register(s, new WeakRef(s));
@@ -162,11 +104,11 @@ const merge = <A> (f?:(a:A,b:A)=>A) => (s:Stream<A>[]) : MergedStream<A> => {
     const _s : MergedStream<A> = {
         next: new Set(),
         lazyNext: new Set(),
-        reduceFn: f || ((_,v) => v),
-        [STREAM_CLEANER]: () => {
-            s.forEach((s)=>s.lazyNext.delete(_s));
-        }
+        reduceFn: f || ((_,v) => v)
     };
+    STREAM_CLEANERS.set(_s, () => {
+        s.forEach((s)=>s.lazyNext.delete(_s));
+    });
     s.forEach((s)=>s.lazyNext.add(_s));
     cleanupRegistry.register(_s, new WeakRef(_s));
     return _s;
@@ -187,7 +129,7 @@ const filter = <A>(f:((v:A)=>boolean)|RegExp|A) : (s:Stream<A>)=>FilterStream<A>
             lazyNext: new Set(),
         };
         s.next.add(_s);
-        _s[STREAM_CLEANER] = () => s.next.delete(_s);
+        STREAM_CLEANERS.set(_s, () => s.next.delete(_s));
         cleanupRegistry.register(_s, new WeakRef(_s));
         return _s;
     }
@@ -205,7 +147,7 @@ const map = <A,B>(f:((v:B)=>A)|Prop<A>|A): ((s:Stream<B>)=>MappedStream<A>) =>
             lazyNext: new Set()
         };
         s.next.add(_s);
-        _s[STREAM_CLEANER] = () => s.next.delete(_s);
+        STREAM_CLEANERS.set(_s, () => s.next.delete(_s));
         cleanupRegistry.register(_s, new WeakRef(_s));
         return _s;
     };
@@ -215,7 +157,7 @@ const junction = <A,B>(records: Map<B,Stream<A>>|Record<string,Stream<A>>) => {
     return (p:Prop<B>) => {
         const streams = [...records.entries()].map(([k,s]:[B,Stream<A>])=>filter<A>(()=>p()===k)(s));
         const merged = merge<A>()(streams);
-        merged[STREAM_CLEANER] = () => streams.forEach((s)=>clear(s));
+        STREAM_CLEANERS.set(merged, () => streams.forEach((s)=>clear(s)));
         return merged;
     };
 }
@@ -291,7 +233,7 @@ const isStream = <A>(v:unknown) : v is Stream<A> =>
  * 引数がドリッパーであるかを判別する。
  */
 const isDripperStream = <A>(v:unknown) : v is DripperStream<A> =>
-    isStream<A>(v) && (v as DripperStream<A>)[IS_DRIPPER] === IS_DRIPPER;
+    isStream<A>(v) && "dripStrategy" in v;
 
 // 引数がStreamから接続されたPropか判別する
 const isChainedProp = <A>(v: unknown): v is Prop<A> => PROP_UPDATE.has(v as Prop<A>);
@@ -358,7 +300,7 @@ const dripGraph = <A>(value: A) => (dripper: DripperStream<A>) : DripEffect & { 
 
 
 /**
- * ストリームがオブザーバかプロパティによってどれだけ参照されているかを調べる
+ * ストリームがプロパティによってどれだけ参照されているかを調べる
  * @param s 
  * @returns 
  */
@@ -593,9 +535,9 @@ const lift = <A>(f: (values: any[]) => A) => (props: Prop<any>[]) : Prop<A> => {
     const map = new Map(updates);
     return f(props.map((p, i) => map.has(i) ? map.get(i)! : p()));
   })(mergedStream);
-  transformed[STREAM_CLEANER] = () => {
+  STREAM_CLEANERS.set(transformed, () => {
     streams.forEach((s)=>clear(s));
-  };
+  });
   return hold(valueFn())(transformed);
 };
 
@@ -617,7 +559,7 @@ const when = <A>(predicate: (v: A) => boolean) => (p: Prop<A>): PromisedProp<A> 
     
     const source = PROP_FROM.get(p)!;
     const _s = filter(predicate)(source);
-    _s[STREAM_CLEANER] = () => source.next.delete(_s);
+    STREAM_CLEANERS.set(_s, () => source.next.delete(_s));
     STREAM_PROP_RELATIONS.set(_s,[_p]);
     cleanupRegistry.register(_p,new WeakRef(_s));
 
@@ -644,21 +586,20 @@ const when = <A>(predicate: (v: A) => boolean) => (p: Prop<A>): PromisedProp<A> 
  */
 function proxy<T, K extends keyof T>(obj: T, key: K): [DripperStream<T[K]>, Prop<T[K]>] {
   const desc = Object.getOwnPropertyDescriptor(obj, key);
-  if (!desc) {
+  if(!desc)
     throw new Error(`Property "${String(key)}" does not exist.`);
-  }
+  if(!desc.set && !desc.writable)
+    throw new Error(`Property "${String(key)}" is not writable.`);
+
   // 1. このgetter関数が、新しいPropそのものになる。
   const getter: Prop<T[K]> = () => desc.get ? desc.get.call(obj) : obj[key];
   // 2. このPropが更新されるべき時に呼ばれるsetterを定義する。
-  const setter = (newValue: T[K]) => {
-    if (desc.set) {
-      // 元のsetterがあれば、それを正しい`this`で呼び出す
-      desc.set.call(obj, newValue);
-    } else if ('value' in desc) {
-      // valueプロパティなら、直接代入する
-      obj[key] = newValue;
-    }
-  };
+  const setter = desc.set
+    // 元のsetterがあれば、それを正しい`this`で呼び出す
+    ? desc.set.bind(obj)
+    // valueプロパティなら、直接代入する
+    : (newValue: T[K]) => obj[key] = newValue;
+
   // 3. blookyのコアに、Propとその更新関数を直接登録する
   PROP_UPDATE.set(getter, setter);
   const dripper = stream<T[K]>();
@@ -666,224 +607,147 @@ function proxy<T, K extends keyof T>(obj: T, key: K): [DripperStream<T[K]>, Prop
   return [dripper, getter];
 }
 
-/**
- * momentsで渡される状態変数。
- */
-type MomentState = {
-    /**
-     * 現在時刻のミリ秒。performance.now、あるいはrequestAnimationFrameから受け取る値
-     */
-    now: number
-    /**
-     * framecount関数を呼び出した時刻の数値。
-     */
-    started: number
-    /**
-     * framecount関数を呼び出した時刻からの経過時間。
-     */
-    elapsed: number
-    /**
-     * 前回のframecountからの経過時間。
-     */
-    deltaTime: number
-    /**
-     * 呼び出し回数。
-     */
-    count: number
-}
-
-type TickStateStream = Stream<MomentState> & { disconnect: ()=>void };
-
-/**
- * 時間の更新をイベントストリームとして取得する。
- */
-// --- 時間のレシピ集 (The Recipe Book for Time) ---
-type moments = {
-    /**
-     * 一定時間後、一回きりのタイムイベントを取得する
-     * @param ms 
-     * @returns 
-     */
-    timeout(ms:number) : Stream<MomentState>
-    /**
-     * 一定間隔でタイムイベントを取得する
-     * @param ms 
-     * @returns 
-     */
-    interval(ms:number) : Stream<MomentState>
-    /**
-     * 一定回数のフレーム更新を取得する
-     * @param limit 
-     * @returns 
-     */
-    framecount(limit:number) : Stream<MomentState>
-}
-
 
 // --- 時間の源泉 (The Fountain of Time) ---
-
-/**
- * blookyアプリケーション全体の実行ループを管理する、統合スケジューラ。
- * requestAnimationFrameを心臓の鼓動（Beat）として、状態、UI、時間、歴史の
- * すべてを同期させる指揮者（Conductor）の役割を担う。
- */
-
-// --- 時間の根源 (The Source of Time) ---
-/** * 1フレームに一度だけdripされる、値を持たない純粋な「鼓動」
- * これが全ての時間ベースのリアクティビティの源泉となる。
- */
-const _beat$ = stream<void>();
+const beat$ = stream<number>();
 /**
  * 【公開API】アプリケーション全体で共有される、現在の時間を表すProp。
- * 呼び出された瞬間の現在時刻を返す「センサー」としての役割を持つ。
  */
-const clock: Prop<number> = () => performance.now();
+const clock: Prop<number> = hold(performance.now())(beat$);
 
-const RESERVATIONS : { 
+type CollapseReservation = {
     effect: DripEffect,
     resolve: (v:number)=>void,
     reject: (v:number)=>void
-}[] = [];
-
-const DEFAULT_TICK_CALLER = typeof globalThis.requestAnimationFrame === "function"
-    ? requestAnimationFrame
-    : typeof (globalThis as any).process === "object"
-    ? ((f:(t:number)=>void) => { (globalThis as any).process.nextTick(()=>f(performance.now())); })
-    : ((f:(t:number)=>void) => { setTimeout(() => f(performance.now())) });
-
-const collapse = async (effect:DripEffect) => new Promise((resolve, reject) => {
-    if(!RESERVATIONS.length) DEFAULT_TICK_CALLER(tick);
-    RESERVATIONS.push({ effect, resolve, reject });
-});
-
-type MomentStream = Stream<number> & {};
-
-/**
- * 「鼓動」(_beat$)を元に、その瞬間の時刻で意味付けされたMappedStream。
- * これが内部的な「公式時刻」の伝達役となる。
- */
-const moment$ : MomentStream = map<number, void>(clock)(_beat$);
-
-// `clock` Propが`moment$`から派生していることを内部的に関連付ける
-// これでclockはremap,liftなどから利用できる
-PROP_FROM.set(clock, moment$);
-
-// Effect処理のミドルウェア
-const tickHandlers = new Set<(effect: DripEffect[]) => void>();
-
-// デフォルトの処理の登録
-const defaultTickHandler:(effect: DripEffect[]) => void = 
-    (e)=>e.forEach((e)=>e.effects.forEach((v,p)=>PROP_UPDATE.get(p)!(v)));
-
-tickHandlers.add(defaultTickHandler);
-
-// ミドルウェアの登録用関数
-function registerTickHandler(handler: (effect: DripEffect[]) => void) {
-  tickHandlers.add(handler);
-  return () => tickHandlers.delete(handler);
 }
 
-/**
- * 1フレーム分の処理。この関数内が、一つの「瞬間（Moment）」となる。
- */
-function tick() {
-    const queue = RESERVATIONS.map((e)=>e.effect);
-    const now = clock();
-    const beat_effect = drip<void>(void 0)(_beat$);
-    if(beat_effect.effects.size) queue.push(beat_effect);
-    // 実行キューが空なら終了
-    if(!queue.length) return;
+const PendingEffect = new WeakMap<DripperStream<any>,(n:number)=>void>();
+const ThrottleRecord = new WeakMap<DripperStream<any>, number>();
 
+const RESERVATIONS : CollapseReservation[] = [];
+
+const collapse = async (effect:DripEffect) => new Promise((resolve, reject) => {
+    const enqueue = () => {
+        if (!RESERVATIONS.length) queueMicrotask(()=>tick(performance.now()));
+        RESERVATIONS.push({ effect, resolve, reject });
+    };
+    const dripper = effect.dripper;
+    const strategy = dripper.dripStrategy;
+    const now = performance.now();
+
+    switch (strategy.type) {
+
+        case 'immediate':
+            enqueue();
+            break;
+
+        case 'debounce':
+            if(PendingEffect.has(dripper)) PendingEffect.get(dripper)!(now);
+            const timerId = setTimeout(enqueue, strategy.delay);
+            PendingEffect.set(dripper, (n: number) => {
+                clearTimeout(timerId);
+                reject(n);
+            });
+            break;
+            
+        case 'throttle': 
+            if(ThrottleRecord.has(dripper)) {
+                const lastRecord = ThrottleRecord.get(dripper)!;
+                if((now - lastRecord) < strategy.interval) {
+                    reject(now);
+                    break;
+                }
+            }
+            ThrottleRecord.set(dripper, now);
+            enqueue();
+            break;
+
+    }
+
+}).finally(()=>{
+    PendingEffect.delete(effect.dripper);
+    ThrottleRecord.delete(effect.dripper);
+});
+
+type CollapseObserver = 
+  | 'immediate'    // 即座観測者
+  | 'visual'       // 視覚観測者（RAF）
+  | 'sequential'   // 順次観測者（timeout）
+  | 'quantum'      // 量子観測者（microtask）
+
+// Effect処理のミドルウェア
+const tickHandlers: { [key in CollapseObserver]: Set<(effect:DripEffect[])=>void> } = {
+    immediate: new Set(),
+    visual: new Set(),
+    quantum: new Set(),
+    sequential: new Set()
+}
+
+// ミドルウェアの登録用関数
+function registerTickHandler(observer: CollapseObserver, handler: (effect: DripEffect[]) => void) {
+  tickHandlers[observer].add(handler);
+  return () => tickHandlers[observer].delete(handler);
+}
+
+// 予約されたEffectを処理する
+function tick(now: number) {
+    // 実行キュー作成
+    const queue = RESERVATIONS.map((e)=>e.effect);
+    // 時刻更新を追加
+    queue.push(drip(now)(beat$));
     // 完了通知先を保管
     const resolvers = RESERVATIONS.map(({resolve})=>resolve);
     // 予定の予約は消去
     RESERVATIONS.length = 0;
     // ハンドラーの呼び出し
-    tickHandlers.forEach((handler)=>handler(queue));
-    // 完了通知
-    resolvers.forEach((r)=>r(now));
+    const callHandlers = (ticker: Function) => (handlers: Set<(e:DripEffect[])=>void>) => new Promise((resolve,reject)=>{
+        ticker(()=>{
+            try {
+                handlers.forEach((handler)=>handler(queue));
+                resolve(void 0);
+            } catch(err) {
+                reject(err);
+            }
+        })
+    });
 
-    // 時間ベースのイベントが残っていれば、次のtickを予約する
-    if (beat_effect.effects.size || RESERVATIONS.length) DEFAULT_TICK_CALLER(tick);
+    const promises: Promise<unknown>[] = Object.entries(tickHandlers).flatMap(([observer, handlers])=>{
+        if(handlers.size) switch(observer) {
+            case "immediate":
+                return callHandlers((f:Function)=>f())(handlers);
+            case "visual":
+                return callHandlers(globalThis.requestAnimationFrame)(handlers);
+            case "sequential":
+                return callHandlers(setTimeout)(handlers);
+            case "quantum":
+                return callHandlers(queueMicrotask)(handlers);
+        }
+        return [];
+    });
+
+    // ハンドラの処理が完了したら、PropEffectの更新を処理する
+    Promise.all(promises).finally(()=>{
+        queue.forEach(({effects})=>effects.forEach((v,p)=>PROP_UPDATE.get(p)!(v)));
+        // 完了通知
+        resolvers.forEach((r)=>r(now));
+    });
+
 }
-
-const nextState = (s:MomentState) => (n:number) : MomentState => 
-({
-    now: n,
-    started: s.started,
-    elapsed: n - s.started,
-    deltaTime: n - s.now,
-    count: s.count + 1
-});
-
-const tickStateStream = (f?:(s:MomentState)=>boolean): TickStateStream => {
-    const started = clock();
-    const s = map((n:number): MomentState => nextState(p())(n))(moment$);
-    const _s = (f ? filter(f)(s) : s) as Stream<MomentState> as TickStateStream;
-    const p = hold({
-        started,
-        now: started,
-        elapsed: 0,
-        deltaTime: 0,
-        count: 0
-    })(_s);
-    _s[STREAM_CLEANER] = ()=>{
-        moment$.next.delete(s);
-    }
-    _s.disconnect = ()=>{
-        clear(s, true);
-        moment$.next.delete(s);
-    };
-    return _s;
-}
-
-
-/**
- * 【公開API】時間ベースのイベントを生成するファクトリ
- */
-const moments = {
-  /**
-   * 指定した間隔でイベントを発行するStreamを生成する
-   * @param ms 間隔（ミリ秒）
-   * @returns 経過時間(deltaTime)を値として持つStream
-   */
-  interval(ms: number): TickStateStream {
-    if(!hasReferences(moment$)) requestAnimationFrame(tick);
-    const s = tickStateStream(({deltaTime})=>deltaTime >= ms);
-    const c = countReferences(s,true)() + 1;
-    when(()=>!hasReferences(s,c))(STREAM_PROP_RELATIONS.get(s)![0]).then(s.disconnect);
-    return s;
-  },
-
-  /**
-   * 指定した時間後に一度だけイベントを発行するStreamを生成する
-   * @param ms 遅延時間（ミリ秒）
-   * @returns 経過時間(deltaTime)を値として持つStream
-   */
-  timeout(ms: number): TickStateStream {
-    if(!hasReferences(moment$)) setTimeout(tick, ms);
-    const s = tickStateStream(({elapsed})=> ms <= elapsed);
-    when<MomentState>(({elapsed})=>ms<=elapsed)(STREAM_PROP_RELATIONS.get(s)![0]).then(s.disconnect);
-    return s;
-  },
-};
-
-
 
 export {
-    drip,dripGraph,vertex,stream,
+    drip,stream,
+    dripGraph,vertex,
     isStream,isDripperStream,isChainedProp,isVertex,
     countReferences,hasReferences,clear,
     merge,junction,map,filter,
     hold,accum,lift,remap,when,
     proxy,
     pipe,streamOp,propOp,
-    clock,moments,collapse,registerTickHandler
+    clock,collapse,registerTickHandler
 };
 
 export type {
     Stream,FilterStream,MappedStream,MergedStream,DripperStream,
     Prop,PromisedProp,
-    Vertex,
-    TickStateStream as MomentStream,MomentState,
+    Vertex
 };

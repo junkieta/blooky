@@ -171,7 +171,7 @@ async function _internal_execute(
     await yieldToMainThread();
     result = generator.next(nextValue);
   }
-  return this.cancelToken;
+  return ctx.appContext;
 }
 
 // ランナー。nodeを辿るジェネレータを返す
