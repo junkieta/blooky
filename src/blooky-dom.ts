@@ -59,10 +59,11 @@ const bindRecord = (p:Prop<any>, b:PropBridge) => {
 }
 
 // aにbが含まれているならtrue
-const contains_range = (a:Range) => (b: Range) => {
-    return b.compareBoundaryPoints(b.START_TO_START, a) >= 0 
-        && b.compareBoundaryPoints(b.END_TO_END, a) <= 0;
-} 
+const contains_range = (a: Range) => (b: Range) => {
+    // a の開始 <= b の開始 かつ a の終了 >= b の終了 なら a は b を包含する
+    return a.compareBoundaryPoints(Range.START_TO_START, b) <= 0
+        && a.compareBoundaryPoints(Range.END_TO_END, b) >= 0;
+}
 
 class RangePropBridge implements PropBridgeInterface<JSHTMLNodeSource> {
     prop: Prop<JSHTMLNodeSource>
@@ -162,7 +163,7 @@ class AttrPropBridge extends AbstractAttrPropBridge<JSHTMLAttrSource> {
         }
         if(isDripperStream(next))
             next = this.generatedListener = createTracableListener(next);
-        else if("on".startsWith(name))
+        else if(name.startsWith("on"))
             this.generatedListener = next as EventListenerOrEventListenerObject;
         updateAttr({ name, target, value: next });
         this.dispatchModifiedEvent("attr-prop-modified", next, prev);
