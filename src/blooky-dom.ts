@@ -3,7 +3,7 @@
  * blookyを用いてリアクティブなDOMを構築するライブラリ。
  * 簡易な仕様でDOMを構築しつつ、Streamを利用した更新管理も行う。
  */
-import type { V_DATASET, V_STYLE, V_CLASSLIST, V_EVENTLISTENER, V_STRING, WritableCSSProperty, JSHTMLElementSource, JSHTMLAttrSource, JSHTMLNodeSource, JSHTMLAttributeMapSource } from "./blooky-dom-types";
+import type { V_DATASET, V_STYLE, V_CLASSLIST, V_EVENTLISTENER, V_STRING, WritableCSSProperty, JSHTMLElementSource, JSHTMLAttrSource, JSHTMLNodeSource, JSHTMLAttributeMapSource, JSHTMLAttrRuntime, JSHTMLNodeRuntime, JSHTMLNodeSourceType, JSHTMLExtractedElementSource } from "./blooky-dom-types";
 import { type Stream, type Prop, type DripperStream, stream, drip, isChainedProp, isDripperStream, registerTickHandler, collapse } from "./blooky-fp";
 
 // DOMをfpのtickに結び付ける
@@ -275,7 +275,6 @@ const genListenerSetter =
         ? (e:EventTarget) => e.addEventListener(n.slice(2), v as EventListener)
         : (e:Element) => e.setAttribute(n,v+"");
 
-type JSHTMLExtractedElementSource = [tag: string, children: JSHTMLNodeSource, attrs?: JSHTMLAttributeMapSource];
 
 /**
  * JSHTMLElementSourceを部品に分割して返す
@@ -342,6 +341,7 @@ class PromisedElement extends HTMLElement {
         this.promise = promise;
     }
     connectedCallback() {
+        if(!this.promise) return;
         this.promise.then((n)=>{
             const node = n instanceof Node ? n : jshtml(n);
             this.dispatchEvent(new CustomEvent("resolvepromise", {
@@ -358,7 +358,7 @@ class PromisedElement extends HTMLElement {
         });
     }
 }
-customElements.define("promised-placeholder", PromisedElement);
+customElements.define("blooky-promised-placeholder", PromisedElement);
 
 const promised = (p: Promise<JSHTMLNodeSource|Node>, msg: JSHTMLNodeSource) => {
     const element = new PromisedElement(p);
@@ -396,45 +396,24 @@ const events = <T extends string, E = T extends keyof HTMLElementEventMap ? HTML
     return [s, target.removeEventListener.bind(target,t,l,false)];
 }
 
-type JSHTMLNodeSourceType = 
-    | "node"
-    | "promise"
-    | "prop"
-    | "array"
-    | "nullable"
-    | "text"
-    | "element"
-;
-
-type JSHTMLNodeRuntime<T> = {
-    build: (s:JSHTMLNodeSource) => Node
-    source: T
-    context?: Record<string,any>
-}
-
 const JSHTML_ELEMENT_HANDLER = Symbol("JSHTML_ELEMENT_FACTORY");
 
 const JSHTML_ATTR_HANDLER = Symbol("JSHTML_ATTR_HANDLER");
 
-type JSHTMLAttrRuntime<T> = {
-    name: string
-    value: T
-    target: HTMLElement
-    context?: Record<string,any>
-}
 
 /**
  * jshtml仕様に沿ったDOMを生成して返し、Propは生成結果をバインディングする。
  * @param s 
  * @returns 
  */
-const jshtml = (source: JSHTMLNodeSource, context?: Record<string,any>) => {
-    const build: (source: JSHTMLNodeSource) => Node = (source: JSHTMLNodeSource) => {
+function jshtml(this: object|void, source: JSHTMLNodeSource, context?: Record<string,any>) {
+    const build = (source: JSHTMLNodeSource) : Node => {
         const type = analyzeNodeSource(source);
-        return nodeFactory[type]({ source, context, build } as JSHTMLNodeRuntime<any>);
+        return nodeFactory[type]({ source, build, context: this || context } as JSHTMLNodeRuntime<any>);
     };
     return build(source);
 }
+
 jshtml.$ = (attrs: JSHTMLAttributeMapSource) => new EmptyElementAttributeMapSource(attrs);
 
 const analyzeNodeSource = (s: JSHTMLNodeSource): JSHTMLNodeSourceType => {
@@ -498,11 +477,21 @@ const nodeFactory = {
     },
 }
 
+/**
+ * 宣言的なレンダラーを生成する
+ * ex.
+ * interface SenderContext { send: DripperStream<MouseEvent> }
+ * const render = prime(({send}:SenderContext)=>({ a:"send message", $: { onclick: send } }));
+ * const sendStream = stream<MouseEvent>();
+ * const ctx = { send: sendStream };
+ * render(ctx);// === HTMLAnchorElement(onclick->collapse(drip(MouseEvent)(sendStream)))
+ */ 
+const prime = <T extends object>(fn:(v:T)=>JSHTMLNodeSource) => (ctx:T) => jshtml(fn(ctx),ctx);
 
 export {
     defineAttrUpdateHandlers,
     createTracableListener,
-    promised, jshtml, mutations, events,
+    promised, jshtml, mutations, events, prime,
     JSHTMLNodeRuntime,JSHTMLAttrRuntime,
     JSHTML_ELEMENT_HANDLER,
     JSHTML_ATTR_HANDLER 

@@ -1,13 +1,9 @@
 // -- 0. 事前ロード ---
-import { stream, accum, merge, hold, map, remap, when, lift, Prop, pipe } from "./blooky-fp";
-import { jshtml } from "./blooky-dom";
-import type { FxEffect } from "./blooky-fxdom";
+import { stream, accum, merge, hold, map, remap, when, lift, Prop, pipe, DripperStream, PromisedProp } from "./blooky-fp";
+import { jshtml, prime } from "./blooky-dom";
 import { fxdom,EffectElementTagNameMap, dumpGraphDOT } from "./blooky-devtools";
 // dot視覚化用にviz
 import { instance as viz_instance } from "@viz-js/viz";
-import { fx, ref } from "./blooky-fx";
-import { FxContextNode } from "./fx/types";
-import { fc } from "./blooky-fc";
 import { JSHTMLNodeSource } from "./blooky-dom-types";
 
 // debuggerとしてdefine
@@ -36,7 +32,7 @@ const $selectedConfirmAnswer = pipe(
     hold("yet")
 );
 
-const $confirmAnswerResolved = when((answer)=>answer !== "yet")($selectedConfirmAnswer);
+const $confirmAnswerResolved = when<string>((answer)=>answer !== "yet")($selectedConfirmAnswer);
 
 const $confirmQuestionDialogbox = hold<JSHTMLNodeSource>(null)(map<JSHTMLNodeSource, string>((text)=>[
     { p: text },
@@ -62,8 +58,16 @@ const context = {
 };
 
 // --- 2. UIの定義 (jshtml) ---
+interface AppUIContext {
+    $count: Prop<number>
+    increment$: DripperStream<void>
+    decrement$: DripperStream<void>
+    save$: DripperStream<void>
+    $statusMessage: Prop<JSHTMLNodeSource>
+    $confirmQuestionDialogbox: Prop<JSHTMLNodeSource>
+}
 
-const AppUI = fc.prime(context)(({$count,increment$,decrement$,save$,$statusMessage}) => jshtml({
+const AppUIRenderer = prime(({$count,increment$,decrement$,save$,$statusMessage,$confirmQuestionDialogbox}:AppUIContext) => ({
   div: [
     // 状態(Prop)をUIにバインド
     { p: ["Count: ", $count] },
@@ -73,12 +77,32 @@ const AppUI = fc.prime(context)(({$count,increment$,decrement$,save$,$statusMess
     { button: "Save", $: { onclick: save$, style: { marginLeft: '1em' } } },
     // 副作用の状態を表示
     { div: $statusMessage, $: { id: "status" } },
-    { aside: $confirmQuestionDialogbox as JSHTMLNodeSource }
+    { aside: $confirmQuestionDialogbox }
   ]
 }));
 
+
+
 // --- 副作用フローの宣言的な定義 (fxdom) ---
-const effect = jshtml({
+interface EffectContext {
+    confirmQuestionActivated$: DripperStream<string>,
+    $confirmAnswerResolved: PromisedProp<string>,
+    $selectedConfirmAnswer: Prop<string>,
+    $triggerSave: Prop<boolean>,
+    statusMessageStream$: DripperStream<string>,
+    $finalMessage: Prop<string>,
+    save$: DripperStream<void>
+}
+
+const EffectRenderer = prime(({
+    confirmQuestionActivated$,
+    $confirmAnswerResolved,
+    $selectedConfirmAnswer,
+    $triggerSave,
+    statusMessageStream$,
+    $finalMessage,
+    save$
+}:EffectContext) => ({
     "fx-effect": 
     [
         { "fx-context": [
@@ -109,8 +133,7 @@ const effect = jshtml({
         }
     ],
     $: { "onsave": save$, },
-}, context) as FxEffect;
-
+}));
 
 // Stream/Prop構造のdot
 const dot = dumpGraphDOT(context);
@@ -123,5 +146,8 @@ const renderDot = async (dot: string) => {
 // --- 3. アプリケーションのマウント ---
 
 // UIをDOMにマウントする
-document.body.append(AppUI, effect, jshtml([renderDot(dot), { pre: dot }]))/* jshtmlはPromiseを透過的に処理する */;
-
+document.body.append(
+    AppUIRenderer(context),
+    EffectRenderer(context),
+    jshtml([renderDot(dot)/* jshtmlはPromiseを透過的に処理する */, { pre: dot }])
+);

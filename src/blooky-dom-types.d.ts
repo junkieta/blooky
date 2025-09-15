@@ -62,19 +62,18 @@ export type T_ATTRSET =
 // --- 属性セット型
 export type JSHTMLAttrSource = V_STRING | V_CLASSLIST | V_DATASET | V_STYLE | V_EVENTLISTENER;
 
-
 // --- 属性マップ型：補完あり＋カスタム属性許容
 export type JSHTMLAttributeMapSource =
   Partial<
     {
-      dataset: V_DATASET;
-      style: V_STYLE;
-      classList: V_CLASSLIST;
+      dataset: V_DATASET
+      style: V_STYLE
+      classList: V_CLASSLIST
     } & {
-      [key in HTMLAttrName]?: JSHTMLAttrSource;
+      [key in HTMLEventHandlers]: V_EVENTLISTENER
     } & {
-      [key in HTMLEventHandlers]?: V_EVENTLISTENER;
-    }
+      [key in HTMLAttrName]: any//JSHTMLAttrSource;
+    } 
   > & {
     [custom: string]: JSHTMLAttrSource;
   };
@@ -82,12 +81,16 @@ export type JSHTMLAttributeMapSource =
 // --- ノード型（テキスト or ノード or フラグメント or Stream）
 export type JSHTMLTextSource = V_STRING;
 export type JSHTMLFragmentSource = JSHTMLNodeSource[];
-export type JSHTMLNodeSource =
-  | JSHTMLElementSource
+export type JSHTMLPrimitiveSource = 
+  | Node
   | JSHTMLTextSource
-  | JSHTMLFragmentSource
+  | JSHTMLFragmentSource;
+
+export type JSHTMLNodeSource =
+  | JSHTMLPrimitiveSource
+  | JSHTMLElementSource
   | Promise<JSHTMLNodeSource | Node>
-  | Prop<JSHTMLElementSource | JSHTMLTextSource | JSHTMLFragmentSource>;
+  | Prop<Exclude<any,Prop<any>>>;
 
 // --- 要素本体型（補完付きタグ名＋カスタム要素名OK）
 export type JSHTMLElementSource = (
@@ -95,9 +98,34 @@ export type JSHTMLElementSource = (
     [K in keyof HTMLElementTagNameMap]?: JSHTMLNodeSource | EmptyElementAttributeMapSource
   } & {
     [customTag: string]: JSHTMLNodeSource | EmptyElementAttributeMapSource | JSHTMLAttributeMapSource | undefined 
-    $?: JSHTMLAttributeMapSource | EmptyElementAttributeMapSource
+    $?: JSHTMLAttributeMapSource
   }
 );
+
+export type JSHTMLExtractedElementSource = [tag: string, children: JSHTMLNodeSource, attrs?: JSHTMLAttributeMapSource];
+
+export type JSHTMLNodeSourceType = 
+    | "node"
+    | "promise"
+    | "prop"
+    | "array"
+    | "nullable"
+    | "text"
+    | "element"
+;
+
+export type JSHTMLNodeRuntime<T> = {
+    build: (s:JSHTMLNodeSource) => Node
+    source: T
+    context?: Record<string,any>
+}
+
+export type JSHTMLAttrRuntime<T> = {
+    name: string
+    value: T
+    target: HTMLElement
+    context?: Record<string,any>
+}
 
 // --- fxdom用タグ
 export type FxTag = "call" | "delay" | "sequence" | "parallel" | "cancel" | "repeat" | "race" | "if";
@@ -106,3 +134,4 @@ export type FxTag = "call" | "delay" | "sequence" | "parallel" | "cancel" | "rep
 export type JSHTMLEffectElementSource = {
   [K in FxTag]?: JSHTMLEffectElementSource | JSHTMLAttributeMapSource | JSHTMLNodeSource | null;
 } & { $?: JSHTMLAttributeMapSource };
+
