@@ -155,7 +155,7 @@ async function _internal_execute(
       if(typeof catcher === 'function') {
         // ハンドラに処理を移譲
         console.warn(`[fx-effect] Action failed, but was handled by context.`, catcher);
-        nextValue = catcher(err); // ハンドラの戻り値を、成功時の値としてフローに復帰させる
+        nextValue = await catcher(err); // ハンドラの戻り値を、成功時の値としてフローに復帰させる
       } else {
         // ハンドラが見つからない場合は、エラーを再スローしてフローを停止
         console.error(`[fx-effect] Unhandled error: Catch handler not found in context.`);
