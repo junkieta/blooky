@@ -1,6 +1,6 @@
 import { jshtml } from "./blooky-dom";
-import { accum, isChainedProp, isDripperStream, isStream, isVertex, Prop, stream, Stream, Vertex, vertex } from "./blooky-fp";
-import { EffectElementTagNameMap as DefaultEffectElementTagNameMap, EffectElement, FxEffect as ConcreteEffectElementConstructor, fxdom } from "./blooky-fxdom";
+import { isChainedProp, isDripperStream, isStream, isVertex, Prop, stream, Stream, Vertex, vertex } from "./blooky-fp";
+import { EffectElementTagNameMap as DefaultEffectElementTagNameMap, EffectElement, FxEffectElement as ConcreteEffectElementConstructor, fxdom } from "./blooky-fxdom";
 import { FxNode, FxMiddleware, ExecContext } from "./fx/types";
 
 const FxNodeMap = new WeakMap<FxNode, EffectElement>();
@@ -8,9 +8,14 @@ const FxElementStates = new WeakMap<EffectElement, CustomStateSet>();
 const getFxElement = (n: FxNode) : EffectElement | undefined => FxNodeMap.get(n);
 
 // fx要素の可視化用スタイルシート
-const DebEffectElementStyleSheet = new CSSStyleSheet();
-const devtoolsCSSPath = "./blooky-devtools-nested.css";
-fetch(devtoolsCSSPath).then((res)=>res.text()).then((text)=>DebEffectElementStyleSheet.replace(text));
+const devtoolsCSSPath = ["./blooky-devtools-nested.css","./blooky-devtools-theme.css"];
+const DevEffectElementStyleSheets = Promise.all(devtoolsCSSPath.map(async(path)=>{
+  const res = await fetch(path);
+  const text = await res.text();
+  const sheet = new CSSStyleSheet();
+  await sheet.replace(text);
+  return sheet;
+}));
 
 const debugMiddleware: FxMiddleware = async (ctx, next) => {
   const { node } = ctx;
@@ -70,7 +75,7 @@ Object.entries(EffectElementTagNameMap).forEach(([tag,fxClass])=>{
       super.connectedCallback?.();
       // Shadow DOMがまだなければ、ここで生成する
       const shadow = this.shadowRoot || this.attachShadow({ mode: 'open' });
-      shadow.adoptedStyleSheets.push(DebEffectElementStyleSheet);
+      DevEffectElementStyleSheets.then((sheets)=>shadow.adoptedStyleSheets.push(...sheets));
       const tag = { var: this.tagName.toLowerCase(), $: { class: "tag" } };
       shadow.insertBefore(
         jshtml({
