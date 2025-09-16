@@ -12,6 +12,7 @@ import { FxNode, ExecContext, PreparedFx, ExecutionHandle, AppContext } from "./
 // ---- Abstract Base ----
 
 export abstract class EffectElement extends HTMLElement {
+
   abstract toFxNode(): FxNode;
 
   protected childrenToFxNodes(): FxNode[] {
@@ -21,24 +22,7 @@ export abstract class EffectElement extends HTMLElement {
   }
 }
 
-// ---- Core Elements----
-
-class FxSequence extends EffectElement {
-  toFxNode(): FxNode {
-    return fx.sequence(this.childrenToFxNodes());
-  }
-}
-
-class FxParallel extends EffectElement {
-  toFxNode(): FxNode {
-    return fx.parallel(this.childrenToFxNodes());
-  }
-}
-class FxRace extends EffectElement {
-  toFxNode(): FxNode {
-    return fx.race(this.childrenToFxNodes());
-  }
-}
+// ---- Context Binding ----
 
 const CONTEXT_MEMO = new WeakMap<AppContext,AppContext>();
 
@@ -47,6 +31,7 @@ const reverseLookup = (value: unknown) => (ctx: AppContext) => {
   const reversed = CONTEXT_MEMO.get(ctx)!;
   return reversed.has(value) ? reversed.get(value) : null;
 }
+
 // jshtmlでコンテキストから属性に直接マッピングされていた場合、属性値にはコンテキストのキーを用いる
 const attrValueToContextKey = ({target,name,value,context}: JSHTMLAttrRuntime<any>): boolean | void => {
   if(!context) return true;
@@ -56,7 +41,27 @@ const attrValueToContextKey = ({target,name,value,context}: JSHTMLAttrRuntime<an
   return false;
 };
 
-class FxWait extends EffectElement {
+// ---- Core Elements----
+
+class FxSequenceElement extends EffectElement {
+  toFxNode(): FxNode {
+    return fx.sequence(this.childrenToFxNodes());
+  }
+}
+
+class FxParallelElement extends EffectElement {
+  toFxNode(): FxNode {
+    return fx.parallel(this.childrenToFxNodes());
+  }
+}
+class FxRaceElement extends EffectElement {
+  toFxNode(): FxNode {
+    return fx.race(this.childrenToFxNodes());
+  }
+}
+
+
+class FxWaitElement extends EffectElement {
 
   static [JSHTML_ATTR_HANDLER] = { until: attrValueToContextKey }
 
@@ -75,7 +80,7 @@ class FxWait extends EffectElement {
   }
 }
 
-class FxCall extends EffectElement {
+class FxCallElement extends EffectElement {
 
   static [JSHTML_ATTR_HANDLER] = { fn: attrValueToContextKey, arg: attrValueToContextKey }
 
@@ -105,7 +110,7 @@ class FxCall extends EffectElement {
  */
 const FLOW_TEMPLATE_CACHE = new Map<string, HTMLTemplateElement>();
 
-class FxInclude extends EffectElement { // FxFlowからFxIncludeにリネーム
+class FxIncludeElement extends EffectElement { // FxFlowからFxIncludeにリネーム
 
   // 'src'属性の変更を監視対象に含める
   static observedAttributes = ['src'];
@@ -161,7 +166,7 @@ class FxInclude extends EffectElement { // FxFlowからFxIncludeにリネーム
 }
 
 
-class FxIf extends EffectElement {
+class FxIfElement extends EffectElement {
   static [JSHTML_ATTR_HANDLER] = { when: attrValueToContextKey }
   toFxNode(): FxNode {
     const whenAttr = this.getAttribute("when");
@@ -170,7 +175,7 @@ class FxIf extends EffectElement {
     const thenNode = this.querySelector('[slot="then"]') as EffectElement | null;
     const elseNode = this.querySelector('[slot="else"]') as EffectElement | null;
     
-    // ★ when属性をrefとして渡すだけ
+    // when属性をrefとして渡すだけ
     const condRef = ref<boolean>(whenAttr);
 
     if (thenNode) {
@@ -182,7 +187,7 @@ class FxIf extends EffectElement {
   }
 }
 
-class FxSwitch extends EffectElement {
+class FxSwitchElement extends EffectElement {
   static [JSHTML_ATTR_HANDLER] = { by: attrValueToContextKey }
   toFxNode(): FxNode {
     const byAttr = this.getAttribute("by");
@@ -202,7 +207,7 @@ class FxSwitch extends EffectElement {
   }
 }
 
-class FxLoop extends EffectElement {
+class FxLoopElement extends EffectElement {
   static [JSHTML_ATTR_HANDLER] = { while: attrValueToContextKey }
     toFxNode(): FxNode {
         const whileAttr = this.getAttribute("while");
@@ -211,7 +216,7 @@ class FxLoop extends EffectElement {
     }
 }
 
-class FxCollapse extends EffectElement {
+class FxCollapseElement extends EffectElement {
   static [JSHTML_ATTR_HANDLER] = { dripper: attrValueToContextKey, value: attrValueToContextKey }
   toFxNode(): FxNode {
     const streamKey = this.getAttribute("dripper");
@@ -232,7 +237,7 @@ class FxCollapse extends EffectElement {
 }
 
 
-class FxYield extends EffectElement {
+class FxYieldElement extends EffectElement {
   static [JSHTML_ATTR_HANDLER] = { for: attrValueToContextKey }
   toFxNode(): FxNode {
     const id = this.id;
@@ -251,20 +256,20 @@ class FxYield extends EffectElement {
   }
 }
 
-class FxReturn extends EffectElement {
+class FxReturnElement extends EffectElement {
   static [JSHTML_ATTR_HANDLER] = { value: attrValueToContextKey }
   toFxNode(): FxNode {
     return fx.return(this.hasAttribute("value") ? ref(this.getAttribute("value")!) : undefined);
   }
 }
 
-class FxContext extends EffectElement {
+class FxContextElement extends EffectElement {
 
   static noneResult = Symbol("none")
 
   protected context: Record<string, any> = {};
   
-  parentContext() : FxContext | null {
+  parentContext() : FxContextElement | null {
     return this.parentElement ? this.parentElement.closest("fx-context,fx-effect") : null;
   }
 
@@ -319,7 +324,7 @@ class FxContext extends EffectElement {
   
 }
 
-class FxEffect extends FxContext {
+class FxEffectElement extends FxContextElement {
   protected _execContext?: Partial<ExecContext>
   protected _preparedFx?: PreparedFx
   protected _handle?: ExecutionHandle
@@ -352,20 +357,20 @@ const fxdom = {
 }
 
 const EffectElementTagNameMap = {
-  "fx-sequence": FxSequence,
-  "fx-parallel": FxParallel,
-  "fx-race":  FxRace,
-  "fx-wait":  FxWait,
-  "fx-call":  FxCall,
-  "fx-include":  FxInclude,
-  "fx-if":  FxIf,
-  "fx-switch":  FxSwitch,
-  "fx-loop":  FxLoop,
-  "fx-collapse":  FxCollapse,
-  "fx-yield": FxYield,
-  "fx-context":  FxContext,
-  "fx-effect":  FxEffect,
-  "fx-return": FxReturn
+  "fx-sequence": FxSequenceElement,
+  "fx-parallel": FxParallelElement,
+  "fx-race":  FxRaceElement,
+  "fx-wait":  FxWaitElement,
+  "fx-call":  FxCallElement,
+  "fx-include":  FxIncludeElement,
+  "fx-if":  FxIfElement,
+  "fx-switch":  FxSwitchElement,
+  "fx-loop":  FxLoopElement,
+  "fx-collapse":  FxCollapseElement,
+  "fx-yield": FxYieldElement,
+  "fx-context":  FxContextElement,
+  "fx-effect":  FxEffectElement,
+  "fx-return": FxReturnElement
 }
 
-export {FxCall,FxWait,FxEffect,FxCollapse,FxIf,FxInclude,FxParallel,FxRace,FxLoop,FxSequence,FxSwitch,FxContext,FxReturn,fxdom,EffectElementTagNameMap};
+export {FxCallElement,FxWaitElement,FxEffectElement,FxCollapseElement,FxIfElement,FxIncludeElement,FxParallelElement,FxRaceElement,FxLoopElement,FxSequenceElement,FxSwitchElement,FxContextElement,FxReturnElement,fxdom,EffectElementTagNameMap};
