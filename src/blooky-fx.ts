@@ -58,7 +58,11 @@ function prepare(
   // 未定義のキー参照を調べる
   const missingKeys : string[] = nodes.flatMap((n)=>Object.values(n).filter((v) => isFxRef<unknown>(v) && !(v.key in appContext)).map((v)=>v.key));
   if (missingKeys.length) {
-    throw new Error(`prepare: context missing keys: ${missingKeys.join(",")}`);
+    throw { 
+      code: 'MISSING_CONTEXT_KEYS', 
+      keys: missingKeys,
+      suggestions: ['Verify context initialization']
+    };
   }
 
   // ノードツリー内で宣言済みのidだけを受け付ける
@@ -133,7 +137,11 @@ async function _internal_execute(
     try {
       const definition = nodeDefinitionMap.get(node.type);
       if(!(definition))
-        throw new Error(`error: "${node.type}" is not unknown node type`);
+        throw {
+          code: 'UNKNOWN_NODE_TYPE',
+          nodeType: node.type,
+          suggestions: ['Check node definition registration']
+        };
 
       // 各ステップの情報をまとめたFxExecutionContextを生成
       const fxec: FxExecutionContext = { ...ctx, node };
@@ -250,9 +258,6 @@ const createProxyContext = (appContext: AppContext, idRecord: { [key:string|symb
 // FxRef, Prop, または静的な値を、常に()=>Prop（ゲッター関数）に正規化するヘルパー
 const resolveValue = <T>(value: FxRef<T>) => (context: AppContext) : Prop<T> => {
   if (isFxRef<T>(value)) { 
-    if(!(value.key in context)) {
-      throw new Error(`"${value.key}" cannot resolve from context.`)
-    }
     value = context[value.key];
   }
   return typeof value === "function" ? value as Prop<T> : () => value as T;

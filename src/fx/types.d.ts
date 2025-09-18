@@ -31,7 +31,7 @@ type FxSequenceNode = FxNodeBase<"sequence", { steps: FxNode[] }>;
 type FxParallelNode = FxNodeBase<"parallel", { steps: FxNode[] }>;
 type FxRaceNode = FxNodeBase<"race", { steps: FxNode[] }>;
 type FxWaitNode = FxNodeBase<"wait", { ms?: FxRef<number>, until?: FxRef<Prop<boolean>> }>; // waitの拡張を反映
-type FxLoopNode = FxNodeBase<"loop", { cond: FxRef<boolean>, body: FxNode }>;
+type FxLoopNode = FxNodeBase<"loop", { cond: FxRef<boolean>, body: FxNode, maxIterations?: number, maxDuration?: number }>;
 type FxConditionNode = FxNodeBase<"condition", { if: FxRef<boolean>, then: FxNode, else?: FxNode }>;
 type FxSwitchNode = FxNodeBase<"switch", { by: FxRef<string | number | symbol>, cases: Map<string | number | symbol, FxNode>, default?: FxNode }>;
 type FxCallNode = FxNodeBase<"call", { action: FxRef<(v: any) => unknown>, arg?: FxRef<any>, context?: FxRef<any>, catcher?: FxRef<(error: Error) => unknown> }>;

@@ -202,18 +202,40 @@ class FxSwitchElement extends EffectElement {
     const defaultNode = cases.get("default");
     cases.delete("default");
 
-    // ★ by属性をrefとして渡すだけ
     return fx.switch(ref(byAttr), cases, defaultNode);
   }
 }
 
 class FxLoopElement extends EffectElement {
   static [JSHTML_ATTR_HANDLER] = { while: attrValueToContextKey }
-    toFxNode(): FxNode {
-        const whileAttr = this.getAttribute("while");
-        if (!whileAttr) return fx.none();
-        return fx.loop(ref<boolean>(whileAttr), fx.sequence(this.childrenToFxNodes()));
+
+  toFxNode(): FxNode {
+    const whileAttr = this.getAttribute("while");
+    if (!whileAttr) return fx.none();
+    
+    const options: {
+      maxIterations?: number;
+      maxDuration?: number;
+    } = {};
+    // max-iterations
+    const maxIterAttr = this.getAttribute("max-iterations");
+    if (maxIterAttr === "infinity") {
+      options.maxIterations = Infinity;
+    } else if (maxIterAttr) {
+      const num = parseInt(maxIterAttr);
+      if (!isNaN(num) && num > 0) options.maxIterations = num;
     }
+    
+    // max-duration
+    const maxDurAttr = this.getAttribute("max-duration");
+    if (maxDurAttr) {
+      const num = parseInt(maxDurAttr);
+      if (!isNaN(num) && num > 0) options.maxDuration = num;
+    }
+    
+    return fx.loop(ref<boolean>(whileAttr), fx.sequence(this.childrenToFxNodes()), options);
+  }
+
 }
 
 class FxCollapseElement extends EffectElement {
@@ -351,7 +373,12 @@ const fxdom = {
 
   defineEffectElements: (tagNameMap: Record<string,typeof EffectElement> = EffectElementTagNameMap) => {
     // 引数でEffectElementに縛るため、defineはasで通す
-    Object.entries(tagNameMap).forEach(([tag,cls])=>customElements.define(tag,cls as unknown as CustomElementConstructor));
+    Object.entries(tagNameMap).forEach(([tag,cls])=>{
+      if (customElements.get(tag)) {
+          throw new Error(`Custom element "${tag}" is already defined`);
+      }
+      customElements.define(tag,cls as unknown as CustomElementConstructor)
+    });
   }
 
 }

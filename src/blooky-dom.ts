@@ -298,7 +298,10 @@ const ATTRIBUTE_HANDLER_RREGISTRY: { [key:string]: <V>(runtime:JSHTMLAttrRuntime
 const defineAttrUpdateHandlers = (handlers: { [key:string]: (value: any, target: HTMLElement) => boolean }) => {
     const defined = Object.keys(handlers).filter((k)=>k in ATTRIBUTE_HANDLER_RREGISTRY);
     if(defined.length)
-        throw new Error(`"${defined.join('","')}" already defined attr handler name`);
+        throw {
+            code: 'DUPLICATE_ATTR_HANDLER',
+            keys: defined
+        };
     Object.assign(ATTRIBUTE_HANDLER_RREGISTRY, handlers);
 }
 
@@ -329,8 +332,8 @@ const updateAttr = <V>(runtime: JSHTMLAttrRuntime<V>) => {
     else if(!(value instanceof Object))
         target.setAttribute(name, value + "");
     else {
-        console.log(name,value);
-        throw new Error("unknown attribute's value");
+        console.warn(`Unknown attribute value for "${name}":`, value);
+        target.setAttribute(name, String(value)); // フォールバック
     }
 };
 

@@ -16,9 +16,7 @@ type StreamBase<A,T> = {
 type DripStrategy = 
   | { type: 'immediate' }  // デフォルト：即座実行
   | { type: 'debounce', delay: number }
-  | { type: 'throttle', interval: number }
-  | { type: 'batch', maxSize: number, merge: "latest"|"first"|(<A>(v:A[])=>A) }
-  | { type: 'frame', budget: number, merge: "latest"|"first"|(<A>(v:A[])=>A) }  // 1フレーム当たりの実行予算
+  | { type: 'throttle', interval: number };
 
 type DripperStream<A> = StreamBase<A, {
     dripStrategy: DripStrategy
@@ -67,12 +65,61 @@ type DripResult<A,M="deny"> = M extends 'await'
   ? Promise<DripEffect>
   : DripEffect;
  
-type Blueprint<A extends Object> = { [key in keyof A]: PropertyDescriptor };
+
+//A. 開発時設定エラー（Development Configuration Errors）
+//特徴: 開発者のコード記述ミス、設定不備によるもの
+type DevConfigError = {
+    category: 'dev-config';
+    code: string;
+    message: string;
+    suggestions?: string[];
+}
+
+//B. 型・構造エラー（Type/Structure Errors）
+//特徴: オブジェクトの型や構造が期待と異なる
+type StructureError = {
+    category: 'structure';
+    code: string;
+    expected: string;
+    actual: string;
+    value?: any;
+}
+
+//C. ランタイム制約エラー（Runtime Constraint Errors）
+//特徴: 実行時の制約違反、プロパティアクセス制限など
+type ConstraintError = {
+    category: 'constraint';
+    code: string;
+    constraint: string;
+    context?: Record<string, any>;
+}
+
+//D. フロー制御エラー（Flow Control Errors）
+//特徴: 実行フローの文脈や状態に関する制約違反
+type FlowError = {
+    category: 'flow';
+    code: string;
+    requiredContext: string;
+    currentContext?: string;
+}
+
+//E. ユーザー起因エラー（User-Triggered Errors）
+//特徴: Promise拒否など、アプリケーション実行中に発生する可能性があるもの
+type UserError = {
+    category: 'user';
+    originalError: any;
+    element?: Element;
+    recoverable: boolean;
+}
 
 
 export {
   Stream,Prop,DripperStream,FilterStream,MappedStream,MergedStream,
   DripStrategy,DripEffect,PropEffect,DripResult,
   FlowingState,StreamBase,
-  Blueprint
+  DevConfigError,
+  StructureError,
+  ConstraintError,
+  FlowError,
+  UserError
 }
