@@ -623,9 +623,9 @@ type CollapseReservation = {
 
 const PendingEffect = new WeakMap<DripperStream<any>,(n:number)=>void>();
 const ThrottleRecord = new WeakMap<DripperStream<any>, number>();
-
 const RESERVATIONS : CollapseReservation[] = [];
 
+// DripEffectを実際にPropに反映させる。
 const collapse = async (effect:DripEffect) => new Promise((resolve, reject) => {
     const enqueue = () => {
         if (!RESERVATIONS.length) queueMicrotask(()=>tick(performance.now()));
@@ -662,6 +662,11 @@ const collapse = async (effect:DripEffect) => new Promise((resolve, reject) => {
             enqueue();
             break;
 
+        default:
+            console.warn(`Unknown drip strategy "${(strategy as any).type}", falling back to immediate`);
+            enqueue();
+            break;
+            
     }
 
 }).finally(()=>{
