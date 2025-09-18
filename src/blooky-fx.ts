@@ -1,5 +1,5 @@
 import { nodeDefinitionMap } from "./fx/nodes";
-import { Prop } from "./blooky-fp";
+import { blooky, Prop } from "./blooky-fp";
 import { FxNode, AppContext, CancelToken, ExecContext, FxExecutionContext, ExecutionHandle, PreparedFx, FxFactoryMap } from "./fx/types";
 import { RETURN_VALUE } from "./fx/nodes/return";
 
@@ -58,11 +58,16 @@ function prepare(
   // 未定義のキー参照を調べる
   const missingKeys : string[] = nodes.flatMap((n)=>Object.values(n).filter((v) => isFxRef<unknown>(v) && !(v.key in appContext)).map((v)=>v.key));
   if (missingKeys.length) {
-    throw { 
-      code: 'MISSING_CONTEXT_KEYS', 
-      keys: missingKeys,
-      suggestions: ['Verify context initialization']
-    };
+    throw blooky.error('dev-config', {
+      code: 'MISSING_CONTEXT_KEYS',
+      message: `Context missing required keys: ${missingKeys.join(", ")}`,
+      missingKeys,
+      suggestions: [
+        'Check fx-context use attribute',
+        'Verify context initialization',
+        'Ensure all referenced keys are provided'
+      ]
+    });
   }
 
   // ノードツリー内で宣言済みのidだけを受け付ける
@@ -137,11 +142,12 @@ async function _internal_execute(
     try {
       const definition = nodeDefinitionMap.get(node.type);
       if(!(definition))
-        throw {
+        throw blooky.error("flow",{
           code: 'UNKNOWN_NODE_TYPE',
+          message: `unknown fx-node type(${node.type})`,
           nodeType: node.type,
           suggestions: ['Check node definition registration']
-        };
+        });
 
       // 各ステップの情報をまとめたFxExecutionContextを生成
       const fxec: FxExecutionContext = { ...ctx, node };

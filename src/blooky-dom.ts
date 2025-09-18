@@ -4,7 +4,7 @@
  * 簡易な仕様でDOMを構築しつつ、Streamを利用した更新管理も行う。
  */
 import type { V_DATASET, V_STYLE, V_CLASSLIST, V_EVENTLISTENER, V_STRING, WritableCSSProperty, JSHTMLElementSource, JSHTMLAttrSource, JSHTMLNodeSource, JSHTMLAttributeMapSource, JSHTMLAttrRuntime, JSHTMLNodeRuntime, JSHTMLNodeSourceType, JSHTMLExtractedElementSource } from "./blooky-dom-types";
-import { type Stream, type Prop, type DripperStream, stream, drip, isChainedProp, isDripperStream, registerTickHandler, collapse } from "./blooky-fp";
+import { type Stream, type Prop, type DripperStream, stream, drip, isChainedProp, isDripperStream, registerTickHandler, collapse, blooky } from "./blooky-fp";
 
 // DOMをfpのtickに結び付ける
 registerTickHandler("visual", (effects) => {
@@ -298,10 +298,12 @@ const ATTRIBUTE_HANDLER_RREGISTRY: { [key:string]: <V>(runtime:JSHTMLAttrRuntime
 const defineAttrUpdateHandlers = (handlers: { [key:string]: (value: any, target: HTMLElement) => boolean }) => {
     const defined = Object.keys(handlers).filter((k)=>k in ATTRIBUTE_HANDLER_RREGISTRY);
     if(defined.length)
-        throw {
+        throw blooky.error('dev-config', {
             code: 'DUPLICATE_ATTR_HANDLER',
-            keys: defined
-        };
+            message: `Attribute handlers already defined: ${defined.join('", "')}`,
+            duplicateHandlers: defined,
+            suggestions: ['Check for duplicate handler registrations']
+        });
     Object.assign(ATTRIBUTE_HANDLER_RREGISTRY, handlers);
 }
 
@@ -357,7 +359,12 @@ class PromisedElement extends HTMLElement {
                 cancelable: true,
                 bubbles: true,
                 detail: { error }
-            }))) throw error;
+            }))) throw blooky.error("user", {
+                code: "REJECTTED_PROMISED_ELEMENT",
+                message: '"rejectpromise" event is not prevented',
+                originalError: error,
+                suggestions: ['set "rejectpromise" listener and call "preventDefault"']
+            });
         });
     }
 }

@@ -3,7 +3,7 @@
  * 関数型のリアクティブプログラミングをtypescriptで行うためのライブラリ。
  */
 
-import { DripEffect, DripperStream, DripResult, DripStrategy, FilterStream, FlowingState, MappedStream, MergedStream, Prop, PropEffect, Stream } from "./blooky-types";
+import { BlookyError, BlookyErrorCauseMap, DripEffect, DripperStream, DripResult, DripStrategy, FilterStream, FlowingState, MappedStream, MergedStream, Prop, PropEffect, Stream } from "./blooky-types";
 
 /**
  * ガベージコレクション用クリーナー関数
@@ -623,9 +623,9 @@ type CollapseReservation = {
 
 const PendingEffect = new WeakMap<DripperStream<any>,(n:number)=>void>();
 const ThrottleRecord = new WeakMap<DripperStream<any>, number>();
+
 const RESERVATIONS : CollapseReservation[] = [];
 
-// DripEffectを実際にPropに反映させる。
 const collapse = async (effect:DripEffect) => new Promise((resolve, reject) => {
     const enqueue = () => {
         if (!RESERVATIONS.length) queueMicrotask(()=>tick(performance.now()));
@@ -662,11 +662,6 @@ const collapse = async (effect:DripEffect) => new Promise((resolve, reject) => {
             enqueue();
             break;
 
-        default:
-            console.warn(`Unknown drip strategy "${(strategy as any).type}", falling back to immediate`);
-            enqueue();
-            break;
-            
     }
 
 }).finally(()=>{
@@ -739,6 +734,18 @@ function tick(now: number) {
 
 }
 
+const blooky = {
+  error: <T extends keyof BlookyErrorCauseMap>(
+    category: T,
+    cause: {
+        code: string
+        message: string
+    } & BlookyErrorCauseMap[T]
+  ): BlookyError<T> => {
+    return Object.assign(new Error(cause.message, { cause }), { category }) as BlookyError<T>;
+  }
+};
+
 export {
     drip,stream,
     dripGraph,vertex,
@@ -748,11 +755,12 @@ export {
     hold,accum,lift,remap,when,
     proxy,
     pipe,streamOp,propOp,
-    clock,collapse,registerTickHandler
+    clock,collapse,registerTickHandler,
+    blooky
 };
 
 export type {
     Stream,FilterStream,MappedStream,MergedStream,DripperStream,
     Prop,PromisedProp,
-    Vertex
+    Vertex,
 };

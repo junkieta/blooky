@@ -66,60 +66,69 @@ type DripResult<A,M="deny"> = M extends 'await'
   : DripEffect;
  
 
-//A. 開発時設定エラー（Development Configuration Errors）
-//特徴: 開発者のコード記述ミス、設定不備によるもの
-type DevConfigError = {
-    category: 'dev-config';
-    code: string;
-    message: string;
-    suggestions?: string[];
-}
+// エラー詳細の型定義
+type DevConfigErrorCause = {
+  missingKeys?: string[];
+  duplicateHandlers?: string[];
+  nodeType?: string;
+  suggestions?: string[];
+};
 
-//B. 型・構造エラー（Type/Structure Errors）
-//特徴: オブジェクトの型や構造が期待と異なる
-type StructureError = {
-    category: 'structure';
-    code: string;
-    expected: string;
-    actual: string;
-    value?: any;
-}
+type StructureErrorCause = {
+  expected: string;
+  actual: string;
+  value?: any;
+  attribute?: string;
+  suggestions?: string[];
+};
 
-//C. ランタイム制約エラー（Runtime Constraint Errors）
-//特徴: 実行時の制約違反、プロパティアクセス制限など
-type ConstraintError = {
-    category: 'constraint';
-    code: string;
-    constraint: string;
-    context?: Record<string, any>;
-}
+type ConstraintErrorCause = {
+  constraint: string;
+  property?: string;
+  context?: Record<string, any>;
+  suggestions?: string[];
+};
 
-//D. フロー制御エラー（Flow Control Errors）
-//特徴: 実行フローの文脈や状態に関する制約違反
-type FlowError = {
-    category: 'flow';
-    code: string;
-    requiredContext: string;
-    currentContext?: string;
-}
+type FlowErrorCause = {
+  nodeType?: string;
+  requiredContext?: string;
+  currentContext?: string;
+  suggestions?: string[];
+};
 
-//E. ユーザー起因エラー（User-Triggered Errors）
-//特徴: Promise拒否など、アプリケーション実行中に発生する可能性があるもの
-type UserError = {
-    category: 'user';
-    originalError: any;
-    element?: Element;
-    recoverable: boolean;
-}
+type UserErrorCause = {
+  originalError: Error|any;
+  element?: Element;
+  recoverable?: boolean;
+  suggestions?: string[];
+};
 
+// エラーカテゴリのマップ
+type BlookyErrorCauseMap = {
+  'dev-config': DevConfigErrorCause;
+  'structure': StructureErrorCause;
+  'constraint': ConstraintErrorCause;
+  'flow': FlowErrorCause;
+  'user': UserErrorCause;
+};
+
+// ジェネリック型定義
+type BlookyError<T extends keyof BlookyErrorCauseMap> = Error & {
+    category: T;
+    cause: {
+        code: string;
+    } & BlookyErrorCauseMap[T]
+};
 
 export {
   Stream,Prop,DripperStream,FilterStream,MappedStream,MergedStream,
   DripStrategy,DripEffect,PropEffect,DripResult,
   FlowingState,StreamBase,
-  DevConfigError,
-  StructureError,
-  ConstraintError,
-  FlowError,
-  UserError
+  BlookyError,
+  BlookyErrorCauseMap,
+  ConstraintErrorCause,
+  DevConfigErrorCause,
+  FlowErrorCause,
+  StructureErrorCause,
+  UserErrorCause,
 }
