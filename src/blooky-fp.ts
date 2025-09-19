@@ -3,7 +3,7 @@
  * 関数型のリアクティブプログラミングをtypescriptで行うためのライブラリ。
  */
 
-import { BlookyError, BlookyErrorCauseMap, DripEffect, DripperStream, DripResult, DripStrategy, FilterStream, FlowingState, MappedStream, MergedStream, Prop, PropEffect, Stream } from "./blooky-types";
+import { BlookyError, BlookyErrorCauseMap, CollapseReservation, DripEffect, DripperStream, DripResult, DripStrategy, FilterStream, FlowingState, MappedStream, MergedStream, Prop, PropEffect, Stream } from "./blooky-types";
 
 /**
  * ガベージコレクション用クリーナー関数
@@ -608,24 +608,21 @@ function proxy<T, K extends keyof T>(obj: T, key: K): [DripperStream<T[K]>, Prop
 }
 
 
-// --- 時間の源泉 (The Fountain of Time) ---
+// --- 時間の源泉 ---
 const beat$ = stream<number>();
-/**
- * 【公開API】アプリケーション全体で共有される、現在の時間を表すProp。
- */
+
+// アプリケーション全体で共有される、現在の時間を表すProp。
 const clock: Prop<number> = hold(performance.now())(beat$);
 
-type CollapseReservation = {
-    effect: DripEffect,
-    resolve: (v:number)=>void,
-    reject: (v:number)=>void
-}
-
+// dobounce で一時保管するDrip情報
 const PendingEffect = new WeakMap<DripperStream<any>,(n:number)=>void>();
+// Throttleで処理中のドリッパーと時刻
 const ThrottleRecord = new WeakMap<DripperStream<any>, number>();
-
+// collapse用のキュー。effectとそのpromise解決関数を保管。
 const RESERVATIONS : CollapseReservation[] = [];
 
+// effectの実行スケジュールを組む。
+// dripのstrategyで実行タイミングを調節し、実行処理はtickに投げる
 const collapse = async (effect:DripEffect) => new Promise((resolve, reject) => {
     const enqueue = () => {
         if (!RESERVATIONS.length) queueMicrotask(()=>tick(performance.now()));
@@ -690,6 +687,7 @@ function registerTickHandler(observer: CollapseObserver, handler: (effect: DripE
 }
 
 // 予約されたEffectを処理する
+// tickハンドラをそれぞれのobserverに合わせて全て呼び出した後、Propを更新する。
 function tick(now: number) {
     // 実行キュー作成
     const queue = RESERVATIONS.map((e)=>e.effect);
@@ -734,16 +732,20 @@ function tick(now: number) {
 
 }
 
+// 全モジュール共通ユーティリティ。
 const blooky = {
-  error: <T extends keyof BlookyErrorCauseMap>(
-    category: T,
-    cause: {
-        code: string
-        message: string
-    } & BlookyErrorCauseMap[T]
-  ): BlookyError<T> => {
-    return Object.assign(new Error(cause.message, { cause }), { category }) as BlookyError<T>;
-  }
+
+    // エラーの生成。javascriptネイティブのErrorを拡張する
+    error: <T extends keyof BlookyErrorCauseMap>(
+        category: T,
+        cause: {
+            code: string
+            message: string
+        } & BlookyErrorCauseMap[T]
+    ): BlookyError<T> => {
+        return Object.assign(new Error(cause.message, { cause }), { category }) as BlookyError<T>;
+    }
+    
 };
 
 export {

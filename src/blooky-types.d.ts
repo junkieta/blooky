@@ -66,6 +66,12 @@ type DripResult<A,M="deny"> = M extends 'await'
   : DripEffect;
  
 
+type CollapseReservation = {
+    effect: DripEffect,
+    resolve: (v:number)=>void,
+    reject: (v:number)=>void
+}
+
 // エラー詳細の型定義
 type DevConfigErrorCause = {
   missingKeys?: string[];
@@ -124,6 +130,7 @@ export {
   Stream,Prop,DripperStream,FilterStream,MappedStream,MergedStream,
   DripStrategy,DripEffect,PropEffect,DripResult,
   FlowingState,StreamBase,
+  CollapseReservation,
   BlookyError,
   BlookyErrorCauseMap,
   ConstraintErrorCause,
