@@ -42,6 +42,15 @@ type Stream<A> =
    | MergedStream<A>
    | FilterStream<A>
 
+
+type Vertex = {
+    sourceStream: Stream<any>
+    from?: Vertex
+    next?: Vertex[]
+    lazyNext?: Vertex[]
+    props?: Prop<any>[]
+};
+
 /**
  * 連結したストリームを辿り、受け取った時変値の処理関数をまとめる
  */
@@ -69,7 +78,7 @@ type DripResult<A,M="deny"> = M extends 'await'
 type CollapseReservation = {
     effect: DripEffect,
     resolve: (v:number)=>void,
-    reject: (v:number)=>void
+    reject: (v:BlookyError<keyof BlookyErrorCauseMap>[])=>void
 }
 
 // エラー詳細の型定義
@@ -95,6 +104,7 @@ type ConstraintErrorCause = {
   suggestions?: string[];
 };
 
+// fxエラー
 type FlowErrorCause = {
   nodeType?: string;
   requiredContext?: string;
@@ -127,15 +137,10 @@ type BlookyError<T extends keyof BlookyErrorCauseMap> = Error & {
 };
 
 export {
-  Stream,Prop,DripperStream,FilterStream,MappedStream,MergedStream,
+  Stream,Prop,DripperStream,FilterStream,MappedStream,MergedStream,Vertex,
   DripStrategy,DripEffect,PropEffect,DripResult,
   FlowingState,StreamBase,
   CollapseReservation,
-  BlookyError,
-  BlookyErrorCauseMap,
-  ConstraintErrorCause,
-  DevConfigErrorCause,
-  FlowErrorCause,
-  StructureErrorCause,
-  UserErrorCause,
+  BlookyError,BlookyErrorCauseMap,
+  ConstraintErrorCause,DevConfigErrorCause,FlowErrorCause,StructureErrorCause,UserErrorCause,
 }

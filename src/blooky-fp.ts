@@ -3,7 +3,7 @@
  * 関数型のリアクティブプログラミングをtypescriptで行うためのライブラリ。
  */
 
-import { BlookyError, BlookyErrorCauseMap, CollapseReservation, DripEffect, DripperStream, DripResult, DripStrategy, FilterStream, FlowingState, MappedStream, MergedStream, Prop, PropEffect, Stream } from "./blooky-types";
+import { BlookyError, BlookyErrorCauseMap, CollapseReservation, DevConfigErrorCause, DripEffect, DripperStream, DripResult, DripStrategy, FilterStream, FlowingState, MappedStream, MergedStream, Prop, PropEffect, Stream, Vertex } from "./blooky-types";
 
 /**
  * ガベージコレクション用クリーナー関数
@@ -51,7 +51,7 @@ const clear = <A>(s: Stream<A>, recursive = true, visited = new WeakSet<Stream<a
 
 // GCにあわせて参照を解除する
 const cleanupRegistry = 
-    window.FinalizationRegistry
+    typeof FinalizationRegistry !== "undefined"
     ? new FinalizationRegistry<WeakRef<Stream<any>|Prop<any>>>((ref) => {
         const v = ref.deref();
         if(!v) return;
@@ -155,7 +155,7 @@ const map = <A,B>(f:((v:B)=>A)|Prop<A>|A) => (s:Stream<B>) : MappedStream<A> => 
 };
 
 /**
- * { B: Stream<A> }形式のレコードから、Prop<B>の値に応じたStreamの値を通すStreamを生成する
+ * { B: Stream<A> }形式のレコードから、Prop<B>の値に応じたStreamの値を通す、条件付きMergedStreamを生成する
  */
 const junction = <A,B>(records: Map<A,Stream<B>>|Record<string|symbol|number,Stream<B>>) => {
     if(!(records instanceof Map)) return junction(new Map(Object.entries(records)));
@@ -202,106 +202,29 @@ const isDripperStream = <A>(v:unknown) : v is DripperStream<A> =>
 // 引数がStreamから接続されたPropか判別する
 const isChainedProp = <A>(v: unknown): v is Prop<A> => PROP_UPDATE.has(v as Prop<A>);
 
+const isVertex = (v: unknown) : v is Vertex =>  v ? isStream((v as Vertex).sourceStream) : false;
+
 // memo
 const VERTEX_MAP = new WeakMap<Stream<any>,Vertex>();
-const VERTEX_SYM = Symbol("IS_VERTEX");
-const isVertex = (v: unknown) : v is Vertex =>  v ? (v as Vertex)[VERTEX_SYM] : false;
-
-type Vertex = { [K in typeof VERTEX_SYM]: true } & {
-    source: Stream<any>
-    from?: Vertex
-    next?: Vertex[]
-    props?: Prop<any>[]
-};
-
+// 各Streamを頂点として、WeakMapから関連する値を接続したグラフを生成する
 const vertex = (s:Stream<any>): Vertex => {
     const buildVertex = (source:Stream<any>, from?: Vertex) => {
         if(VERTEX_MAP.has(source)) return VERTEX_MAP.get(source)!;
         const vert: Vertex = {
-            [VERTEX_SYM]: true,
-            source,
+            sourceStream: source,
             from,
             props: STREAM_PROP_RELATIONS.get(source)
         };
         VERTEX_MAP.set(source, vert);
-        const next = [...source.next, ...source.lazyNext];
-        if(next.length) vert.next = next.map((s)=>buildVertex(s,vert));
+        if(source.next.size)
+            vert.next = [...source.next].map((s)=>buildVertex(s,vert));
+        if(source.lazyNext.size)
+            vert.lazyNext = [...source.lazyNext].map((s)=>buildVertex(s,vert));
         return vert;
     }
     return buildVertex(s);
 }
 
-
-// dripと同様の処理を、全ての関連フローを記録してグラフ生成する
-// 高負荷になるので、データフロー履歴が欲しい場面でだけ使用する
-const dripGraph = <A>(value: A) => (dripper: DripperStream<A>) : DripEffect & { streams: Map<Stream<any>,any> } => {
-    const lazy = new Map<MergedStream<any>,any[]>();
-    const streams = new Map<Stream<any>, any>();
-    const effects = new Map<Prop<any>,any>();
-    const walk = (v:any) => (s:Stream<any>) => {
-        streams.set(s,v);
-        STREAM_PROP_RELATIONS.get(s)?.forEach((p)=>effects.set(p, v));
-        if(s.lazyNext.size) s.lazyNext.forEach((s)=>{
-            if(lazy.has(s))
-                lazy.get(s)!.push(v);
-            else
-                lazy.set(s, [v]);
-        });
-        if(s.next.size) [...s.next]
-            .filter((s) => !("filterFn" in s) || s.filterFn(v))
-            .forEach((s) => walk("mapFn" in s ? s.mapFn(v) : v)(s));
-    };
-
-    walk(value)(dripper);
-    while(lazy.size) {
-        const entries = [...lazy];
-        lazy.clear();
-        entries.forEach(([s,v])=>walk(v.reduce(s.reduceFn))(s));
-    }
-
-    return { dripper, streams, effects };
-}
-
-
-/**
- * ストリームがプロパティによってどれだけ参照されているかを調べる
- * @param s 
- * @returns 
- */
-const countReferences = (s: Stream<any>, deep = false): Prop<number> => {
-  if (!isStream(s)) throw new TypeError("countReferences requires Stream");
-  const count = (s: Stream<any>) => STREAM_PROP_RELATIONS.has(s) ? STREAM_PROP_RELATIONS.get(s)!.length : 0;
-  const count_deep = (s: Stream<any>, visited: WeakSet<Stream<any>>): number => {
-    if(visited.has(s)) return 0;
-    visited.add(s);
-    return [...s.next, ...s.lazyNext].reduce((acc, child) => acc + count_deep(child, visited), count(s));
-  };
-  return deep === true
-    ? () => count_deep(s, new WeakSet())
-    : () => count(s);
-};
-
-/**
- * ストリームに一定以上の参照が残っているか判定
- * @param s      対象ストリーム
- * @param than   閾値 (デフォルト0 = 1つでも参照があればtrue)
- */
-const hasReferences = (s: Stream<any>, than = 0): boolean => {
-    const visited = new WeakSet<Stream<any>>();
-    const stack: Stream<any>[] = [s];
-    let count = 0;
-    while (stack.length) {
-        const current = stack.pop()!;
-        if (visited.has(current)) continue;
-        visited.add(current);
-        if(!STREAM_PROP_RELATIONS.has(current)) continue;
-        const o = STREAM_PROP_RELATIONS.get(current)!;
-        if (o.length) count += o.length;
-        if (count > than) return true;
-        stack.push(...current.next, ...current.lazyNext);
-    }
-    return false;
-};
 
 /**
  * 受け取った時変値でフロー状態を作成する
@@ -365,7 +288,7 @@ type AsyncFlowState = {
 /**
  * 【内部用】非同期でグラフを走査し、Effectと待機リストを収集する
  */
-const collectFlowStateAsync = async <A>(v: A, s: Stream<A>): Promise<AsyncFlowState> => {
+const collectFlowStateAsync = async <A>(v: A, s: Stream<A>): Promise<FlowingState> => {
   // streamToFlowingStateは同期的
   const [initialEffects, initialWaiting] = streamToFlowingState(v)(s);
   
@@ -383,7 +306,7 @@ const collectFlowStateAsync = async <A>(v: A, s: Stream<A>): Promise<AsyncFlowSt
     }
     
     // 再帰的に収集
-    const { effects, waiting } = await collectFlowStateAsync(nextValue, child);
+    const [effects, waiting] = await collectFlowStateAsync(nextValue, child);
     finalEffects.push(...effects);
     finalWaiting.push(...waiting);
   }
@@ -393,7 +316,7 @@ const collectFlowStateAsync = async <A>(v: A, s: Stream<A>): Promise<AsyncFlowSt
     finalWaiting.push([child, v]);
   }
 
-  return { effects: finalEffects, waiting: finalWaiting };
+  return [finalEffects,finalWaiting];
 };
 
 /**
@@ -405,7 +328,7 @@ async function* flowAsync<A>(v: A, s: Stream<A>): AsyncGenerator<PropEffect<unkn
 
   // --- フェーズ1：収集 ---
   // ヘルパーを呼び出し、グラフ全体の実行計画を一度に収集する
-  const { effects, waiting } = await collectFlowStateAsync(v, s);
+  const [effects, waiting] = await collectFlowStateAsync(v, s);
 
   // --- フェーズ2：実行と遅延処理 ---
   // 1. まず、直接の副作用（Propの更新）を全てyieldする
@@ -505,6 +428,7 @@ const lift = <A>(f: (values: any[]) => A) => (props: Prop<any>[]) : Prop<A> => {
   return hold(valueFn())(transformed);
 };
 
+// 未解決の値を示すSymbol。PromisedProp用。
 const NotThen = Symbol("NotThen");
 /**
  * 観測予約可能なProp
@@ -601,7 +525,6 @@ const PendingEffect = new WeakMap<DripperStream<any>,(n:number)=>void>();
 const ThrottleRecord = new WeakMap<DripperStream<any>, number>();
 // collapse用のキュー。effectとそのpromise解決関数を保管。
 const RESERVATIONS : CollapseReservation[] = [];
-
 // effectの実行スケジュールを組む。
 // dripのstrategyで実行タイミングを調節し、実行処理はtickに投げる
 const collapse = async (effect:DripEffect) => new Promise((resolve, reject) => {
@@ -652,13 +575,15 @@ type CollapseObserver =
   | 'visual'       // 視覚観測者（RAF）
   | 'sequential'   // 順次観測者（timeout）
   | 'quantum'      // 量子観測者（microtask）
+  | 'thrown'       // 理外観測者（error）
 
 // Effect処理のミドルウェア
 const tickHandlers: { [key in CollapseObserver]: Set<(effect:DripEffect[])=>void> } = {
     immediate: new Set(),
     visual: new Set(),
     quantum: new Set(),
-    sequential: new Set()
+    sequential: new Set(),
+    thrown: new Set()
 }
 
 // ミドルウェアの登録用関数
@@ -670,14 +595,16 @@ function registerTickHandler(observer: CollapseObserver, handler: (effect: DripE
 // 予約されたEffectを処理する
 // tickハンドラをそれぞれのobserverに合わせて全て呼び出した後、Propを更新する。
 function tick(now: number) {
+    // 現時点のRESERVATIONSを移す
+    const reservations = RESERVATIONS.slice(0);
+    // 元の予約は消去
+    RESERVATIONS.length = 0;
     // 実行キュー作成
-    const queue = RESERVATIONS.map((e)=>e.effect);
+    const queue = reservations.map(({effect})=>effect);
     // 時刻更新を追加
     queue.push(drip(now)(beat$));
-    // 完了通知先を保管
-    const resolvers = RESERVATIONS.map(({resolve})=>resolve);
-    // 予定の予約は消去
-    RESERVATIONS.length = 0;
+    // ハンドラー呼び出し中のエラーを格納
+    const errors: BlookyError<keyof BlookyErrorCauseMap>[] = [];
     // ハンドラーの呼び出し
     const callHandlers = (ticker: Function) => (handlers: Set<(e:DripEffect[])=>void>) => new Promise((resolve,reject)=>{
         ticker(()=>{
@@ -685,39 +612,67 @@ function tick(now: number) {
                 handlers.forEach((handler)=>handler(queue));
                 resolve(void 0);
             } catch(err) {
-                reject(err);
+                errors.push(err instanceof Error && 'category' in err 
+                    ? err as BlookyError<any>
+                    : blooky.error("user", {
+                        code: "TICK_HANDLER_ERROR", 
+                        message: "Tick handler threw error",
+                        originalError: err,
+                        recoverable: true
+                    })
+                );
+                resolve(void 0); // エラーでもresolve（thrown observerで処理）
             }
         })
     });
 
-    const promises: Promise<unknown>[] = Object.entries(tickHandlers).flatMap(([observer, handlers])=>{
-        if(handlers.size) switch(observer) {
-            case "immediate":
-                return callHandlers((f:Function)=>f())(handlers);
-            case "visual":
-                return callHandlers(globalThis.requestAnimationFrame)(handlers);
-            case "sequential":
-                return callHandlers(setTimeout)(handlers);
-            case "quantum":
-                return callHandlers(queueMicrotask)(handlers);
-        }
-        return [];
+    // thrownを除くオブザーバーのハンドラ呼び出し用関数
+    const observers: { [key in Exclude<CollapseObserver,"thrown">]: (f:()=>void)=>void } = {
+        "immediate": (f:Function)=>f(),
+        "visual": globalThis.requestAnimationFrame || (globalThis as any).nextTick || (globalThis as any).setImmediate,
+        "sequential": setTimeout,
+        "quantum": queueMicrotask
+    };
+    // 各オブザーバー毎にハンドラ呼び出しのPromiseを生成
+    const promises: Promise<unknown>[] = Object.entries(observers).flatMap(([key,fn])=>{
+        const handlers = tickHandlers[key as Exclude<CollapseObserver,"thrown">];
+        return handlers.size
+            ? callHandlers(fn)(handlers)
+            : [];
     });
-
-    // ハンドラの処理が完了したら、PropEffectの更新を処理する
-    (promises.length
-        ? Promise.all(promises)
-        : Promise.resolve()
-    ).finally(()=>{
+    Promise.allSettled(promises).then(()=>{
+        // エラーがあればthrown observerに送信
+        if (errors.length && tickHandlers.thrown.size) {
+            const errorEffects = errors.map(error => drip(error)(blooky.errorStream[error.category]));
+            tickHandlers.thrown.forEach(handler => {
+                try {
+                    handler(errorEffects);
+                } catch (thrownError) {
+                    console.error('Error in thrown handler:', thrownError);
+                }
+            });
+        }
+        // ハンドラの処理が完了したら、PropEffectの更新を処理する
         queue.forEach(({effects})=>effects.forEach((v,p)=>PROP_UPDATE.get(p)!(v)));
         // 完了通知
-        resolvers.forEach((r)=>r(now));
+        reservations.forEach(errors.length
+            ? ({reject})  => reject(errors)
+            : ({resolve}) => resolve(now)
+        );
     });
 
 }
 
 // 全モジュール共通ユーティリティ。
 const blooky = {
+
+    errorStream : {
+      'dev-config': stream<BlookyError<'dev-config'>>(),
+      'structure': stream<BlookyError<'structure'>>(),
+      'constraint': stream<BlookyError<'constraint'>>(),
+      'flow': stream<BlookyError<'flow'>>(),
+      'user': stream<BlookyError<'user'>>()
+    } as { [key in keyof BlookyErrorCauseMap]: DripperStream<BlookyError<keyof BlookyErrorCauseMap>> },
 
     // エラーの生成。javascriptネイティブのErrorを拡張する
     error: <T extends keyof BlookyErrorCauseMap>(
@@ -733,10 +688,9 @@ const blooky = {
 };
 
 export {
-    drip,stream,
-    dripGraph,vertex,
+    drip,stream,vertex,
     isStream,isDripperStream,isChainedProp,isVertex,
-    countReferences,hasReferences,clear,
+    clear,
     merge,junction,map,filter,
     hold,accum,lift,remap,when,
     proxy,
@@ -746,53 +700,6 @@ export {
 };
 
 export type {
-    Prop,PromisedProp,
-    Vertex,
+    PromisedProp,
 };
 
-
-/* メソッドチェーン風のストリーム構築をサポートするかどうか。以下は試案。
-// 高階関数の引数順を入れ替えて、メソッドチェーン的な書き味に
-type StreamOperators<A> = {
-    value: Stream<A>
-    map: <B>(f:((v:A)=>B)|Prop<B>|B) => StreamOperators<B>,
-    filter: (f:((v:A)=>boolean)|RegExp|A) => StreamOperators<A>,
-    hold: (v:A) => PropOperators<A>,
-    accum: <S>(f:(s:S,v:A)=>S,s:S) => PropOperators<S>,
-    drip?: <M extends 'deny' | 'allow' | 'await' = 'deny'>(value:A, options?: { acceptPromise?: M }) => DripResult<A,M>
-}
-type PropOperators<A> = {
-    value: ()=>A
-    remap: <B>(f:(v:A,p?:A)=>B) => PropOperators<B>,
-    when: (predicate: (v: A) => boolean) => PropOperators<A|typeof NotThen>,
-    then?: PromiseLike<A>["then"]
-}
-
-const streamOp = <A>(_s:Stream<A> = stream()) : StreamOperators<A> => ({
-    value: _s,
-    map: <B>(f:((v:A)=>B)|Prop<B>|B) => streamOp(map(f)(_s)),
-    filter: (f:((v:A)=>boolean)|RegExp|A) => streamOp(filter(f)(_s)),
-    hold: (v:A) => propOp(hold(v)(_s)),
-    accum: <S>(f:(s:S,v:A)=>S,s:S) => propOp(accum(f,s)(_s)),
-    ...(isDripperStream(_s) ? {
-        drip: <M extends 'deny' | 'allow' | 'await' = 'deny'>(value:A, options?: { acceptPromise?: M }) => drip(value,options)(_s)
-    } : {})
-})
-
-streamOp.merge = <A>(s:(Stream<A>|StreamOperators<A>)[], f?:(a:A,b:A)=>A) : StreamOperators<A> =>
-    streamOp(merge(s.map((s)=>isStream<A>(s) ? s : s.value), f));
-
-const propOp = <A>(prop:Prop<A> | (Prop<A> & PromiseLike<A>)) : PropOperators<A> => ({
-    value: prop,
-    remap: <B>(f:(v:A,p?:A)=>B) => propOp(remap(f)(prop)),
-    when: (predicate:(v:A)=>boolean) => propOp(when(predicate)(prop)),
-    ...("then" in prop ? { then: prop.then.bind(prop) } : {})
-});
-
-propOp.lift = <A>(props: (Prop<any>|PropOperators<any>)[], f: (values: any[]) => A) : PropOperators<A> =>
-    propOp(lift(f)(props.map((p) => isChainedProp<any>(p) ? p : p.value )));
-
-export {
-    streamOp, propOp
-}
-*/

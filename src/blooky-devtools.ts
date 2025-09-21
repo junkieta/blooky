@@ -1,5 +1,5 @@
 import { jshtml } from "./blooky-dom";
-import { isChainedProp, isDripperStream, isStream, isVertex, Prop, stream, Stream, Vertex, vertex } from "./blooky-fp";
+import { isChainedProp, isDripperStream, isStream, isVertex, vertex } from "./blooky-fp";
 import { EffectElementTagNameMap as DefaultEffectElementTagNameMap, EffectElement, FxEffectElement as ConcreteEffectElementConstructor, fxdom } from "./blooky-fxdom";
 import { FxNode, FxMiddleware, ExecContext } from "./fx/types";
 
@@ -201,6 +201,7 @@ export {fxdom,EffectElementTagNameMap,debugMiddleware};
 
 // svg用のスタイル
 import "./blooky-devtools.css";
+import { DripperStream, DripEffect, MergedStream, Prop, Stream, Vertex } from "./blooky-types";
 
 // グラフ描画
 function dumpGraphDOT(entries: Record<string, Stream<any> | Prop<any> | unknown>, graphAttrs: Record<string,string> = { rankdir: "LR" }): string {
@@ -261,7 +262,7 @@ function dumpGraphDOT(entries: Record<string, Stream<any> | Prop<any> | unknown>
     const nodeAttr = names.has(obj)
       ? {
         id: "node-" + label,
-        shape: getShape(obj.source)
+        shape: getShape(obj.sourceStream)
       }
       : {
         shape: "point"
@@ -290,6 +291,36 @@ function dumpGraphDOT(entries: Record<string, Stream<any> | Prop<any> | unknown>
   return `digraph BlookyGraph {\ngraph [\n${digraph_attrs}\n];\n${nodes.join("\n")}\n${edges.join("\n")}\n}`;
 }
 
+// dripと同様の処理を、全ての関連フローを記録してグラフ生成する
+const dripGraph = <A>(value: A) => (dripper: DripperStream<A>) : DripEffect & { streams: Map<Stream<any>,any> } => {
+    const lazy = new Map<Vertex,any[]>();
+    const streams = new Map<Stream<any>, any>();
+    const effects = new Map<Prop<any>,any>();
+    const walk = (v:any) => (vert:Vertex) => {
+        streams.set(vert.sourceStream,v);
+        vert.props?.forEach((p)=>effects.set(p, v));
+        if(vert.lazyNext) vert.lazyNext.forEach((lazySource)=>{
+            if(lazy.has(lazySource))
+                lazy.get(lazySource)!.push(v);
+            else
+                lazy.set(lazySource, [v]);
+        });
+        if(vert.next?.length) 
+            vert.next
+              .filter(({sourceStream}) => !("filterFn" in sourceStream) || sourceStream.filterFn(v))
+              .forEach((s) => walk("mapFn" in s.sourceStream ? s.sourceStream.mapFn(v) : v)(s));
+    };
 
-export {dumpGraphDOT};
+    walk(value)(vertex(dripper));
+    while(lazy.size) {
+        const entries = [...lazy];
+        lazy.clear();
+        entries.forEach(([s,v])=>walk(v.reduce((s.sourceStream as MergedStream<any>).reduceFn))(s));
+    }
+
+    return { dripper, streams, effects };
+}
+
+
+export {dumpGraphDOT,dripGraph};
 
