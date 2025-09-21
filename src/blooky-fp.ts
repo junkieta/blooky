@@ -77,7 +77,15 @@ const cleanupRegistry =
         unregister(_: WeakKey): boolean {return false}
     } as FinalizationRegistry<WeakRef<Stream<any>|Prop<any>>>;
 
-
+// filter, when用の内部ヘルパー
+type Predicate<A> = ((v:A)=>boolean)|RegExp|A;
+const toPredicate = <A>(predicate: Predicate<A>) => 
+    typeof predicate === "function"
+    ? predicate as (v:A)=>boolean
+    : predicate instanceof RegExp
+    ? (v:A) => predicate.test(String(v))
+    : (v:A) => v === predicate
+;
 
 /**
  * ストリーム状態を生成する。
@@ -99,7 +107,7 @@ const stream = <A>(strategy: DripStrategy = { type: "immediate" }) => {
  * @param s 
  * @returns 
  */
-const merge = <A> (f?:(a:A,b:A)=>A) => (s:Stream<A>[]) : MergedStream<A> => {
+const merge = <A> (s:Stream<A>[], f?:(a:A,b:A)=>A) : MergedStream<A> => {
     // マージ後のストリーム
     const _s : MergedStream<A> = {
         next: new Set(),
@@ -119,44 +127,41 @@ const merge = <A> (f?:(a:A,b:A)=>A) => (s:Stream<A>[]) : MergedStream<A> => {
  * @param s 
  * @returns 
  */
-const filter = <A>(f:((v:A)=>boolean)|RegExp|A) : (s:Stream<A>)=>FilterStream<A> => 
-    typeof f !== "function"
-    ? (filter(f instanceof RegExp ? (v:A)=>f.test(String(v)) : (v:A) => v === f))
-    : (s:Stream<A>) : FilterStream<A> => {
-        const _s: FilterStream<A> = {
-            filterFn: f as (v:A)=>boolean,
-            next: new Set(),
-            lazyNext: new Set(),
-        };
-        s.next.add(_s);
-        STREAM_CLEANERS.set(_s, () => s.next.delete(_s));
-        cleanupRegistry.register(_s, new WeakRef(_s));
-        return _s;
-    }
+const filter = <A>(f:Predicate<A>) : (s:Stream<A>)=>FilterStream<A> => (s:Stream<A>) : FilterStream<A> => {
+    const _s: FilterStream<A> = {
+        filterFn: toPredicate(f),
+        next: new Set(),
+        lazyNext: new Set(),
+    };
+    s.next.add(_s);
+    STREAM_CLEANERS.set(_s, () => s.next.delete(_s));
+    cleanupRegistry.register(_s, new WeakRef(_s));
+    return _s;
+}
 
 /**
  * ストリームを別の流れに変換する
  */
-const map = <A,B>(f:((v:B)=>A)|Prop<A>|A): ((s:Stream<B>)=>MappedStream<A>) =>
-    typeof f !== "function"
-    ? map<A,B>(() => f)
-    : (s:Stream<B>) : MappedStream<A> => {
-        const _s: MappedStream<A> = {
-            mapFn: f as <B>(v:B)=>A,
-            next: new Set(),
-            lazyNext: new Set()
-        };
-        s.next.add(_s);
-        STREAM_CLEANERS.set(_s, () => s.next.delete(_s));
-        cleanupRegistry.register(_s, new WeakRef(_s));
-        return _s;
+const map = <A,B>(f:((v:B)=>A)|Prop<A>|A) => (s:Stream<B>) : MappedStream<A> => {
+    const _s: MappedStream<A> = {
+        mapFn: typeof f === "function" ? f as <B>(v:B)=>A : () => f,
+        next: new Set(),
+        lazyNext: new Set()
     };
+    s.next.add(_s);
+    STREAM_CLEANERS.set(_s, () => s.next.delete(_s));
+    cleanupRegistry.register(_s, new WeakRef(_s));
+    return _s;
+};
 
-const junction = <A,B>(records: Map<B,Stream<A>>|Record<string,Stream<A>>) => {
+/**
+ * { B: Stream<A> }形式のレコードから、Prop<B>の値に応じたStreamの値を通すStreamを生成する
+ */
+const junction = <A,B>(records: Map<A,Stream<B>>|Record<string|symbol|number,Stream<B>>) => {
     if(!(records instanceof Map)) return junction(new Map(Object.entries(records)));
-    return (p:Prop<B>) => {
-        const streams = [...records.entries()].map(([k,s]:[B,Stream<A>])=>filter<A>(()=>p()===k)(s));
-        const merged = merge<A>()(streams);
+    return (p:Prop<A>) : MergedStream<B> => {
+        const streams = [...records.entries()].map(([k,s]:[A,Stream<B>])=>filter<B>(()=>p()===k)(s));
+        const merged = merge<B>(streams);
         STREAM_CLEANERS.set(merged, () => streams.forEach((s)=>clear(s)));
         return merged;
     };
@@ -179,47 +184,6 @@ function pipe<A,B,C,D>(value:A,op1:(a:A)=>B,op2:(b:B)=>C,op3:(c:C)=>D):D;
 function pipe<A,B,C,D,E>(value:A,op1:(a:A)=>B,op2:(b:B)=>C,op3:(c:C)=>D,op4:(d:D)=>E):E;
 function pipe<A,B,C,D,E,F>(value:A,op1:(a:A)=>B,op2:(b:B)=>C,op3:(c:C)=>D,op4:(d:D)=>E,op5:(e:E)=>F):F;
 function pipe<A>(v:A,...fns:any[]) { return fns.reduce((v,f)=>f(v),v) }
-
-
-// 高階関数の引数順を入れ替えて、メソッドチェーン的な書き味に
-type StreamOperators<A> = {
-    value: Stream<A>
-    map: <B>(f:((v:A)=>B)|Prop<B>|B) => StreamOperators<B>,
-    filter: (f:((v:A)=>boolean)|RegExp|A) => StreamOperators<A>,
-    hold: (v:A) => PropOperators<A>,
-    accum: <S>(f:(s:S,v:A)=>S,s:S) => PropOperators<S>,
-    drip?: <M extends 'deny' | 'allow' | 'await' = 'deny'>(value:A, options?: { acceptPromise?: M }) => DripResult<A,M>
-}
-type PropOperators<A> = {
-    value: ()=>A
-    remap: <B>(f:(v:A,p?:A)=>B) => PropOperators<B>,
-    when: (predicate: (v: A) => boolean) => PropOperators<A|typeof NotThen>,
-    then?: PromiseLike<A>["then"]
-}
-
-const streamOp = <A>(_s:Stream<A> = stream()) : StreamOperators<A> => ({
-    value: _s,
-    map: <B>(f:((v:A)=>B)|Prop<B>|B) => streamOp(map(f)(_s)),
-    filter: (f:((v:A)=>boolean)|RegExp|A) => streamOp(filter(f)(_s)),
-    hold: (v:A) => propOp(hold(v)(_s)),
-    accum: <S>(f:(s:S,v:A)=>S,s:S) => propOp(accum(f,s)(_s)),
-    ...(isDripperStream(_s) ? {
-        drip: <M extends 'deny' | 'allow' | 'await' = 'deny'>(value:A, options?: { acceptPromise?: M }) => drip(value,options)(_s)
-    } : {})
-})
-
-streamOp.merge = <A>(s:(Stream<A>|StreamOperators<A>)[], f?:(a:A,b:A)=>A) : StreamOperators<A> =>
-    streamOp(merge(f)(s.map((s)=>isStream<A>(s) ? s : s.value)));
-
-const propOp = <A>(prop:Prop<A> | (Prop<A> & PromiseLike<A>)) : PropOperators<A> => ({
-    value: prop,
-    remap: <B>(f:(v:A,p?:A)=>B) => propOp(remap(f)(prop)),
-    when: (predicate:(v:A)=>boolean) => propOp(when(predicate)(prop)),
-    ...("then" in prop ? { then: prop.then.bind(prop) } : {})
-});
-
-propOp.lift = <A>(props: (Prop<any>|PropOperators<any>)[], f: (values: any[]) => A) : PropOperators<A> =>
-    propOp(lift(f)(props.map((p) => isChainedProp<any>(p) ? p : p.value )));
 
 /**
  * 引数がストリームであるかを判別する。
@@ -530,7 +494,7 @@ const lift = <A>(f: (values: any[]) => A) => (props: Prop<any>[]) : Prop<A> => {
   const valueFn = () => f(props.map(p => p()));
   // Streamを持っているPropだけを集める
   const streams = props.flatMap((p, i) => PROP_FROM.has(p) ? map((v) => [[i, v]] as reservation[])(PROP_FROM.get(p)!) : []);
-  const mergedStream = merge<reservation[]>((a, b) => a.concat(b))(streams);
+  const mergedStream = merge(streams, (a, b) => a.concat(b));
   const transformed = map((updates: reservation[]) => {
     const map = new Map(updates);
     return f(props.map((p, i) => map.has(i) ? map.get(i)! : p()));
@@ -542,24 +506,32 @@ const lift = <A>(f: (values: any[]) => A) => (props: Prop<any>[]) : Prop<A> => {
 };
 
 const NotThen = Symbol("NotThen");
+// 条件を満たした値だけが更新されるProp。次回更新を待ち受けるPromiseをthenから生成可能。
 type PromisedProp<T> = PromiseLike<T> & Prop<T|typeof NotThen>
 
-// 条件を満たした値だけが更新されるProp。次回更新を待ち受けるPromiseをthenから生成可能。
-const when = <A>(predicate: (v: A) => boolean) => (p: Prop<A>): PromisedProp<A> => {
+/**
+ * PromisedPropを生成する。常に次回のpredicateを満たす値がthenで呼ばれ、Propの値もその内容になる
+ * filter同様、predicateに値そのものやRegExpを渡すことができる
+ */
+const when = <A>(predicate: Predicate<A>) => (p: Prop<A>): PromisedProp<A> => {
+    const f = toPredicate(predicate);
     type ThenOrNotThen = A|typeof NotThen;
-    let thenOrNotThen : ThenOrNotThen = predicate(p()) ? p() : NotThen;
+    let thenOrNotThen : ThenOrNotThen = f(p()) ? p() : NotThen;
     const _p = (()=>thenOrNotThen) as PromisedProp<A>;
+
+    // データフローに接続されていない関数だった場合
     if(!PROP_FROM.has(p)) {
-        _p.then = (thenOrNotThen!==NotThen
-            ? Promise.resolve(thenOrNotThen)
-            : (async(_)=>{})
-        ) as PromisedProp<A>["then"];
+        const promise = thenOrNotThen !== NotThen
+            // 条件を既に満たしている場合：即時解決するPromiseのthenをセット
+            ? Promise.resolve(thenOrNotThen as A)
+            // 条件を満たしておらず、今後も満たすことがない場合：永遠に待機するPromiseのthenをセット
+            : new Promise<A>(()=>{});
+        _p.then = promise.then.bind(promise);
         return _p;
     }
     
     const source = PROP_FROM.get(p)!;
-    const _s = filter(predicate)(source);
-    STREAM_CLEANERS.set(_s, () => source.next.delete(_s));
+    const _s = filter(f)(source);
     STREAM_PROP_RELATIONS.set(_s,[_p]);
     cleanupRegistry.register(_p,new WeakRef(_s));
 
@@ -756,13 +728,59 @@ export {
     merge,junction,map,filter,
     hold,accum,lift,remap,when,
     proxy,
-    pipe,streamOp,propOp,
+    pipe,
     clock,collapse,registerTickHandler,
     blooky
 };
 
 export type {
-    Stream,FilterStream,MappedStream,MergedStream,DripperStream,
     Prop,PromisedProp,
     Vertex,
 };
+
+
+/* メソッドチェーン風のストリーム構築をサポートするかどうか。以下は試案。
+// 高階関数の引数順を入れ替えて、メソッドチェーン的な書き味に
+type StreamOperators<A> = {
+    value: Stream<A>
+    map: <B>(f:((v:A)=>B)|Prop<B>|B) => StreamOperators<B>,
+    filter: (f:((v:A)=>boolean)|RegExp|A) => StreamOperators<A>,
+    hold: (v:A) => PropOperators<A>,
+    accum: <S>(f:(s:S,v:A)=>S,s:S) => PropOperators<S>,
+    drip?: <M extends 'deny' | 'allow' | 'await' = 'deny'>(value:A, options?: { acceptPromise?: M }) => DripResult<A,M>
+}
+type PropOperators<A> = {
+    value: ()=>A
+    remap: <B>(f:(v:A,p?:A)=>B) => PropOperators<B>,
+    when: (predicate: (v: A) => boolean) => PropOperators<A|typeof NotThen>,
+    then?: PromiseLike<A>["then"]
+}
+
+const streamOp = <A>(_s:Stream<A> = stream()) : StreamOperators<A> => ({
+    value: _s,
+    map: <B>(f:((v:A)=>B)|Prop<B>|B) => streamOp(map(f)(_s)),
+    filter: (f:((v:A)=>boolean)|RegExp|A) => streamOp(filter(f)(_s)),
+    hold: (v:A) => propOp(hold(v)(_s)),
+    accum: <S>(f:(s:S,v:A)=>S,s:S) => propOp(accum(f,s)(_s)),
+    ...(isDripperStream(_s) ? {
+        drip: <M extends 'deny' | 'allow' | 'await' = 'deny'>(value:A, options?: { acceptPromise?: M }) => drip(value,options)(_s)
+    } : {})
+})
+
+streamOp.merge = <A>(s:(Stream<A>|StreamOperators<A>)[], f?:(a:A,b:A)=>A) : StreamOperators<A> =>
+    streamOp(merge(s.map((s)=>isStream<A>(s) ? s : s.value), f));
+
+const propOp = <A>(prop:Prop<A> | (Prop<A> & PromiseLike<A>)) : PropOperators<A> => ({
+    value: prop,
+    remap: <B>(f:(v:A,p?:A)=>B) => propOp(remap(f)(prop)),
+    when: (predicate:(v:A)=>boolean) => propOp(when(predicate)(prop)),
+    ...("then" in prop ? { then: prop.then.bind(prop) } : {})
+});
+
+propOp.lift = <A>(props: (Prop<any>|PropOperators<any>)[], f: (values: any[]) => A) : PropOperators<A> =>
+    propOp(lift(f)(props.map((p) => isChainedProp<any>(p) ? p : p.value )));
+
+export {
+    streamOp, propOp
+}
+*/
