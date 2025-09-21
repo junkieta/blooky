@@ -530,11 +530,13 @@ const when = <A>(predicate: Predicate<A>) => (p: Prop<A>): PromisedProp<A> => {
         return _p;
     }
     
+    // holdとは違う経路でPropを生成しているので、ここでもgc用設定を入れる
     const source = PROP_FROM.get(p)!;
     const _s = filter(f)(source);
     STREAM_PROP_RELATIONS.set(_s,[_p]);
     cleanupRegistry.register(_p,new WeakRef(_s));
 
+    // 0番目は、本来のPropのアップデータで、以降はthenから受け取ったresolverを格納する。
     const resolvers: ((v:ThenOrNotThen)=>void)[] = [(v:ThenOrNotThen)=>thenOrNotThen=v];
     const callResolvers = (v:ThenOrNotThen) => {
         if(v !== NotThen) {
