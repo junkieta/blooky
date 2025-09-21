@@ -506,12 +506,18 @@ const lift = <A>(f: (values: any[]) => A) => (props: Prop<any>[]) : Prop<A> => {
 };
 
 const NotThen = Symbol("NotThen");
-// 条件を満たした値だけが更新されるProp。次回更新を待ち受けるPromiseをthenから生成可能。
+/**
+ * 観測予約可能なProp
+ * 
+ * thenは通常のPromiseと異なり：
+ * - 条件を満たす度に新しい値で解決される
+ * - 「次回の観測結果の予約」という意味
+ * - 一度解決されても、再度thenを呼べば新たな予約が可能
+ */
 type PromisedProp<T> = PromiseLike<T> & Prop<T|typeof NotThen>
 
 /**
- * PromisedPropを生成する。常に次回のpredicateを満たす値がthenで呼ばれ、Propの値もその内容になる
- * filter同様、predicateに値そのものやRegExpを渡すことができる
+ * PromisedPropを生成する。filter同様、predicateに値そのものやRegExpを渡すことができる
  */
 const when = <A>(predicate: Predicate<A>) => (p: Prop<A>): PromisedProp<A> => {
     const f = toPredicate(predicate);
@@ -522,10 +528,11 @@ const when = <A>(predicate: Predicate<A>) => (p: Prop<A>): PromisedProp<A> => {
     // データフローに接続されていない関数だった場合
     if(!PROP_FROM.has(p)) {
         const promise = thenOrNotThen !== NotThen
-            // 条件を既に満たしている場合：即時解決するPromiseのthenをセット
+            // 条件を既に満たしている場合：即時解決するPromiseをセット
             ? Promise.resolve(thenOrNotThen as A)
-            // 条件を満たしておらず、今後も満たすことがない場合：永遠に待機するPromiseのthenをセット
+            // 条件を満たしておらず、今後も満たすことがない場合：永遠に待機するPromiseをセット
             : new Promise<A>(()=>{});
+        // thenを生成したPromiseに結び付けて代入
         _p.then = promise.then.bind(promise);
         return _p;
     }
@@ -698,7 +705,10 @@ function tick(now: number) {
     });
 
     // ハンドラの処理が完了したら、PropEffectの更新を処理する
-    Promise.all(promises).finally(()=>{
+    (promises.length
+        ? Promise.all(promises)
+        : Promise.resolve()
+    ).finally(()=>{
         queue.forEach(({effects})=>effects.forEach((v,p)=>PROP_UPDATE.get(p)!(v)));
         // 完了通知
         resolvers.forEach((r)=>r(now));
