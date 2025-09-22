@@ -3,7 +3,7 @@
  * 関数型のリアクティブプログラミングをtypescriptで行うためのライブラリ。
  */
 
-import { BlookyError, BlookyErrorCauseMap, CollapseReservation, DevConfigErrorCause, DripEffect, DripperStream, DripResult, DripStrategy, FilterStream, FlowingState, MappedStream, MergedStream, Prop, PropEffect, Stream, Vertex } from "./blooky-types";
+import { BlookyError, BlookyErrorCauseMap, CollapseReservation, DevConfigErrorCause, DripEffect, DripperStream, DripResult, DripStrategy, FilterStream, FlowingState, MappedStream, MergedStream, Prop, PropEffect, ShortDripStrategy, Stream, Vertex } from "./blooky-types";
 
 /**
  * ガベージコレクション用クリーナー関数
@@ -90,7 +90,13 @@ const toPredicate = <A>(predicate: Predicate<A>) =>
 /**
  * ストリーム状態を生成する。
  */
-const stream = <A>(strategy: DripStrategy = { type: "immediate" }) => {
+const stream = <A>(strategy: ShortDripStrategy|DripStrategy = { type: "immediate" }) : DripperStream<A> => {
+    if(!("type" in strategy))
+        return "throttle" in strategy
+            ? stream({ type: "throttle", interval: strategy.throttle })
+            : "debounce" in strategy
+            ? stream({ type: "debounce", delay: strategy.debounce })
+            : stream({ type: "immediate" });
     const s: DripperStream<A> = {
         next: new Set(),
         lazyNext: new Set(),
