@@ -4,7 +4,8 @@
  * 簡易な仕様でDOMを構築しつつ、Streamを利用した更新管理も行う。
  */
 import type { V_DATASET, V_STYLE, V_CLASSLIST, V_EVENTLISTENER, V_STRING, WritableCSSProperty, JSHTMLElementSource, JSHTMLAttrSource, JSHTMLNodeSource, JSHTMLAttributeMapSource, JSHTMLAttrRuntime, JSHTMLNodeRuntime, JSHTMLNodeSourceType, JSHTMLExtractedElementSource } from "./blooky-dom-types";
-import { type Stream, type Prop, type DripperStream, stream, drip, isChainedProp, isDripperStream, registerTickHandler, collapse, blooky } from "./blooky-fp";
+import { registerTickHandler, isDripperStream, drip, collapse, isChainedProp, blooky, stream } from "./blooky-fp";
+import { Prop, DripperStream, Stream } from "./blooky-types";
 
 // DOMをfpのtickに結び付ける
 registerTickHandler("visual", (effects) => {
@@ -89,9 +90,7 @@ class RangePropBridge implements PropBridgeInterface<JSHTMLNodeSource> {
         // 通知イベント用に確保
         const previous : Node[] = this.target;
         const n = jshtml(v);
-        const [_a,_b] = n.nodeType === n.DOCUMENT_FRAGMENT_NODE
-            ? [n.firstChild!, n.lastChild!]  
-            : [n,n];
+        const [_a,_b] = ensureNodePair(n);
         if(this.isSingleNode()) {
             previous[0].parentNode?.replaceChild(n, previous[0])
         } else {
@@ -234,7 +233,7 @@ const genDatasetSetter =
         : (e:HTMLElement) => {
             Object.keys(e.dataset).filter((k)=>!(k in v)).forEach((k)=>delete e.dataset[k]);
             Object.entries(v).forEach(([k,v]) => {
-                if(isChainedProp(v)) {
+                if(isChainedProp<V_STRING>(v)) {
                     bindRecord(v, new DatasetPropBridge(v,e,k));
                     v = v();
                 }
@@ -327,7 +326,7 @@ const updateAttr = <V>(runtime: JSHTMLAttrRuntime<V>) => {
         jshtmlAttrHandler[name as keyof typeof jshtmlAttrHandler](runtime as any);
     else if(name in ATTRIBUTE_HANDLER_RREGISTRY && ATTRIBUTE_HANDLER_RREGISTRY[name](runtime) === false)
         return;
-    else if(typeof value === "boolean")
+    if(typeof value === "boolean")
         target.toggleAttribute(name, value);
     else if(/^on/.test(name))
         genListenerSetter(value as V_EVENTLISTENER, name)(target);
@@ -436,24 +435,22 @@ const analyzeNodeSource = (s: JSHTMLNodeSource): JSHTMLNodeSourceType => {
     return "element";
 }
 
+// ヘルパー: Node -> [first,last] を安全に返す
+const ensureNodePair = (n: Node): [Node, Node] => {
+    if (n.nodeType !== Node.DOCUMENT_FRAGMENT_NODE) return [n,n];
+    if (n.hasChildNodes()) return [n.firstChild!, n.lastChild!];
+    const placeholder = new Comment("[jshtml::placeholder]");
+    return [placeholder, placeholder];
+};
+
 const nodeFactory = {
     "node": ({source}:JSHTMLNodeRuntime<Node>) => source.nodeName === "TEMPLATE" ? (source as HTMLTemplateElement).content.cloneNode(true) : source,
     "promise": ({source}:JSHTMLNodeRuntime<Promise<JSHTMLNodeSource>>) => new PromisedElement(source),
     "prop": ({source,build}:JSHTMLNodeRuntime<Prop<JSHTMLNodeSource>>) => {
-        let n = build(source());
-        let p: [Node,Node];
-        if(n.nodeType !== n.DOCUMENT_FRAGMENT_NODE) {
-            p = [n,n];
-        }
-        else if(n.hasChildNodes()) {
-            p = [n.firstChild!,n.lastChild!];
-        }
-        else { // 子要素のないDocumentFragmentはプレースホルダーとみなす
-            n = new Comment("[jshtml::placeholder]");
-            p = [n,n];
-        }
+        const n = build(source());
+        const p = ensureNodePair(n);
         bindRecord(source, new RangePropBridge(source, p));
-        return n;
+        return !n.hasChildNodes() && n.nodeType === Node.DOCUMENT_FRAGMENT_NODE ? p[0] : n;
     },
     "array": ({source,build}:JSHTMLNodeRuntime<JSHTMLNodeSource[]>) => { const df = new DocumentFragment(); df.append(...source.map(build)); return df; },
     "nullable": (_:JSHTMLNodeRuntime<null|undefined>) => new Comment("jshtml:nullable"),
@@ -461,7 +458,7 @@ const nodeFactory = {
     "element": (runtime:JSHTMLNodeRuntime<JSHTMLElementSource>) => {
         const {source,build,context} = runtime;
         const [tag,children,attributes] = extractElementSource(source);
-        const elmClass = customElements.get(tag)!;
+        const elmClass = customElements.get(tag);
         const elm = document.createElement(tag);
         if(attributes) {
             const customElementAttrHandler = elmClass && JSHTML_ATTR_HANDLER in elmClass
