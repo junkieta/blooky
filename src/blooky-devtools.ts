@@ -1,5 +1,5 @@
-import { jshtml } from "./blooky-dom";
-import { isChainedProp, isDripperStream, isStream, isVertex, vertex } from "./blooky-fp";
+import { jshtml, prime as defaultPrime } from "./blooky-dom";
+import { isChainedProp, isDripperStream, isStream, isVertex, stream, vertex } from "./blooky-fp";
 import { EffectElementTagNameMap as DefaultEffectElementTagNameMap, EffectElement, FxEffectElement as ConcreteEffectElementConstructor, fxdom } from "./blooky-fxdom";
 import { FxNode, FxMiddleware, ExecContext } from "./fx/types";
 
@@ -202,6 +202,7 @@ export {fxdom,EffectElementTagNameMap,debugMiddleware};
 // svg用のスタイル
 import "./blooky-devtools.css";
 import { DripperStream, DripEffect, MergedStream, Prop, Stream, Vertex } from "./blooky-types";
+import { JSHTMLNodeSource } from "./blooky-dom-types";
 
 // グラフ描画
 function dumpGraphDOT(entries: Record<string, Stream<any> | Prop<any> | unknown>, graphAttrs: Record<string,string> = { rankdir: "LR" }): string {
@@ -241,7 +242,7 @@ function dumpGraphDOT(entries: Record<string, Stream<any> | Prop<any> | unknown>
       let valueLabel: string;
       switch(typeof value) {
         case "symbol": valueLabel = "symbol(" + value.description + ")"; break;
-        case "string": valueLabel = `\\"${value.replace('"','\\"')}\\"`; break;
+        case "string": valueLabel = `\\"${value.replaceAll('"','\\"')}\\"`; break;
         default: valueLabel = value + ""; break;
       }
       const id = addNode(label + "|" + valueLabel, { 
