@@ -284,7 +284,7 @@ const api = {
 
 // フロー定義
 const userFlow = fx.sequence([
-  fx.call(ref("api.fetchUser"), { arg: 123 }),
+  fx.call(ref("api.fetchUser"), { arg: 123, id: "step1" }),
   fx.call(ref("log"), { arg: ref("#step1") }), // 前のステップの結果を参照
   fx.call(ref("api.saveUser"), { arg: ref("#step1") })
 ]);
@@ -390,14 +390,14 @@ import { stream } from 'blooky-fp';
 fxdom.defineEffectElements();
 
 // データ取得の副作用をHTMLで定義
-const DataFetcher = prime(({ fetch$, $data, $loading }) => ({
+const DataFetcher = prime(({ fetch$, $data, $fetchStart, $loading }) => ({
   div: [
     { button: "Fetch Data", $: { onclick: fetch$ } },
     { p: $loading ? "Loading..." : ["Data: ", $data] },
     {
       "fx-effect": {
         "fx-sequence": [
-          { "fx-wait": jshtml.$({ until: fetch$ }) },
+          { "fx-wait": jshtml.$({ until: $fetchStart }) },
           { "fx-call": "setLoading", $: { arg: true } },
           { "fx-call": "fetchData", $: { id: "result" } },
           { "fx-call": "setData", $: { arg: "#result" } },

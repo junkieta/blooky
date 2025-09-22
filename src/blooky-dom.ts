@@ -323,16 +323,17 @@ const updateAttr = <V>(runtime: JSHTMLAttrRuntime<V>) => {
     if(value == null)
         target.removeAttribute(name);
     else if(typeof jshtmlAttrHandler[name as keyof typeof jshtmlAttrHandler] === "function")
-        jshtmlAttrHandler[name as keyof typeof jshtmlAttrHandler](runtime as any);
+        jshtmlAttrHandler[name as keyof typeof jshtmlAttrHandler](runtime as JSHTMLAttrRuntime<any>);
     else if(name in ATTRIBUTE_HANDLER_RREGISTRY && ATTRIBUTE_HANDLER_RREGISTRY[name](runtime) === false)
         return;
-    if(typeof value === "boolean")
+    else if(typeof value === "boolean")
         target.toggleAttribute(name, value);
     else if(/^on/.test(name))
         genListenerSetter(value as V_EVENTLISTENER, name)(target);
     else if(!(value instanceof Object))
         target.setAttribute(name, value + "");
     else {
+        console.log(value,name,target);
         console.warn(`Unknown attribute value for "${name}":`, value);
         target.setAttribute(name, String(value)); // フォールバック
     }

@@ -1,7 +1,8 @@
 import { nodeDefinitionMap } from "./fx/nodes";
-import { blooky, Prop } from "./blooky-fp";
+import { blooky } from "./blooky-fp";
 import { FxNode, AppContext, CancelToken, ExecContext, FxExecutionContext, ExecutionHandle, PreparedFx, FxFactoryMap } from "./fx/types";
 import { RETURN_VALUE } from "./fx/nodes/return";
+import { Prop } from "./blooky-types";
 
 // 参照オブジェクトの型を定義（ブランド化して、他のオブジェクトと区別する）
 const FxRefSymbol = Symbol("FxRef");
@@ -136,7 +137,7 @@ async function _internal_execute(
   while (!result.done) {
     node = result.value;
     if(cancelToken.cancelled()) {
-      generator.throw("canceled");
+      generator.throw(FxCancelAsThrowable);
       break;
     }
     try {
@@ -162,16 +163,40 @@ async function _internal_execute(
           : undefined;
       };
       nextValue = await runNextMiddleware(0);
+    } catch (err) {
+      let catcher: any = (node as any).catcher;
 
-    } catch(err) {
-      let catcher = (node as any).catcher;
-      if(typeof catcher !== "function" && catcher) catcher = this.resolve(catcher);
-      if(typeof catcher === 'function') {
-        // ハンドラに処理を移譲
-        console.warn(`[fx-effect] Action failed, but was handled by context.`, catcher);
-        nextValue = await catcher(err); // ハンドラの戻り値を、成功時の値としてフローに復帰させる
+      // 1) 直接関数が指定されている場合はそのまま使う（最も簡潔）
+      // 2) それ以外（FxRefなど）は execContext.resolve を通して解決する（戻りは Prop である可能性がある）
+      if (typeof catcher !== "function" && catcher) {
+        catcher = this.resolve(catcher); // ※ this.resolve は既存実装のまま（Prop or function を返す）
+      }
+
+      // `catcher`について:
+      //  - a direct handler function (callable with (err) => ...), or
+      //  - a Prop-like getter function (callable with no args, possibly async) that returns either:
+      //      * a handler function (callable with (err) => ...), or
+      //      * a plain value to use as the nextValue.
+      if (typeof catcher === "function") {
+        try {
+          // If catcher is a Prop/getter (0-arity), call it to get the resolved value.
+          // If it's a handler function already expecting the error, it will be called in the next step.
+          const maybeResolved = await (catcher.length === 0 ? catcher() : catcher);
+          // If the resolved value is a function, treat it as the real handler: call it with the error.
+          if (typeof maybeResolved === "function") {
+            console.warn(`[fx-effect] Action failed, but was handled by context.`, maybeResolved);
+            nextValue = await maybeResolved(err);
+          } else {
+            // Resolved to non-function: treat it as recovery value and resume flow with it.
+            console.warn(`[fx-effect] Action failed, recovered with context-provided value.`, maybeResolved);
+            nextValue = maybeResolved;
+          }
+        } catch (handlerErr) {
+          // If invoking the catcher itself failed, propagate original or handler error per policy.
+          console.error(`[fx-effect] Error while invoking catcher:`, handlerErr);
+          throw handlerErr;
+        }
       } else {
-        // ハンドラが見つからない場合は、エラーを再スローしてフローを停止
         console.error(`[fx-effect] Unhandled error: Catch handler not found in context.`);
         throw err;
       }
@@ -181,12 +206,15 @@ async function _internal_execute(
     if (node.id && ("#" + node.id) in ctx.appContext) {
       ctx.appContext["#" + node.id] = nextValue;
     }
-
+    
     await yieldToMainThread();
     result = generator.next(nextValue);
   }
   return ctx.appContext;
 }
+
+// ステップをCANCELする。
+const FxCancelAsThrowable = Symbol("FX_CANCEL");
 
 // ランナー。nodeを辿るジェネレータを返す
 function* run(
@@ -201,14 +229,14 @@ function* run(
     yield* definition.step(ctx);
     this.onNodeExit?.(node);
   } catch(err) {
+    // キャンセルシンボルがスローされた場合は、resultとして"canceled"を渡す
+    if(err === FxCancelAsThrowable) {
+      this.onNodeExit?.(node, "canceled");
+    }
     // エラーで完了した場合、onNodeExit フックにエラー情報を渡す
-    if(err instanceof Error) {
+    else if(err instanceof Error) {
       this.onNodeExit?.(node, undefined, err);
       throw err; // エラーは再スローする
-    }
-    else if(err === "canceled"){
-      this.onNodeExit?.(node, err);
-      throw err;
     }
   }
 }

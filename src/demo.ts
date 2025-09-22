@@ -1,10 +1,11 @@
 // -- 0. 事前ロード ---
-import { stream, accum, merge, hold, map, remap, when, lift, Prop, pipe, DripperStream, PromisedProp } from "./blooky-fp";
+import { stream, accum, merge, hold, map, remap, when, lift, Prop, pipe, PromisedProp } from "./blooky-fp";
 import { jshtml, prime } from "./blooky-dom";
 import { fxdom,EffectElementTagNameMap, dumpGraphDOT } from "./blooky-devtools";
 // dot視覚化用にviz
 import { instance as viz_instance } from "@viz-js/viz";
 import { JSHTMLNodeSource } from "./blooky-dom-types";
+import { DripperStream } from "./blooky-types";
 
 // debuggerとしてdefine
 fxdom.defineEffectElements(EffectElementTagNameMap);
@@ -17,7 +18,7 @@ const save$ = stream();
 const $triggerSave = hold(false)(map(()=>true)(save$));
 
 const statusMessageStream$ = stream<string>();
-const changeCountStream = merge<number>((a,b)=>a+b)([map(() => 1)(increment$), map(() => -1)(decrement$)]);
+const changeCountStream = merge([map(() => 1)(increment$), map(() => -1)(decrement$)],((a,b)=>a+b));
 const $count = accum((current: number, val: number) => current + val, 0)(changeCountStream);
 const $statusMessage = hold('Ready.')(statusMessageStream$);
 const $finalMessage = remap<string,number>((v) => `Saved Count:${v}`)($count);

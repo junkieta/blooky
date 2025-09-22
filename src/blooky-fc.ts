@@ -70,7 +70,7 @@ function build<T extends object>(
   spec: Blueprint<T>,
   options: {
     parent?: object
-    contract?: { [key: string]: (value: any) => boolean }
+    contract?: { [key in keyof T]: (value: any) => boolean }
   } = {}
 ): Readonly<T> {
   // 仕様書（contract）が渡されていれば、検証を実行
@@ -89,7 +89,7 @@ function build<T extends object>(
       // c) 型の整合性チェック
       const validator = contract[key];
       // `value`か`get`を持つディスクリプタのみを対象とする
-      const isValid = "get" in descriptor
+      const isValid = descriptor.get
           ? validator(descriptor.get())
           : "value" in descriptor
           ? validator(descriptor.value)
@@ -98,7 +98,7 @@ function build<T extends object>(
           throw new TypeError(`Context build failed: The type of "${key}" is incorrect.`);
     }
   }
-  return Object.freeze(Object.create("parent" in options ? options.parent || null : Object.prototype, spec));
+  return Object.create("parent" in options ? options.parent || null : Object.prototype, spec);
 }
 
 /**

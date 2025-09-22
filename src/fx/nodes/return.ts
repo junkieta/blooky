@@ -11,17 +11,15 @@ export class ReturnNodeDefinition extends NodeDefinition<'return'> {
     return { type: 'return', value };
   }
 
-  public handle({node,context,appContext}: FxExecutionContext & { node: ThisNode }) {
+  public async handle({node,context,appContext}: FxExecutionContext & { node: ThisNode }) {
     if(!(RETURN_VALUE in appContext)) 
       throw blooky.error('flow', {
         code: 'INVALID_RETURN_CONTEXT',
         message: 'fx-return: This node must be called within a flow initiated by fx-yield',
-        details: {
-          requiredContext: 'fx-yield initiated flow',
-          suggestions: ['Use fx-return only within fx-yield target flows']
-        }
+        requiredContext: 'fx-yield initiated flow',
+        suggestions: ['Use fx-return only within fx-yield target flows']
       });
-    const value = context.resolve(node.value)();
+    const value = await context.resolve(node.value)();
     appContext[RETURN_VALUE](value);
     context.cancelToken.cancel();
     return value;

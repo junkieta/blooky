@@ -1,5 +1,5 @@
-import { DripperStream, type Prop, type Stream } from "./blooky-fp";
 import { jshtml, JSHTML_ATTR_HANDLER, JSHTML_ELEMENT_HANDLER, JSHTMLAttrRuntime, JSHTMLNodeRuntime } from "./blooky-dom";
+import { blooky } from "./blooky-fp";
 import { 
   prepare, 
   execute, 
@@ -7,6 +7,7 @@ import {
   ref,
   FxRef
 } from "./blooky-fx";
+import { DripperStream } from "./blooky-types";
 import { FxNode, ExecContext, PreparedFx, ExecutionHandle, AppContext } from "./fx/types";
 
 // ---- Abstract Base ----
@@ -146,11 +147,18 @@ class FxIncludeElement extends EffectElement { // FxFlowからFxIncludeにリネ
       return;
     }
 
+    const useCache = this.getAttribute("cache") !== "no";
+
     let template = FLOW_TEMPLATE_CACHE.get(src);
-    if (!template) {
+    if (!template || !useCache) {
       try {
         const response = await fetch(src, { headers: { Accept: "application/json" } });
-        if (!response.ok) throw new Error(`Fetch failed: ${response.statusText}`);
+        if (!response.ok) throw blooky.error("user", {
+          code: "FETCH_FAILED_ERROR",
+          message: `Fetch failed:"${response.url}"`,
+          element: this,
+          originalError: new Error(response.statusText)
+        });
         template = jshtml({ template: await response.json() }) as HTMLTemplateElement;
         FLOW_TEMPLATE_CACHE.set(src, template);
       } catch (error) {
@@ -252,7 +260,7 @@ class FxCollapseElement extends EffectElement {
     try {
       data = JSON.parse(raw);
     } catch(err) {
-      data = raw;
+      data = raw.length ? raw : undefined;
     }
     return fx.collapse(data, ref<DripperStream<any>>(streamKey));
   }
@@ -272,7 +280,7 @@ class FxYieldElement extends EffectElement {
     if(this.hasAttribute("value")) {
       value = ref(this.getAttribute("value")!);
     } else if(/\S/.test(this.textContent)) {
-      value = JSON.parse(this.textContent.trim());
+      value = () => JSON.parse(this.textContent.trim());
     }
     return fx.yield({ for: ref<string>(forAttr), value, id });
   }
@@ -355,12 +363,43 @@ class FxEffectElement extends FxContextElement {
     if(context) this.setContext(context);
   }
 
+  prepare(force = false) {
+    if (!force && this._preparedFx) return this._preparedFx;
+    return this._preparedFx = prepare(this.toFxNode(), this.context, this._execContext);
+  }
+
+  execute() {
+    if(this._handle) this._handle.cancel();
+    this._handle = execute(this._preparedFx || this.prepare());
+    return this._handle;
+  }
+
   connectedCallback() {
-    // 1. prepare: 接続時に一度だけフローを準備（コンパイル）する
-    const flow = this.toFxNode();
-    this._preparedFx = prepare(flow, this.context, this._execContext);
-    // 2. execute: 準備したフローを実行
-    this._handle = execute(this._preparedFx);
+    this.prepare();
+    if(!this.hasAttribute("ignite"))
+      this.execute();
+    else switch(this.getAttribute("ignite")) {
+
+      case "none":
+        break;
+
+      case "quantum":
+        queueMicrotask(this.execute.bind(this));
+        break;
+
+      case "visual":
+        requestAnimationFrame(this.execute.bind(this));
+        break;
+
+      case "sequential":
+        setTimeout(this.execute.bind(this));
+        break;
+
+      case "immediate":
+      default:
+        this.execute();
+        break;
+    }
   }
 
   disconnectedCallback() {
