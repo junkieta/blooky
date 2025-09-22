@@ -271,7 +271,7 @@ function dumpGraphDOT(entries: Record<string, Stream<any> | Prop<any> | unknown>
     const id = addNode(label, nodeAttr);
     visited.set(obj, id);
 
-    const next = obj.next;
+    const next = [...obj.next??[],...obj.lazyNext??[]];
     if (next) edges.push(...next.map((target)=>{
       const targetLabel = names.get(target) || "Stream";
       const targetId = visit(target, targetLabel);
