@@ -377,7 +377,7 @@ class FxEffectElement extends FxContextElement {
   connectedCallback() {
     this.prepare();
     if(!this.hasAttribute("ignite"))
-      this.execute();
+      queueMicrotask(this.execute.bind(this)); // idRecordの完成を待てるように、immediateにはしない
     else switch(this.getAttribute("ignite")) {
 
       case "none":
@@ -396,7 +396,11 @@ class FxEffectElement extends FxContextElement {
         break;
 
       case "immediate":
+        this.execute();
+        break;
+
       default:
+        console.warn(`unknown ignite attr value: "${this.getAttribute("ignite")}"`);
         this.execute();
         break;
     }
