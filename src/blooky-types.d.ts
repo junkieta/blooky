@@ -17,6 +17,11 @@ type DripStrategy =
   | { type: 'immediate' }  // デフォルト：即座実行
   | { type: 'debounce', delay: number }
   | { type: 'throttle', interval: number };
+// DripStrategyのシンタックスシュガー
+type ShortDripStrategy = 
+  | { immediate: true }  
+  | { debounce: number }
+  | { throttle: number };
 
 type DripperStream<A> = StreamBase<A, {
     dripStrategy: DripStrategy
@@ -138,7 +143,7 @@ type BlookyError<T extends keyof BlookyErrorCauseMap> = Error & {
 
 export {
   Stream,Prop,DripperStream,FilterStream,MappedStream,MergedStream,Vertex,
-  DripStrategy,DripEffect,PropEffect,DripResult,
+  DripStrategy,ShortDripStrategy,DripEffect,PropEffect,DripResult,
   FlowingState,StreamBase,
   CollapseReservation,
   BlookyError,BlookyErrorCauseMap,
