@@ -423,7 +423,7 @@ const lift = <A>(f: (values: any[]) => A) => (props: Prop<any>[]) : Prop<A> => {
   const valueFn = () => f(props.map(p => p()));
   // Streamを持っているPropだけを集める
   const streams = props.flatMap((p, i) => PROP_FROM.has(p) ? map((v) => [[i, v]] as reservation[])(PROP_FROM.get(p)!) : []);
-  const mergedStream = merge(streams, (a, b) => a.concat(b));
+  const mergedStream = merge<[number,Stream<any>][]>(streams, (a, b) => a.concat(b));
   const transformed = map((updates: reservation[]) => {
     const map = new Map(updates);
     return f(props.map((p, i) => map.has(i) ? map.get(i)! : p()));
@@ -515,6 +515,7 @@ function proxy<T, K extends keyof T>(obj: T, key: K): [DripperStream<T[K]>, Prop
   PROP_UPDATE.set(getter, setter);
   const dripper = stream<T[K]>();
   PROP_FROM.set(getter, dripper);
+  STREAM_PROP_RELATIONS.set(dripper, [getter]);
   return [dripper, getter];
 }
 
@@ -533,7 +534,7 @@ const ThrottleRecord = new WeakMap<DripperStream<any>, number>();
 const RESERVATIONS : CollapseReservation[] = [];
 // effectの実行スケジュールを組む。
 // dripのstrategyで実行タイミングを調節し、実行処理はtickに投げる
-const collapse = async (effect:DripEffect) => new Promise((resolve, reject) => {
+const collapse = async (effect:DripEffect) => new Promise<number>((resolve, reject) => {
     const enqueue = () => {
         if (!RESERVATIONS.length) queueMicrotask(()=>tick(performance.now()));
         RESERVATIONS.push({ effect, resolve, reject });
@@ -646,7 +647,7 @@ function tick(now: number) {
             ? callHandlers(fn)(handlers)
             : [];
     });
-    Promise.allSettled(promises).then(()=>{
+    Promise.allSettled(promises).then((r)=>{
         // エラーがあればthrown observerに送信
         if (errors.length && tickHandlers.thrown.size) {
             const errorEffects = errors.map(error => drip(error)(blooky.errorStream[error.category]));
