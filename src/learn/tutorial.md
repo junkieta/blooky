@@ -22,19 +22,19 @@
 import { stream, hold, drip, collapse } from 'blooky-fp';
 
 // Streamの作成 - イベントの流れ
-const click$ = stream();
+const number$ = stream();
 
 // Propの作成 - 現在の値を保持
-const $counter = hold(0)(click$);
+const $counter = hold(0)(number$);
 
 // 値を確認
 console.log($counter()); // 0
 
 // イベントを流す
-await collapse(drip(1)(click$));
+await collapse(drip(1)(number$));
 console.log($counter()); // 1
 
-await collapse(drip(5)(click$));
+await collapse(drip(5)(number$));
 console.log($counter()); // 5
 ```
 
@@ -44,7 +44,7 @@ console.log($counter()); // 5
 import { stream, map, filter, hold, drip, collapse } from 'blooky-fp';
 
 // 数値のStream
-const number$ = stream();
+const number$ = stream<number>();
 
 // 偶数だけをフィルタリング
 const even$ = filter((n: number) => n % 2 === 0)(number$);
@@ -69,15 +69,16 @@ console.log($result()); // 8
 import { stream, merge, accum, drip, collapse } from 'blooky-fp';
 
 // 加算と減算のStream
-const increment$ = stream();
-const decrement$ = stream();
+const increment$ = stream<null>();
+const decrement$ = stream<null>();
 
-// マージして累積
-const counter$ = merge<number>((a, b) => a + b)([
-  map(() => 1)(increment$),
+// 二つのストリームをマージ
+const counter$ = merge<number>([
+  map(() =>  1)(increment$),
   map(() => -1)(decrement$)
 ]);
 
+// 累計を保持する
 const $total = accum((sum, val) => sum + val, 0)(counter$);
 
 // 操作
@@ -93,10 +94,10 @@ console.log($total()); // 1
 import { stream, clock, drip, collapse } from 'blooky-fp';
 
 // throttleストラテジーを使用
-const throttled$ = stream({ type: 'throttle', interval: 100 });
+const throttled$ = stream({ throttle: 100 });
 
 // debounceストラテジーを使用
-const debounced$ = stream({ type: 'debounce', delay: 300 });
+const debounced$ = stream({ debounce: 300 });
 
 // 現在時刻を取得
 console.log('Current time:', clock());
@@ -153,7 +154,7 @@ import { stream, hold, map, drip, collapse } from 'blooky-fp';
 import { jshtml } from 'blooky-dom';
 
 // リアクティブな状態
-const input$ = stream();
+const input$ = stream<string>();
 const $text = hold("")(input$);
 const $length = remap((text: string) => text.length)($text);
 
@@ -222,14 +223,17 @@ import { stream, hold, map } from 'blooky-fp';
 import { jshtml, prime } from 'blooky-dom';
 
 const toggle$ = stream();
-const $isVisible = hold(false)(map(() => !$isVisible())(toggle$));
+const $isVisible = accum((visible)=>!visible, false)(toggle$);
+const $message = 
+  remap((visible) => visible
+    ? "Now you see me!"
+    : "Hidden content" 
+  )($isVisible);
 
 const ConditionalUI = prime(({ $isVisible, toggle$ }) => ({
   div: [
     { button: "Toggle", $: { onclick: toggle$ } },
-    remap((visible) => visible
-      ? { p: "Now you see me!" }
-      : { p: "Hidden content" })($isVisible)
+    { p: $message }
   ]
 }));
 
@@ -307,7 +311,7 @@ import { fx, ref } from 'blooky-fx';
 import { stream, hold } from 'blooky-fp';
 
 // 状態
-const $isLoggedIn = hold(false)(stream());
+const $isLoggedIn = hold(false)(stream<boolean>());
 
 // エラーハンドラ
 const handleError = (error: Error) => {
@@ -639,10 +643,7 @@ const DebugDashboard = prime((context) => ({
   }
 }));
 
-// 開発環境でのみ表示
-if (process.env.NODE_ENV === 'development') {
-  document.body.append(DebugDashboard(debugContext));
-}
+document.body.append(DebugDashboard(debugContext));
 ```
 
 ### 💡 学んだこと
