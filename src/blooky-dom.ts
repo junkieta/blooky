@@ -3,16 +3,16 @@
  * blookyを用いてリアクティブなDOMを構築するライブラリ。
  * 簡易な仕様でDOMを構築しつつ、Streamを利用した更新管理も行う。
  */
-import type { V_DATASET, V_STYLE, V_CLASSLIST, V_EVENTLISTENER, V_STRING, WritableCSSProperty, JSHTMLElementSource, JSHTMLAttrSource, JSHTMLNodeSource, JSHTMLAttributeMapSource, JSHTMLAttrRuntime, JSHTMLNodeRuntime, JSHTMLNodeSourceType, JSHTMLExtractedElementSource } from "./blooky-dom-types";
+import type { V_DATASET, V_STYLE, V_CLASSLIST, V_EVENTLISTENER, V_STRING, WritableCSSProperty, JSHTMLElementSource, JSHTMLAttrSource, JSHTMLNodeSource, JSHTMLAttributeMapSource, JSHTMLAttrRuntime, JSHTMLNodeRuntime, JSHTMLNodeSourceType, JSHTMLExtractedElementSource, JSHTMLNodeFactory, JSHTMLNodeSourceAnalyzer, BlookyMutationEvent } from "./blooky-dom-types";
 import { registerTickHandler, isDripperStream, drip, collapse, isChainedProp, blooky, stream } from "./blooky-fp";
-import { Prop, DripperStream, Stream } from "./blooky-types";
+import { Prop, DripperStream, Stream, BlookyError } from "./blooky-types";
 
 // DOMをfpのtickに結び付ける
 registerTickHandler("visual", (effects) => {
     const update_target = effects.flatMap((e) => [...e.effects.keys()].flatMap((p)=>PROP_BRIDGE_RECORD.has(p) ? PROP_BRIDGE_RECORD.get(p)! : []));
-
     // ツリーから外れたものと、更新の発生したPropに包含されているPropはbindから外す
     const isGCTarget = (a:PropBridge) => !a.isConnected() || update_target.some((b)=>b.contains(a)&&a!==b);
+    // メモリ解放
     PROP_BRIDGE_RECORD.forEach((bridge,prop)=>{
         if(!Array.isArray(bridge)) {
             if(isGCTarget(bridge))
@@ -25,6 +25,7 @@ registerTickHandler("visual", (effects) => {
                 PROP_BRIDGE_RECORD.set(prop, filtered);
         }
     });
+    // メモリに確保されているbridgeからアップデートする
     effects.forEach((e)=>e.effects.forEach((v,p)=>{
         if(!PROP_BRIDGE_RECORD.has(p)) return;
         const prev = p() as any;
@@ -44,9 +45,10 @@ type PropBridgeInterface<A> = {
 
 type PropBridge = (RangePropBridge | AttrPropBridge | StylePropBridge);
 
-// 最適化用に共用型
-const PROP_BRIDGE_RECORD = new Map<Prop<any>, PropBridge|PropBridge[]>();
-const bindRecord = (p:Prop<any>, b:PropBridge) => {
+
+const PROP_BRIDGE_RECORD = new Map<Prop<any>, PropBridge|PropBridge[]>();// 最適化用に共用型
+const bindPropBridge = (b:PropBridge) => {
+    const p = b.prop;
     if(!PROP_BRIDGE_RECORD.has(p)) {
         PROP_BRIDGE_RECORD.set(p, b);
     } else {
@@ -90,22 +92,28 @@ class RangePropBridge implements PropBridgeInterface<JSHTMLNodeSource> {
         // 通知イベント用に確保
         const previous : Node[] = this.target;
         const n = jshtml(v);
-        const [_a,_b] = ensureNodePair(n);
+        // 生成したノードを境界のアンカー用ペアとして変数に保存
+        let a: Node, b: Node;
+        if(n.nodeType !== Node.DOCUMENT_FRAGMENT_NODE)
+            a = b = n;
+        else if(!n.hasChildNodes())
+            a = b = n.appendChild(new Comment("[jshtml-placeholder]"));
+        else
+            a = n.firstChild!, b = n.lastChild!;
+        
         if(this.isSingleNode()) {
             previous[0].parentNode?.replaceChild(n, previous[0])
         } else {
             const r = this.toRange();
             r.insertNode(n);
-            r.setStartAfter(_b);
+            r.setStartAfter(b);
             r.deleteContents();
+            r.detach();
         }
-        this.target = [_a,_b];
+        this.target = [a,b];
         
-        const prevValue = new DocumentFragment();
-        prevValue.append(...previous);
-
-        const target = _a === _b ? _a : _a.parentNode!;
-        target.dispatchEvent(new CustomEvent("node-prop-update", { detail: { prop: this.prop, prevValue } }));
+        const dispather = a === b ? a : a.parentNode!;
+        dispather.dispatchEvent(new CustomEvent("node-prop-update", { detail: { prop: this.prop, nextValue: this.target, prevValue: previous } }));
         return true;
     }
     isConnected() {
@@ -139,7 +147,7 @@ abstract class AbstractAttrPropBridge<A> implements PropBridgeInterface<A> {
     contains(p: PropBridge): boolean {
         return false; // 属性は特殊な例を除いて他のbridgeを包含しない
     }
-    protected dispatchModifiedEvent(type: string, next:A, prev:A) {
+    protected dispatchPropUpdateEvent(type: string, next:A, prev:A) {
         this.target.dispatchEvent(new CustomEvent(type, {
             detail: {
                 prop: this.prop,
@@ -161,11 +169,11 @@ class AttrPropBridge extends AbstractAttrPropBridge<JSHTMLAttrSource> {
             delete this.generatedListener;
         }
         if(isDripperStream(next))
-            next = this.generatedListener = createTracableListener(next);
+            next = this.generatedListener = listenerForCollapse(next);
         else if(name.startsWith("on"))
             this.generatedListener = next as EventListenerOrEventListenerObject;
         updateAttr({ name, target, value: next });
-        this.dispatchModifiedEvent("attr-prop-modified", next, prev);
+        this.dispatchPropUpdateEvent("attr-prop-update", next, prev);
     }
     contains(p: PropBridge) {
         // 属性の詳細Bridgeでなければアウト
@@ -182,7 +190,7 @@ class StylePropBridge extends AbstractAttrPropBridge<V_STRING> {
     update(v: V_STRING, prev: V_STRING) {
         if(v === prev) return;
         setCSSProperty(this.name, v != null ? v + "" : "")(this.target.style);
-        this.dispatchModifiedEvent("style-prop-update", v, prev);
+        this.dispatchPropUpdateEvent("style-prop-update", v, prev);
     }
 }
 
@@ -190,22 +198,43 @@ class DatasetPropBridge extends AbstractAttrPropBridge<V_STRING> {
     update(v: V_STRING, prev: V_STRING) {
         if(v === prev) return;
         this.target.dataset[this.name] = v == null ? "" : v+"";
-        this.dispatchModifiedEvent("dataset-prop-update",v,prev);
+        this.dispatchPropUpdateEvent("dataset-prop-update",v,prev);
     }
 }
 
-// PROPの観測。イベントリスナーとして登録する想定。
-// ex) onclick: collapse(eventDripperStream)
-const createTracableListener = <A>(d: DripperStream<A>) => (v: A) => {
-    const dripEffect = drip(v)(d);
-    if(v instanceof Event) {
-        const collapseEvt = new CustomEvent("blooky-collapse", {
-            cancelable: true,
-            detail: dripEffect
-        });
-        if(!v.target?.dispatchEvent(collapseEvt)) return;
+// PROPの観測。イベントリスナーとして登録し、collapseの実行とDOMイベントを接続する。
+const listenerForCollapse = <A extends Event>(d: DripperStream<A>) => (v: A) => {
+    const target = v.currentTarget || v.target;
+    if (!target) {
+        console.warn('listenerForCollapse: no target available');
+        return;
     }
-    collapse(dripEffect);
+    const dripEffect = drip(v)(d);
+    if(target.dispatchEvent(new CustomEvent("blooky-collapse-start", {
+        cancelable: true,
+        bubbles: true,
+        detail: dripEffect
+    }))) {
+        collapse(dripEffect)
+            .then((resolved)=>{
+                target.dispatchEvent(new CustomEvent("blooky-collapse-completed", {
+                    bubbles: true,
+                    detail: Object.assign({resolved},dripEffect)
+                }))
+            })
+            .catch((rejected: BlookyError<any>[])=>{
+                target.dispatchEvent(new CustomEvent("blooky-collapse-failed", {
+                    bubbles: true,
+                    detail: Object.assign({rejected},dripEffect)
+                }))
+            })
+    } else {
+        // キャンセルされた場合の通知
+        target.dispatchEvent(new CustomEvent("blooky-collapse-cancelled", {
+            bubbles: true,
+            detail: dripEffect
+        }));
+    }
 }
 
 
@@ -215,61 +244,19 @@ const createTracableListener = <A>(d: DripperStream<A>) => (v: A) => {
 class JSHTMLUnknownElement extends HTMLElement {}
 customElements.define("jshtml-unknown", JSHTMLUnknownElement);
 
-// class属性の設定用関数を生成する
-const genClassNameSetter = (v:V_CLASSLIST|V_STRING) :(e:Element)=>void => 
-    v == null
-    ? (e:Element) => e.removeAttribute("class")
-    : Array.isArray(v)
-    ? (e:Element) => e.className = v.filter(Boolean).join(" ")
-    : (e:Element) => e.className = typeof v === "object"
-        ? Object.keys(v).filter((k)=>v[k]).join(" ")
-        : v + "";
-
-// datasetの設定用関数を生成する
-const genDatasetSetter =
-    (v:V_DATASET|null) =>
-        v == null
-        ? (e:HTMLElement) => Object.keys(e.dataset).forEach((k)=> delete e.dataset[k])
-        : (e:HTMLElement) => {
-            Object.keys(e.dataset).filter((k)=>!(k in v)).forEach((k)=>delete e.dataset[k]);
-            Object.entries(v).forEach(([k,v]) => {
-                if(isChainedProp<V_STRING>(v)) {
-                    bindRecord(v, new DatasetPropBridge(v,e,k));
-                    v = v();
-                }
-                e.dataset[k] = v != null ? v + "" : '';
-            });
-        }
-
-// インラインスタイルの設定用関数を生成する
-const genStyleSetter =
-    (v:V_STYLE) =>
-        v == null
-        ? (e:HTMLElement) => e.removeAttribute("style")
-        : (e:HTMLElement) => {
-            e.removeAttribute("style");
-            (Object.entries(v) as [WritableCSSProperty,V_STRING|Prop<V_STRING>][]).forEach(([k,v]) => {
-                if(isChainedProp(v)) {
-                    bindRecord(v, new StylePropBridge(v,e,k));
-                    v = v();
-                }
-                setCSSProperty(k,v != null ? v + "": "")(e.style);
-            })
-        }
-
+// cssvarへの対応
 const setCSSProperty = (n: WritableCSSProperty|string, v: string) => (d: CSSStyleDeclaration) => {
     if(n.startsWith("--"))
         d.setProperty(n, v);
    else
         d[n as WritableCSSProperty] = v;
 }
- 
 
 // イベントリスナーの設定用関数を生成する
-const genListenerSetter =
+const createEventListenerSetter =
     (v:V_EVENTLISTENER, n: string) => 
         isDripperStream(v)
-        ? (e:EventTarget) => e.addEventListener(n.slice(2), createTracableListener(v))
+        ? (e:EventTarget) => e.addEventListener(n.slice(2), listenerForCollapse(v))
         : v && (typeof v === "function" || typeof v.handleEvent === "function")
         ? (e:EventTarget) => e.addEventListener(n.slice(2), v as EventListener)
         : (e:Element) => e.setAttribute(n,v+"");
@@ -306,11 +293,47 @@ const defineAttrUpdateHandlers = (handlers: { [key:string]: (value: any, target:
     Object.assign(ATTRIBUTE_HANDLER_RREGISTRY, handlers);
 }
 
-
 const jshtmlAttrHandler = {
-    "classList": ({value,target}:JSHTMLAttrRuntime<V_CLASSLIST>) => genClassNameSetter(value)(target),
-    "dataset": ({value,target}:JSHTMLAttrRuntime<V_DATASET>) => genDatasetSetter(value)(target),
-    "style": ({value,target}:JSHTMLAttrRuntime<V_STYLE>) => genStyleSetter(value)(target),
+
+    "classList": ({value,target}:JSHTMLAttrRuntime<V_CLASSLIST>) => {
+        if(value == null)
+            target.removeAttribute("class");
+        else if(Array.isArray(value))
+            target.className = value.filter(Boolean).join(" ");
+        else
+            target.className = typeof value === "object"
+                ? Object.keys(value).filter((k)=>value[k]).join(" ")
+                : value + "";
+    },
+
+    "dataset": ({value,target}:JSHTMLAttrRuntime<V_DATASET>) => {
+        const dataset = target.dataset;
+        if(value == null)
+            Object.keys(dataset).forEach((k)=> delete dataset[k]);
+        else {
+            Object.keys(dataset).filter((k)=>!(k in value)).forEach((k)=>delete dataset[k]);
+            Object.entries(value).forEach(([k,v]) => {
+                if(isChainedProp<V_STRING>(v)) {
+                    bindPropBridge(new DatasetPropBridge(v,target,k));
+                    v = v();
+                }
+                dataset[k] = v != null ? v + "" : '';
+            });
+        }
+    },
+
+    "style": ({value,target}:JSHTMLAttrRuntime<V_STYLE>) => {
+        target.removeAttribute("style")
+        if(value == null) return;
+        (Object.entries(value) as [WritableCSSProperty,V_STRING|Prop<V_STRING>][]).forEach(([k,v]) => {
+            if(isChainedProp(v)) {
+                bindPropBridge(new StylePropBridge(v,target,k));
+                v = v();
+            }
+            setCSSProperty(k,v != null ? v + "": "")(target.style);
+        })
+    }
+    
 }
 
 /**
@@ -320,20 +343,19 @@ const jshtmlAttrHandler = {
  */
 const updateAttr = <V>(runtime: JSHTMLAttrRuntime<V>) => {
     const {value,name,target} = runtime;
-    if(value == null)
-        target.removeAttribute(name);
-    else if(typeof jshtmlAttrHandler[name as keyof typeof jshtmlAttrHandler] === "function")
-        jshtmlAttrHandler[name as keyof typeof jshtmlAttrHandler](runtime as JSHTMLAttrRuntime<any>);
+    if(typeof jshtmlAttrHandler[name as keyof typeof jshtmlAttrHandler] === "function")
+        return jshtmlAttrHandler[name as keyof typeof jshtmlAttrHandler](runtime as JSHTMLAttrRuntime<any>);
     else if(name in ATTRIBUTE_HANDLER_RREGISTRY && ATTRIBUTE_HANDLER_RREGISTRY[name](runtime) === false)
         return;
+    if(value == null)
+        target.removeAttribute(name);
     else if(typeof value === "boolean")
         target.toggleAttribute(name, value);
     else if(/^on/.test(name))
-        genListenerSetter(value as V_EVENTLISTENER, name)(target);
+        createEventListenerSetter(value as V_EVENTLISTENER, name)(target);
     else if(!(value instanceof Object))
         target.setAttribute(name, value + "");
     else {
-        console.log(value,name,target);
         console.warn(`Unknown attribute value for "${name}":`, value);
         target.setAttribute(name, String(value)); // フォールバック
     }
@@ -349,21 +371,21 @@ class PromisedElement extends HTMLElement {
         if(!this.promise) return;
         this.promise.then((n)=>{
             const node = n instanceof Node ? n : jshtml(n);
-            this.dispatchEvent(new CustomEvent("resolvepromise", {
+            this.dispatchEvent(new CustomEvent("promise-resolved", {
                 bubbles: true,
                 detail: { value: node }
             }));
             if(this.parentNode) this.parentNode.replaceChild(node, this);
         }).catch((error)=>{
-            if(this.dispatchEvent(new CustomEvent("rejectpromise", {
+            if(this.dispatchEvent(new CustomEvent("promise-rejected", {
                 cancelable: true,
                 bubbles: true,
                 detail: { error }
             }))) throw blooky.error("user", {
                 code: "REJECTTED_PROMISED_ELEMENT",
-                message: '"rejectpromise" event is not prevented',
+                message: '"promise-rejected" event is not prevented',
                 originalError: error,
-                suggestions: ['set "rejectpromise" listener and call "preventDefault"']
+                suggestions: ['set "promise-rejected" listener and call "preventDefault"']
             });
         });
     }
@@ -388,23 +410,23 @@ export class EmptyElementAttributeMapSource {
 
 /**
  * MutationObserverを介して、DOMの変異をイベントストリームに接続する。
- * @param n 
- * @returns 
  */
-const mutations = (init: MutationObserverInit) => (n: Node) : [Stream<MutationRecord[]>,()=>void] => {
-    const s = stream<MutationRecord[]>();
-    const o = new MutationObserver(createTracableListener(s));
+const mutations = (init: MutationObserverInit) => (n: Node) : Stream<BlookyMutationEvent> => {
+    const s = stream<BlookyMutationEvent>();
+    const l = listenerForCollapse(s);
+    const o = new MutationObserver((records, observer)=>{
+        if(n.dispatchEvent(new CustomEvent("blooky-observe-mutations", {
+            bubbles: true,
+            cancelable: true,
+            detail: { records, observer }
+        }))) return;
+        observer.disconnect();
+        n.removeEventListener("blooky-observe-mutations", l as EventListener);
+    });
+    n.addEventListener("blooky-observe-mutations", l as EventListener);
     o.observe(n, init);
-    return [s, o.disconnect.bind(o)];
+    return s;
 };
-
-// addEventListenerを介して、DOMイベントをイベントストリームに接続する。
-const events = <T extends string, E = T extends keyof HTMLElementEventMap ? HTMLElementEventMap[T] : Event>(t: T) => (target:EventTarget) : [Stream<E>,()=>void] => {
-    const s = stream<E>();
-    const l = createTracableListener(s) as EventListener;
-    target.addEventListener(t, l, false);
-    return [s, target.removeEventListener.bind(target,t,l,false)];
-}
 
 const JSHTML_ELEMENT_HANDLER = Symbol("JSHTML_ELEMENT_FACTORY");
 
@@ -426,7 +448,7 @@ function jshtml(this: object|void, source: JSHTMLNodeSource, context?: Record<st
 
 jshtml.$ = (attrs: JSHTMLAttributeMapSource) => new EmptyElementAttributeMapSource(attrs);
 
-const analyzeNodeSource = (s: JSHTMLNodeSource): JSHTMLNodeSourceType => {
+const analyzeNodeSource: JSHTMLNodeSourceAnalyzer = (s: JSHTMLNodeSource): JSHTMLNodeSourceType => {
     if(s instanceof Node) return "node";
     if(s instanceof Promise) return "promise";
     if(typeof s === "function") return "prop";
@@ -436,22 +458,21 @@ const analyzeNodeSource = (s: JSHTMLNodeSource): JSHTMLNodeSourceType => {
     return "element";
 }
 
-// ヘルパー: Node -> [first,last] を安全に返す
-const ensureNodePair = (n: Node): [Node, Node] => {
-    if (n.nodeType !== Node.DOCUMENT_FRAGMENT_NODE) return [n,n];
-    if (n.hasChildNodes()) return [n.firstChild!, n.lastChild!];
-    const placeholder = new Comment("[jshtml::placeholder]");
-    return [placeholder, placeholder];
-};
-
-const nodeFactory = {
+const nodeFactory: JSHTMLNodeFactory = {
     "node": ({source}:JSHTMLNodeRuntime<Node>) => source.nodeName === "TEMPLATE" ? (source as HTMLTemplateElement).content.cloneNode(true) : source,
     "promise": ({source}:JSHTMLNodeRuntime<Promise<JSHTMLNodeSource>>) => new PromisedElement(source),
     "prop": ({source,build}:JSHTMLNodeRuntime<Prop<JSHTMLNodeSource>>) => {
         const n = build(source());
-        const p = ensureNodePair(n);
-        bindRecord(source, new RangePropBridge(source, p));
-        return !n.hasChildNodes() && n.nodeType === Node.DOCUMENT_FRAGMENT_NODE ? p[0] : n;
+        let a: Node, b: Node;
+        if(n.nodeType !== Node.DOCUMENT_FRAGMENT_NODE) {
+            a = b = n;
+        } else if(!n.hasChildNodes()) {
+            a = b = n.appendChild(new Comment("[jshtml-placeholder]"));
+        } else {
+            a = n.firstChild!, b = n.lastChild!;
+        }
+        bindPropBridge(new RangePropBridge(source, [a,b]));
+        return n;
     },
     "array": ({source,build}:JSHTMLNodeRuntime<JSHTMLNodeSource[]>) => { const df = new DocumentFragment(); df.append(...source.map(build)); return df; },
     "nullable": (_:JSHTMLNodeRuntime<null|undefined>) => new Comment("jshtml:nullable"),
@@ -465,13 +486,13 @@ const nodeFactory = {
             const customElementAttrHandler = elmClass && JSHTML_ATTR_HANDLER in elmClass
                 ? elmClass[JSHTML_ATTR_HANDLER] as { [key:string]: (v:JSHTMLAttrRuntime<any>)=>boolean|void }
                 : {};
-            for(let name in attributes) {
-                let value = attributes[name];
+            for(const name in attributes) {
+                const value = attributes[name];
                 const runtime = { target: elm, name, value, context };
                 if(name in customElementAttrHandler && customElementAttrHandler[name](runtime) === false) 
                     continue; // ハンドラがfalseを返したら、後続の処理はしない
-                if(isChainedProp(value)) {
-                    bindRecord(value, new AttrPropBridge(value as Prop<JSHTMLAttrSource>, elm, name));
+                if(isChainedProp<JSHTMLAttrSource>(value)) {
+                    bindPropBridge(new AttrPropBridge(value, elm, name));
                     updateAttr({...runtime,value:value()});
                 }
                 else updateAttr(runtime);
@@ -491,15 +512,14 @@ const nodeFactory = {
  * interface SenderContext { send: DripperStream<MouseEvent> }
  * const render = prime(({send}:SenderContext)=>({ a:"send message", $: { onclick: send } }));
  * const sendStream = stream<MouseEvent>();
- * const ctx = { send: sendStream };
- * render(ctx);// === HTMLAnchorElement(onclick->collapse(drip(MouseEvent)(sendStream)))
+ * render({ send: ctx });// === HTMLAnchorElement(onclick->collapse(drip(MouseEvent)(sendStream)))
  */ 
 const prime = <T extends object>(fn:(v:T)=>JSHTMLNodeSource) => (ctx:T) => jshtml(fn(ctx),ctx);
 
 export {
     defineAttrUpdateHandlers,
-    createTracableListener,
-    promised, jshtml, mutations, events, prime,
+    listenerForCollapse,
+    promised, jshtml, mutations, prime,
     JSHTMLNodeRuntime,JSHTMLAttrRuntime,
     JSHTML_ELEMENT_HANDLER,
     JSHTML_ATTR_HANDLER 
