@@ -1,7 +1,7 @@
 // blooky-dom-types.d.ts
 
-import type { DripperStream, Prop } from "./blooky-fp"; // Prop/Stream 型に合わせて
 import type { EmptyElementAttributeMapSource } from "./blooky-dom"; // この行を追加
+import { Prop, DripperStream, DripEffect, BlookyError } from "./blooky-types";
 
 // --- HTML属性名一覧
 export type HTMLAttrName =
@@ -126,6 +126,49 @@ export type JSHTMLAttrRuntime<T> = {
     target: HTMLElement
     context?: Record<string,any>
 }
+
+export type JSHTMLNodeSourceAnalyzer = {
+  (s: JSHTMLNodeSource): JSHTMLNodeSourceType
+}
+
+export type JSHTMLNodeFactory = {
+    "array": (runtime:JSHTMLNodeRuntime<JSHTMLNodeSource[]>) => DocumentFragment
+    "nullable": (runtime:JSHTMLNodeRuntime<null|undefined>) => Comment
+    "text": (runtime:JSHTMLNodeRuntime<any>) => Text
+    "node": (runtime:JSHTMLNodeRuntime<Node>) => Node
+    "prop": (runtime:JSHTMLNodeRuntime<Prop<JSHTMLNodeSource>>) => Node
+    "promise": (runtime:JSHTMLNodeRuntime<Promise<JSHTMLNodeSource>>) => HTMLElement
+    "element": (runtime:JSHTMLNodeRuntime<JSHTMLElementSource>) => HTMLElement
+}
+
+export type BlookyCollapseEvent<T extends "start"|"completed"|"failed"|"canceled"> = CustomEvent<DripEffect & {
+  result: T extends "completed"
+    ? number
+    : T extends "failed"
+    ? BlookyError<any>[]
+    : undefined
+}>
+export type BlookyCollapseEventMap = {
+  "blooky-collapse-start": BlookyCollapseEvent<"start">
+  "blooky-collapse-completed": BlookyCollapseEvent<"completed">
+  "blooky-collapse-failed": BlookyCollapseEvent<"failed">
+  "blooky-collapse-canceled": BlookyCollapseEvent<"canceled">
+}
+
+export type BlookyAttrPropEventDetail<A> = { prop: Prop<A>, name: string, nextValue: A, prevValue: A }
+export type BlookyPropEventMap = {
+  "node-prop-update": CustomEvent<{ prop: Prop<JSHTMLNodeSource>, prevValue: JSHTMLNodeSource }>
+  "attr-prop-update": CustomEvent<BlookyAttrPropEventDetail<JSHTMLAttrSource>>
+  "style-prop-update": CustomEvent<BlookyAttrPropEventDetail<V_STYLE>>
+  "dataset-prop-update": CustomEvent<BlookyAttrPropEventDetail<V_DATASET>>
+}
+
+export type BlookyMutationEvent = CustomEvent<{observer: MutationObserver, records: MutationRecord[]}>;
+export type BlookyMutationEventMap = {
+  "blooky-observe-mutations": BlookyMutationEvent
+}
+
+
 
 // --- fxdom用タグ
 export type FxTag = "call" | "delay" | "sequence" | "parallel" | "cancel" | "repeat" | "race" | "if";
