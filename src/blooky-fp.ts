@@ -574,7 +574,7 @@ const collapse = async (effect:DripEffect) => new Promise<number>((resolve, reje
 
 }).finally(()=>{
     PendingEffect.delete(effect.dripper);
-    ThrottleRecord.delete(effect.dripper);
+//    ThrottleRecord.delete(effect.dripper);
 });
 
 type CollapseObserver = 
