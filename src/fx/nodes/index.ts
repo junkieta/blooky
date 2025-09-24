@@ -31,3 +31,18 @@ export const allNodeDefinitions = [
 ].map(def => [def.type, def] as [FxNodeType, INodeDefinition<any>]); // Mapにしやすいように[key, value]のペアに変換
 
 export const nodeDefinitionMap = new Map<FxNodeType, INodeDefinition<any>>(allNodeDefinitions);
+export {
+  NoneNodeDefinition,
+  SequenceNodeDefinition,
+  ParallelNodeDefinition,
+  RaceNodeDefinition,
+  WaitNodeDefinition,
+  LoopNodeDefinition,
+  ConditionNodeDefinition,
+  SwitchNodeDefinition,
+  ContextNodeDefinition,
+  CallNodeDefinition,
+  CollapseNodeDefinition,
+  YieldNodeDefinition,
+  ReturnNodeDefinition, 
+}
