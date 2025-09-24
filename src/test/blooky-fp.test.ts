@@ -19,7 +19,8 @@ import {
     proxy,
     pipe,
     collapse, registerTickHandler,
-    blooky
+    blooky,
+    junction
 } from '../blooky-fp';
 
 
@@ -113,7 +114,35 @@ describe('blooky-fp.ts', () => {
             await collapse(drip("hello")(s2));
             expect(p()).toBe("hello");
         });
+
+        test('junction should route values based on prop selector', async () => {
+            const s1 = stream<number>();
+            const s2 = stream<number>();
+            const selectorS = stream<'one'|'two'>();
+            const selector = hold<'one'|'two'>('one')(selectorS); // 初期値 'one'
+
+            const j = junction({ one: s1, two: s2 })(selector);
+            const p = hold(0)(j);
+
+            await collapse(drip(10)(s1));
+            expect(p()).toBe(10); // selector='one' なので s1 の値が通る
+
+            await collapse(drip(20)(s2));
+            expect(p()).toBe(10); // selector='one' のままなので s2 は無視
+
+            // selector を変更
+            await collapse(drip('two')(selectorS));
+            await collapse(drip(30)(s2));
+            expect(p()).toBe(30); // selector='two' なので s2 が通る
+
+            await collapse(drip(40)(s1));
+            expect(p()).toBe(30); // selector='two' なので s1 は無視
+
+        });
+
     });
+
+    
 
     // =================================
     // Prop（プロパティ）関連
