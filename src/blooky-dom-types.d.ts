@@ -105,13 +105,23 @@ export type JSHTMLElementSource = (
 export type JSHTMLExtractedElementSource = [tag: string, children: JSHTMLNodeSource, attrs?: JSHTMLAttributeMapSource];
 
 export type JSHTMLNodeSourceType = 
-    | "node"
-    | "promise"
-    | "prop"
-    | "array"
-    | "nullable"
-    | "text"
-    | "element"
+  | "node"
+  | "promise"
+  | "prop"
+  | "array"
+  | "nullable"
+  | "text"
+  | "element"
+;
+
+export type JSHTMLAttrSourceType = 
+  | "nullable"
+  | "listener"
+  | "style"
+  | "dataset"
+  | "classList"
+  | "toggle"
+  | "string"
 ;
 
 export type JSHTMLNodeRuntime<T> = {
@@ -130,15 +140,28 @@ export type JSHTMLAttrRuntime<T> = {
 export type JSHTMLNodeSourceAnalyzer = {
   (s: JSHTMLNodeSource): JSHTMLNodeSourceType
 }
+export type JSHTMLAttrAnalyzer = {
+  (k: string, s: JSHTMLAttrSource) : JSHTMLAttrSourceType
+}
 
 export type JSHTMLNodeFactory = {
-    "array": (runtime:JSHTMLNodeRuntime<JSHTMLNodeSource[]>) => DocumentFragment
-    "nullable": (runtime:JSHTMLNodeRuntime<null|undefined>) => Comment
-    "text": (runtime:JSHTMLNodeRuntime<any>) => Text
-    "node": (runtime:JSHTMLNodeRuntime<Node>) => Node
-    "prop": (runtime:JSHTMLNodeRuntime<Prop<JSHTMLNodeSource>>) => Node
-    "promise": (runtime:JSHTMLNodeRuntime<Promise<JSHTMLNodeSource>>) => HTMLElement
-    "element": (runtime:JSHTMLNodeRuntime<JSHTMLElementSource>) => HTMLElement
+  "array": (runtime:JSHTMLNodeRuntime<JSHTMLNodeSource[]>) => DocumentFragment
+  "nullable": (runtime:JSHTMLNodeRuntime<null|undefined>) => Comment
+  "text": (runtime:JSHTMLNodeRuntime<any>) => Text
+  "node": (runtime:JSHTMLNodeRuntime<Node>) => Node
+  "prop": (runtime:JSHTMLNodeRuntime<Prop<JSHTMLNodeSource>>) => Node
+  "promise": (runtime:JSHTMLNodeRuntime<Promise<JSHTMLNodeSource>>) => HTMLElement
+  "element": (runtime:JSHTMLNodeRuntime<JSHTMLElementSource>) => HTMLElement
+}
+
+export type JSHTMLAttrBuilder = {
+  "nullable": (runtime: JSHTMLAttrRuntime<null|undefined>) => void
+  "listener": (runtime: JSHTMLAttrRuntime<V_EVENTLISTENER>) => void
+  "style": (runtime: JSHTMLAttrRuntime<V_STYLE>) => void
+  "dataset": (runtime: JSHTMLAttrRuntime<V_DATASET>) => void
+  "classList": (runtime: JSHTMLAttrRuntime<V_CLASSLIST>) => void
+  "toggle": (runtime: JSHTMLAttrRuntime<boolean>) => void
+  "string": (runtime: JSHTMLAttrRuntime<string>) => void
 }
 
 export type BlookyCollapseEvent<T extends "start"|"completed"|"failed"|"canceled"> = CustomEvent<DripEffect & {

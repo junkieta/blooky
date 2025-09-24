@@ -3,7 +3,7 @@
  * blookyを用いてリアクティブなDOMを構築するライブラリ。
  * 簡易な仕様でDOMを構築しつつ、Streamを利用した更新管理も行う。
  */
-import type { V_DATASET, V_STYLE, V_CLASSLIST, V_EVENTLISTENER, V_STRING, WritableCSSProperty, JSHTMLElementSource, JSHTMLAttrSource, JSHTMLNodeSource, JSHTMLAttributeMapSource, JSHTMLAttrRuntime, JSHTMLNodeRuntime, JSHTMLNodeSourceType, JSHTMLExtractedElementSource, JSHTMLNodeFactory, JSHTMLNodeSourceAnalyzer, BlookyMutationEvent } from "./blooky-dom-types";
+import type { V_DATASET, V_STYLE, V_CLASSLIST, V_EVENTLISTENER, V_STRING, WritableCSSProperty, JSHTMLElementSource, JSHTMLAttrSource, JSHTMLNodeSource, JSHTMLAttributeMapSource, JSHTMLAttrRuntime, JSHTMLNodeRuntime, JSHTMLNodeSourceType, JSHTMLExtractedElementSource, JSHTMLNodeFactory, JSHTMLNodeSourceAnalyzer, BlookyMutationEvent, JSHTMLAttrAnalyzer, JSHTMLAttrBuilder } from "./blooky-dom-types";
 import { registerTickHandler, isDripperStream, drip, collapse, isChainedProp, blooky, stream } from "./blooky-fp";
 import { Prop, DripperStream, Stream, BlookyError } from "./blooky-types";
 
@@ -34,7 +34,6 @@ registerTickHandler("visual", (effects) => {
     }));
 })
 
-
 // PropとDOMのバインドに責任を持つ
 type PropBridgeInterface<A> = {
     prop: Prop<A>
@@ -44,7 +43,6 @@ type PropBridgeInterface<A> = {
 }
 
 type PropBridge = (RangePropBridge | AttrPropBridge | StylePropBridge);
-
 
 const PROP_BRIDGE_RECORD = new Map<Prop<any>, PropBridge|PropBridge[]>();// 最適化用に共用型
 const bindPropBridge = (b:PropBridge) => {
@@ -168,11 +166,12 @@ class AttrPropBridge extends AbstractAttrPropBridge<JSHTMLAttrSource> {
             target.removeEventListener(name.slice(2), this.generatedListener);
             delete this.generatedListener;
         }
-        if(isDripperStream(next))
+        if(isDripperStream<Event>(next))
             next = this.generatedListener = listenerForCollapse(next);
         else if(name.startsWith("on"))
             this.generatedListener = next as EventListenerOrEventListenerObject;
-        updateAttr({ name, target, value: next });
+        const attrType = analyzeAttrSource(name, next);
+        jshtmlAttrBuilder[attrType]({ name, target, value: next as any });
         this.dispatchPropUpdateEvent("attr-prop-update", next, prev);
     }
     contains(p: PropBridge) {
@@ -255,12 +254,11 @@ const setCSSProperty = (n: WritableCSSProperty|string, v: string) => (d: CSSStyl
 // イベントリスナーの設定用関数を生成する
 const createEventListenerSetter =
     (v:V_EVENTLISTENER, n: string) => 
-        isDripperStream(v)
+        isDripperStream<Event>(v)
         ? (e:EventTarget) => e.addEventListener(n.slice(2), listenerForCollapse(v))
-        : v && (typeof v === "function" || typeof v.handleEvent === "function")
-        ? (e:EventTarget) => e.addEventListener(n.slice(2), v as EventListener)
+        : v && (typeof v === "function" || typeof (v as EventListenerObject).handleEvent === "function")
+        ? (e:EventTarget) => e.addEventListener(n.slice(2), v as EventListenerOrEventListenerObject)
         : (e:Element) => e.setAttribute(n,v+"");
-
 
 /**
  * JSHTMLElementSourceを部品に分割して返す
@@ -293,73 +291,6 @@ const defineAttrUpdateHandlers = (handlers: { [key:string]: (value: any, target:
     Object.assign(ATTRIBUTE_HANDLER_RREGISTRY, handlers);
 }
 
-const jshtmlAttrHandler = {
-
-    "classList": ({value,target}:JSHTMLAttrRuntime<V_CLASSLIST>) => {
-        if(value == null)
-            target.removeAttribute("class");
-        else if(Array.isArray(value))
-            target.className = value.filter(Boolean).join(" ");
-        else
-            target.className = typeof value === "object"
-                ? Object.keys(value).filter((k)=>value[k]).join(" ")
-                : value + "";
-    },
-
-    "dataset": ({value,target}:JSHTMLAttrRuntime<V_DATASET>) => {
-        const dataset = target.dataset;
-        if(value == null)
-            Object.keys(dataset).forEach((k)=> delete dataset[k]);
-        else {
-            Object.keys(dataset).filter((k)=>!(k in value)).forEach((k)=>delete dataset[k]);
-            Object.entries(value).forEach(([k,v]) => {
-                if(isChainedProp<V_STRING>(v)) {
-                    bindPropBridge(new DatasetPropBridge(v,target,k));
-                    v = v();
-                }
-                dataset[k] = v != null ? v + "" : '';
-            });
-        }
-    },
-
-    "style": ({value,target}:JSHTMLAttrRuntime<V_STYLE>) => {
-        target.removeAttribute("style")
-        if(value == null) return;
-        (Object.entries(value) as [WritableCSSProperty,V_STRING|Prop<V_STRING>][]).forEach(([k,v]) => {
-            if(isChainedProp(v)) {
-                bindPropBridge(new StylePropBridge(v,target,k));
-                v = v();
-            }
-            setCSSProperty(k,v != null ? v + "": "")(target.style);
-        })
-    }
-    
-}
-
-/**
- * HTML要素の属性値を更新する
- * @param e 
- * @returns 
- */
-const updateAttr = <V>(runtime: JSHTMLAttrRuntime<V>) => {
-    const {value,name,target} = runtime;
-    if(typeof jshtmlAttrHandler[name as keyof typeof jshtmlAttrHandler] === "function")
-        return jshtmlAttrHandler[name as keyof typeof jshtmlAttrHandler](runtime as JSHTMLAttrRuntime<any>);
-    else if(name in ATTRIBUTE_HANDLER_RREGISTRY && ATTRIBUTE_HANDLER_RREGISTRY[name](runtime) === false)
-        return;
-    if(value == null)
-        target.removeAttribute(name);
-    else if(typeof value === "boolean")
-        target.toggleAttribute(name, value);
-    else if(/^on/.test(name))
-        createEventListenerSetter(value as V_EVENTLISTENER, name)(target);
-    else if(!(value instanceof Object))
-        target.setAttribute(name, value + "");
-    else {
-        console.warn(`Unknown attribute value for "${name}":`, value);
-        target.setAttribute(name, String(value)); // フォールバック
-    }
-};
 
 class PromisedElement extends HTMLElement {
     promise: Promise<JSHTMLNodeSource|Node>
@@ -491,11 +422,13 @@ const nodeFactory: JSHTMLNodeFactory = {
                 const runtime = { target: elm, name, value, context };
                 if(name in customElementAttrHandler && customElementAttrHandler[name](runtime) === false) 
                     continue; // ハンドラがfalseを返したら、後続の処理はしない
+                // Propの適用
                 if(isChainedProp<JSHTMLAttrSource>(value)) {
                     bindPropBridge(new AttrPropBridge(value, elm, name));
-                    updateAttr({...runtime,value:value()});
+                    runtime.value = value();
                 }
-                else updateAttr(runtime);
+                if(!(name in ATTRIBUTE_HANDLER_RREGISTRY) || ATTRIBUTE_HANDLER_RREGISTRY[name](runtime) !== false)
+                    jshtmlAttrBuilder[analyzeAttrSource(runtime.name,runtime.value)](runtime);
             }
         }
         if(children)
@@ -505,6 +438,69 @@ const nodeFactory: JSHTMLNodeFactory = {
         return elm;
     },
 }
+
+const analyzeAttrSource: JSHTMLAttrAnalyzer = (name, value) => {
+    if(/^on/.test(name)) return "listener";
+    if(value == null) return "nullable";
+    if(typeof value !== "object")
+        return typeof value === "boolean"
+            ? "toggle"
+            : "string";
+    if(["dataset","style"].includes(name))
+        return name as "dataset"|"style";
+    if(["class","className","classList"].includes(name))
+        return "classList";
+    return "string";
+}
+
+const jshtmlAttrBuilder: JSHTMLAttrBuilder = {
+    "nullable": ({target,name}: JSHTMLAttrRuntime<null|undefined>) => {
+        target.removeAttribute(name);
+    },
+    "toggle": ({target,name,value}: JSHTMLAttrRuntime<boolean>) => {
+        target.toggleAttribute(name, value);
+    },
+    "string": ({target,name,value}: JSHTMLAttrRuntime<string>) => {
+        target.setAttribute(name, value);
+    },
+    "listener": ({target,name,value}: JSHTMLAttrRuntime<V_EVENTLISTENER>) => {
+        createEventListenerSetter(value as V_EVENTLISTENER, name)(target);
+    },
+    "classList": ({value,target}:JSHTMLAttrRuntime<V_CLASSLIST>) => {
+        if(Array.isArray(value))
+            target.className = value.filter(Boolean).join(" ");
+        else
+            target.className = typeof value === "object"
+                ? Object.keys(value).filter((k)=>value[k]).join(" ")
+                : value + "";
+    },
+    "dataset": ({value,target}:JSHTMLAttrRuntime<V_DATASET>) => {
+        const dataset = target.dataset;
+        if(value == null)
+            Object.keys(dataset).forEach((k)=> delete dataset[k]);
+        else {
+            Object.keys(dataset).filter((k)=>!(k in value)).forEach((k)=>delete dataset[k]);
+            Object.entries(value).forEach(([k,v]) => {
+                if(isChainedProp<V_STRING>(v)) {
+                    bindPropBridge(new DatasetPropBridge(v,target,k));
+                    v = v();
+                }
+                dataset[k] = v != null ? v + "" : '';
+            });
+        }
+    },
+    "style": ({value,target}:JSHTMLAttrRuntime<V_STYLE>) => {
+        target.removeAttribute("style");
+        (Object.entries(value) as [WritableCSSProperty,V_STRING|Prop<V_STRING>][]).forEach(([k,v]) => {
+            if(isChainedProp(v)) {
+                bindPropBridge(new StylePropBridge(v,target,k));
+                v = v();
+            }
+            setCSSProperty(k,v != null ? v + "": "")(target.style);
+        })
+    }
+}
+
 
 /**
  * 宣言的なレンダラーを生成する
