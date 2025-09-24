@@ -218,7 +218,7 @@ describe('blooky-fp.ts', () => {
             const s = stream<number>({ debounce: 100 });
             const p = hold(0)(s);
 
-            collapse(drip(10)(s));
+            collapse(drip(10)(s)).catch(()=>{});
             
             // 50ms経過 -> まだ実行されない
             await jest.advanceTimersByTimeAsync(50);
