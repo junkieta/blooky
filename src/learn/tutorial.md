@@ -230,14 +230,14 @@ const $message =
     : "Hidden content" 
   )($isVisible);
 
-const ConditionalUI = prime(({ $isVisible, toggle$ }) => ({
+const ConditionalUI = prime(({ $isVisible, toggle$, $message }) => ({
   div: [
     { button: "Toggle", $: { onclick: toggle$ } },
     { p: $message }
   ]
 }));
 
-document.body.append(ConditionalUI({ $isVisible, toggle$ }));
+document.body.append(ConditionalUI({ $isVisible, toggle$, $message }));
 ```
 
 ### 💡 学んだこと
