@@ -7,7 +7,7 @@ import {
   ref,
   FxRef
 } from "./blooky-fx";
-import { DripperStream } from "./blooky-types";
+import { CollapseObserver, DripperStream } from "./blooky-types";
 import { FxNode, ExecContext, PreparedFx, ExecutionHandle, AppContext } from "./fx/types";
 
 // ---- Abstract Base ----
@@ -355,6 +355,9 @@ class FxContextElement extends EffectElement {
 }
 
 class FxEffectElement extends FxContextElement {
+
+  static observedAttributes = ["ignite"];
+
   protected _execContext?: Partial<ExecContext>
   protected _preparedFx?: PreparedFx
   protected _handle?: ExecutionHandle
@@ -374,12 +377,8 @@ class FxEffectElement extends FxContextElement {
     return this._handle;
   }
 
-  connectedCallback() {
-    this.prepare();
-    if(!this.hasAttribute("ignite"))
-      queueMicrotask(this.execute.bind(this)); // idRecordの完成を待てるように、immediateにはしない
-    else switch(this.getAttribute("ignite")) {
-
+  protected igniteFx(type: CollapseObserver | "none") {
+    switch(type) {
       case "none":
         break;
 
@@ -406,8 +405,18 @@ class FxEffectElement extends FxContextElement {
     }
   }
 
+  connectedCallback() {
+    this.igniteFx(!this.hasAttribute("ignite") ? "quantum" : this.getAttribute("ignite") as CollapseObserver | "none");
+  }
+
   disconnectedCallback() {
     this._handle?.cancel();
+  }
+
+  attributeChangedCallback(name: string, oldValue: string, newValue: string) {
+    if(newValue === oldValue || name !== "ignite" || !this.isConnected) return;
+    this._handle?.cancel();
+    if(newValue && newValue !== "none") this.igniteFx(newValue as CollapseObserver);
   }
 
 }
