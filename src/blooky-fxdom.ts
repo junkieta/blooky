@@ -4,11 +4,10 @@ import {
   prepare, 
   execute, 
   fx, 
-  ref,
-  FxRef
+  ref
 } from "./blooky-fx";
 import { DripperStream } from "./blooky-types";
-import { FxNode, ExecContext, PreparedFx, ExecutionHandle, AppContext } from "./fx/types";
+import { FxNode, ExecContext, PreparedFx, ExecutionHandle, AppContext, FxRef } from "./fx/types";
 
 // ---- Abstract Base ----
 
@@ -159,7 +158,8 @@ class FxIncludeElement extends EffectElement { // FxFlowからFxIncludeにリネ
           element: this,
           originalError: new Error(response.statusText)
         });
-        template = jshtml({ template: await response.json() }) as HTMLTemplateElement;
+        template = this.ownerDocument.createElement("template") as HTMLTemplateElement;
+        template.content.append(jshtml(await response.json()));
         FLOW_TEMPLATE_CACHE.set(src, template);
       } catch (error) {
         console.error(`Error processing include from "${src}":`, error);

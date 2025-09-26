@@ -1,8 +1,8 @@
 import type { FxNode, FxRef, FxExecutionContext} from '../types';
-import { collapse, drip, DripperStream } from '../../blooky-fp';
+import { collapse, drip } from '../../blooky-fp';
 import { NodeDefinition } from '../NodeDefinition';
+import { DripperStream } from '../../blooky-types';
 type ThisNode = Extract<FxNode, { type: 'collapse' }>;
-type ThisCompiledNode = Extract<FxNode, { type: 'collapse' }>;
 
 export class CollapseNodeDefinition extends NodeDefinition<'collapse'> {
   public readonly type = 'collapse';

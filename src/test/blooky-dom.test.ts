@@ -130,6 +130,7 @@
                     const s = stream<string>();
                     const idProp = hold('first-id')(s);
                     const el = jshtml({ div: null, $: { id: idProp } }) as HTMLElement;
+                    document.body.append(el);
 
                     expect(el.id).toBe('first-id');
 
@@ -142,6 +143,7 @@
                     const s = stream<string>();
                     const colorProp = hold('red')(s);
                     const el = jshtml({ div: null, $: { style: { color: colorProp } } }) as HTMLElement;
+                    document.body.append(el);
 
                     expect(el.style.color).toBe('red');
 
