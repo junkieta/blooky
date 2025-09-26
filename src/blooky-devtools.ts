@@ -1,5 +1,5 @@
 import { jshtml, prime as defaultPrime } from "./blooky-dom";
-import { isChainedProp, isDripperStream, isStream, isVertex, stream, vertex } from "./blooky-fp";
+import { collapse, drip, isChainedProp, isDripperStream, isStream, isVertex, stream, vertex } from "./blooky-fp";
 import { EffectElementTagNameMap as DefaultEffectElementTagNameMap, EffectElement, FxEffectElement as ConcreteEffectElementConstructor, fxdom } from "./blooky-fxdom";
 import { FxNode, FxMiddleware, ExecContext } from "./fx/types";
 
@@ -322,6 +322,12 @@ const dripGraph = <A>(value: A) => (dripper: DripperStream<A>) : DripEffect & { 
     return { dripper, streams, effects };
 }
 
+const COMPONENT_MAP = new Map<Node,object>();
+const prime = <T extends object>(fn:(v:T)=>JSHTMLNodeSource) => (ctx:T) => {
+  const node = jshtml(fn(ctx),ctx);
+  COMPONENT_MAP.set(node, ctx);
+  return node;
+}
 
 export {dumpGraphDOT,dripGraph};
 

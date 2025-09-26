@@ -1,11 +1,11 @@
 // -- 0. 事前ロード ---
-import { stream, accum, merge, hold, map, remap, when, lift, Prop, pipe, PromisedProp } from "./blooky-fp";
+import { stream, accum, merge, hold, map, remap, when, pipe, PromisedProp } from "./blooky-fp";
 import { jshtml, prime } from "./blooky-dom";
 import { fxdom,EffectElementTagNameMap, dumpGraphDOT } from "./blooky-devtools";
 // dot視覚化用にviz
 import { instance as viz_instance } from "@viz-js/viz";
 import { JSHTMLNodeSource } from "./blooky-dom-types";
-import { DripperStream } from "./blooky-types";
+import { DripperStream, Prop } from "./blooky-types";
 
 // debuggerとしてdefine
 fxdom.defineEffectElements(EffectElementTagNameMap);
@@ -22,6 +22,8 @@ const changeCountStream = merge([map(() => 1)(increment$), map(() => -1)(decreme
 const $count = accum((current: number, val: number) => current + val, 0)(changeCountStream);
 const $statusMessage = hold('Ready.')(statusMessageStream$);
 const $finalMessage = remap<string,number>((v) => `Saved Count:${v}`)($count);
+
+const $colorOfCount = remap<string,number>((count)=>count % 3 ? "blue" : "red")($count);
 
 
 // confirmの呼び出しを別ツリーのフローとして宣言
@@ -49,6 +51,7 @@ const context = {
     statusMessageStream$,
     changeCountStream,
     $count,
+    $colorOfCount,
     $statusMessage,
     $finalMessage,
     confirmQuestionActivated$,
@@ -71,7 +74,7 @@ interface AppUIContext {
 const AppUIRenderer = prime(({$count,increment$,decrement$,save$,$statusMessage,$confirmQuestionDialogbox}:AppUIContext) => ({
   div: [
     // 状態(Prop)をUIにバインド
-    { p: ["Count: ", $count] },
+    { p: ["Count: ", $count], $: { style: { color: $colorOfCount } } },
     // イベントをStreamに接続
     { button: "+", $: { onclick: increment$ } },
     { button: "-", $: { onclick: decrement$ } },

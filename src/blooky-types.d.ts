@@ -79,6 +79,13 @@ type DripResult<A,M="deny"> = M extends 'await'
   ? Promise<DripEffect>
   : DripEffect;
  
+type CollapseObserver = 
+  | 'immediate'    // 即座観測者
+  | 'visual'       // 視覚観測者（RAF）
+  | 'sequential'   // 順次観測者（timeout）
+  | 'quantum'      // 量子観測者（microtask）
+  | 'thrown'       // 理外観測者（error）
+
 
 type CollapseReservation = {
     effect: DripEffect,
@@ -145,6 +152,7 @@ export {
   Stream,Prop,DripperStream,FilterStream,MappedStream,MergedStream,Vertex,
   DripStrategy,ShortDripStrategy,DripEffect,PropEffect,DripResult,
   FlowingState,StreamBase,
+  CollapseObserver,
   CollapseReservation,
   BlookyError,BlookyErrorCauseMap,
   ConstraintErrorCause,DevConfigErrorCause,FlowErrorCause,StructureErrorCause,UserErrorCause,
