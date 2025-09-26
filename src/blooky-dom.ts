@@ -244,11 +244,11 @@ class JSHTMLUnknownElement extends HTMLElement {}
 customElements.define("jshtml-unknown", JSHTMLUnknownElement);
 
 // cssvarへの対応
-const setCSSProperty = (n: WritableCSSProperty|string, v: string) => (d: CSSStyleDeclaration) => {
+const setCSSProperty = (n: WritableCSSProperty|string, v: string) => (cssDec: CSSStyleDeclaration) => {
     if(n.startsWith("--"))
-        d.setProperty(n, v);
+        cssDec.setProperty(n, v);
    else
-        d[n as WritableCSSProperty] = v;
+        cssDec[n as WritableCSSProperty] = v;
 }
 
 // イベントリスナーの設定用関数を生成する
@@ -496,7 +496,7 @@ const jshtmlAttrBuilder: JSHTMLAttrBuilder = {
                 bindPropBridge(new StylePropBridge(v,target,k));
                 v = v();
             }
-            setCSSProperty(k,v != null ? v + "": "")(target.style);
+            setCSSProperty(k, v != null ? v + "": "")(target.style);
         })
     }
 }
