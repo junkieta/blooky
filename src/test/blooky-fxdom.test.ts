@@ -53,7 +53,7 @@ describe('blooky-fx-dom.ts', () => {
     describe('EffectElement toFxNode() Conversion', () => {
 
         it('<fx-sequence> should convert to a sequence node', () => {
-            const el = jshtml({ "fx-sequence": [{ "fx-call": { $: { fn: "a" } } }] });
+            const el = jshtml({ "fx-sequence": [{ "fx-call": null, $: { fn: "a" } }] });
             const node = (el as any).toFxNode();
             expect(node.type).toBe('sequence');
             expect(node.steps).toHaveLength(1);
@@ -61,16 +61,16 @@ describe('blooky-fx-dom.ts', () => {
         });
 
         it('<fx-call> should convert attributes to a call node', () => {
-            const el = jshtml({ "fx-call": { $: { fn: "myFunc", arg: "myArg", id: "c1" } } });
+            const el = jshtml({ "fx-call": null, $: { fn: "myFunc", arg: "myArg", id: "c1" } });
             const expectedNode = fx.call(ref("myFunc"), { arg: ref("myArg"), id: "c1" });
             expect((el as any).toFxNode()).toEqual(expect.objectContaining(expectedNode));
         });
 
         it('<fx-if> should convert to a condition node', () => {
-            const el = jshtml({ "fx-if": { $: { when: "isReady" }, _: [
-                { "fx-sequence": { $: { slot: "then" } } },
-                { "fx-sequence": { $: { slot: "else" } } },
-            ]}});
+            const el = jshtml({ "fx-if": [
+                { "fx-sequence": null, $: { slot: "then" } },
+                { "fx-sequence": null, $: { slot: "else" } },
+            ], $: { when: "isReady" }});
             const node = (el as any).toFxNode();
             expect(node.type).toBe('condition');
             expect(node.if).toEqual(ref('isReady'));
@@ -79,7 +79,7 @@ describe('blooky-fx-dom.ts', () => {
         });
 
         it('<fx-loop> should convert to a loop node with options', () => {
-            const el = jshtml({ "fx-loop": { $: { while: "isLooping", "max-iterations": "10" } } });
+            const el = jshtml({ "fx-loop": null, $: { while: "isLooping", "max-iterations": "10" } });
             const node = (el as any).toFxNode();
             expect(node.type).toBe('loop');
             expect(node.cond).toEqual(ref('isLooping'));
@@ -87,7 +87,7 @@ describe('blooky-fx-dom.ts', () => {
         });
 
         it('<fx-collapse> should convert to a collapse node', () => {
-            const el = jshtml({ "fx-collapse": { $: { dripper: "myStream", value: "myValue" } } });
+            const el = jshtml({ "fx-collapse": null, $: { dripper: "myStream", value: "myValue" } });
             const node = (el as any).toFxNode();
             expect(node.type).toBe('collapse');
             expect(node.dripper).toEqual(ref('myStream'));
@@ -100,7 +100,7 @@ describe('blooky-fx-dom.ts', () => {
             el.textContent = ' "hello world" '; // JSONとしてパース
             const node = el.toFxNode() as FxCollapseNode;
             expect(node.type).toBe('collapse');
-            expect((node.value as Function)()).toBe('hello world');
+            expect(node.value).toBe('hello world');
         });
     });
 
@@ -121,7 +121,7 @@ describe('blooky-fx-dom.ts', () => {
         });
 
         it('should NOT execute if ignite="none" is present', async () => {
-            const el = jshtml({ "fx-effect": { $: { ignite: "none" } } });
+            const el = jshtml({ "fx-effect": null, $: { ignite: "none" } });
             document.body.appendChild(el);
             await jest.runAllTicks();
 
@@ -198,6 +198,7 @@ describe('blooky-fx-dom.ts', () => {
             await Promise.resolve();
 
             expect(fetch).toHaveBeenCalledWith('/test.json', expect.anything());
+
             // 中身が正しくレンダリングされたか（<fx-call>が作られているか）
             expect(el.firstElementChild?.tagName.toLowerCase()).toBe('fx-call');
         });

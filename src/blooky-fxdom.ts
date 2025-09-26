@@ -159,7 +159,8 @@ class FxIncludeElement extends EffectElement { // FxFlowからFxIncludeにリネ
           element: this,
           originalError: new Error(response.statusText)
         });
-        template = jshtml({ template: await response.json() }) as HTMLTemplateElement;
+        template = this.ownerDocument.createElement("template") as HTMLTemplateElement;
+        template.content.append(jshtml(await response.json()));
         FLOW_TEMPLATE_CACHE.set(src, template);
       } catch (error) {
         console.error(`Error processing include from "${src}":`, error);
