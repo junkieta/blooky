@@ -3,7 +3,7 @@
  * 関数型のリアクティブプログラミングをtypescriptで行うためのライブラリ。
  */
 
-import { BlookyError, BlookyErrorCauseMap, CollapseReservation, DevConfigErrorCause, DripEffect, DripperStream, DripResult, DripStrategy, FilterStream, FlowingState, MappedStream, MergedStream, Prop, PropEffect, ShortDripStrategy, Stream, Vertex } from "./blooky-types";
+import { BlookyError, BlookyErrorCauseMap, CollapseObserver, CollapseReservation, DevConfigErrorCause, DripEffect, DripperStream, DripResult, DripStrategy, FilterStream, FlowingState, MappedStream, MergedStream, Prop, PropEffect, ShortDripStrategy, Stream, Vertex } from "./blooky-types";
 
 /**
  * ガベージコレクション用クリーナー関数
@@ -572,17 +572,8 @@ const collapse = async (effect:DripEffect) => new Promise<number>((resolve, reje
 
     }
 
-}).finally(()=>{
-    PendingEffect.delete(effect.dripper);
-//    ThrottleRecord.delete(effect.dripper);
 });
 
-type CollapseObserver = 
-  | 'immediate'    // 即座観測者
-  | 'visual'       // 視覚観測者（RAF）
-  | 'sequential'   // 順次観測者（timeout）
-  | 'quantum'      // 量子観測者（microtask）
-  | 'thrown'       // 理外観測者（error）
 
 // Effect処理のミドルウェア
 const tickHandlers: { [key in CollapseObserver]: Set<(effect:DripEffect[])=>void> } = {
