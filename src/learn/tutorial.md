@@ -289,7 +289,8 @@ const api = {
 // フロー定義
 const userFlow = fx.sequence([
   fx.call(ref("api.fetchUser"), { arg: 123, id: "step1" }),
-  fx.call(ref("log"), { arg: ref("#step1") }), // 前のステップの結果を参照
+  // idを付けたノードの結果は、#id名という特別なrefで参照できます
+  fx.call(ref("log"), { arg: ref("#step1") }),
   fx.call(ref("api.saveUser"), { arg: ref("#step1") })
 ]);
 
