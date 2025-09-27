@@ -28,13 +28,14 @@ export class YieldNodeDefinition extends NodeDefinition<'yield'> {
     const childNodeToRun = targetNode.child;
     const yieldedValue = node.value ? context.resolve(node.value)() : undefined;
     return await new Promise(async(resolve)=>{
-      appContext.yieldedValue = yieldedValue;
+      appContext.$_ = yieldedValue;
       appContext[RETURN_VALUE] = resolve;
       const handle = execute(prepare(childNodeToRun, appContext, context));
       await handle.done;
-    }).finally(()=>{
-      appContext.yieldedValue =
+    }).then((value)=>{
+      appContext.$_ = 
       appContext[RETURN_VALUE] = Symbol.for("NotResolved");
+      return value;
     });
  }
 

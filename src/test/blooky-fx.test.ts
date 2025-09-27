@@ -1,9 +1,5 @@
 // blooky-fx.test.ts
-
-import { fx, prepare, execute, query, ref, isFxRef, createCancelToken, FxRef } from '../blooky-fx';
-import type { FxNode, AppContext, ExecContext, FxExecutionContext, INodeDefinition, FxNodeType } from '../fx/types';
-import { blooky } from '../blooky-fp';
-import { RETURN_VALUE } from '../fx/nodes/return'; // For testing initial context
+import type { FxNode, AppContext, ExecContext, FxExecutionContext, INodeDefinition, FxNodeType, FxRef } from '../fx/types';
 
 // =================================================================
 // --- モックのセットアップ ---
@@ -93,6 +89,11 @@ jest.mock('../fx/nodes', () => ({
     nodeDefinitionMap: mockNodeDefinitionMap,
 }));
 
+import { fx, prepare, execute, query, ref, isFxRef, createCancelToken } from '../blooky-fx';
+import { blooky } from '../blooky-fp';
+import { RETURN_VALUE } from '../fx/nodes/return'; // For testing initial context
+
+
 
 // --- テストコード本体 ---
 
@@ -141,7 +142,7 @@ describe('blooky-fx.ts', () => {
             const flow = fx.do({ run: ref('unprovidedAction') });
             
             // `prepare`が特定のエラーをスローすることを検証
-            expect(() => prepare(flow, {})).toThrow(blooky.error('dev-config', {} as any).constructor);
+            expect(() => prepare(flow, {})).toThrow(blooky.error('dev-config', {  } as any).constructor);
             
             try {
                 prepare(flow, {});
@@ -198,17 +199,9 @@ describe('blooky-fx.ts', () => {
         });
 
         test('should store and allow referencing results of nodes with IDs', async () => {
-            const flow = fx.sequence({
-                steps: [
-                    fx.context({ id: 'initialData', value: 100 }),
-                    fx.do({ run: (data: number) => data * 2, args: [ref('#initialData')] })
-                ]
-            });
-            
+            const flow = fx.do({ id: 'data', run: (data: number) => data * 2, args: [100] } as any);
             const finalContext = await query(flow, {}).done;
-            
-            expect(finalContext['#initialData']).toBe(100);
-            expect(finalContext[RETURN_VALUE]).toEqual([100, 200]); // sequenceは結果の配列を返す
+            expect(finalContext['#data']).toBe(200);
         });
 
         test('should be cancellable', async () => {

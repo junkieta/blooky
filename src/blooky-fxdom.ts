@@ -1,14 +1,13 @@
-import { jshtml, JSHTML_ATTR_HANDLER, JSHTML_ELEMENT_HANDLER, JSHTMLAttrRuntime, JSHTMLNodeRuntime } from "./blooky-dom";
+import { jshtml, JSHTML_ATTR_HANDLER, JSHTML_ELEMENT_HANDLER, JSHTMLAttrRuntime } from "./blooky-dom";
 import { blooky } from "./blooky-fp";
 import { 
   prepare, 
   execute, 
   fx, 
   ref,
-  FxRef
 } from "./blooky-fx";
 import { CollapseObserver, DripperStream } from "./blooky-types";
-import { FxNode, ExecContext, PreparedFx, ExecutionHandle, AppContext } from "./fx/types";
+import { FxNode, ExecContext, PreparedFx, ExecutionHandle, AppContext, FxRef } from "./fx/types";
 
 // ---- Abstract Base ----
 
@@ -379,6 +378,7 @@ class FxEffectElement extends FxContextElement {
   }
 
   protected igniteFx(type: CollapseObserver | "none") {
+    this.prepare();
     switch(type) {
       case "none":
         break;

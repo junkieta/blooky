@@ -12,7 +12,7 @@ type FxRef<T> = { [K in typeof FxRefSymbol]: true; } & { key: string; } | Prop<T
  * 実行時に解決されるkeyへの参照オブジェクトを生成する。
  */
 const ref = <T>(key: string): FxRef<T> => ({ [FxRefSymbol]: true, key });
-const isFxRef = <T>(v:unknown) : v is Extract<FxRef<T>,{ [K in typeof FxRefSymbol]: true; } & { key: string; }> => v && (v as any)[FxRefSymbol];
+const isFxRef = <T>(v:unknown) : v is Extract<FxRef<T>,{ [K in typeof FxRefSymbol]: true; } & { key: string; }> => v && (v as any)[FxRefSymbol] === true;
 
 // --- ファクトリ (fxオブジェクト) の動的構築 ---
 const fx = {} as FxFactoryMap;
@@ -48,7 +48,7 @@ function prepare(
 
   // id所持ノードの結果を格納するRecord
   const localRecord: { [key:string|symbol]: unknown } = {
-    yieldedValue: NotResolved,
+    $_: "$_" in initialAppContext ? initialAppContext.$_ : NotResolved,
     [RETURN_VALUE]: RETURN_VALUE in initialAppContext ? initialAppContext[RETURN_VALUE] : NotResolved
   };
   const nodes = flattenFxNode(flow);
@@ -294,7 +294,9 @@ const resolveValue = <T>(value: FxRef<T>) => (context: AppContext) : Prop<T> => 
   if (isFxRef<T>(value)) { 
     value = context[value.key];
   }
-  return typeof value === "function" ? value as Prop<T> : () => value as T;
+  return typeof value === "function"
+    ? value as Prop<T>
+    : () => value as T;
 }
 
 
@@ -307,7 +309,7 @@ const flattenFxNode = (n:FxNode): FxNode[] => {
 
 
 export {
-  fx, FxRef, isFxRef, ref,
+  fx, isFxRef, ref,
   run,prepare,execute,query,createCancelToken,createProxyContext
 }
 

@@ -1,5 +1,6 @@
 // 型定義
 
+import { PromisedProp } from "../blooky-fp";
 import { Prop, DripperStream } from "../blooky-types";
 
 // --- 汎用的な型定義 ---
@@ -31,7 +32,7 @@ type FxNoneNode = FxNodeBase<"none">;
 type FxSequenceNode = FxNodeBase<"sequence", { steps: FxNode[] }>;
 type FxParallelNode = FxNodeBase<"parallel", { steps: FxNode[] }>;
 type FxRaceNode = FxNodeBase<"race", { steps: FxNode[] }>;
-type FxWaitNode = FxNodeBase<"wait", { ms?: FxRef<number>, until?: FxRef<Prop<boolean>> }>; // waitの拡張を反映
+type FxWaitNode = FxNodeBase<"wait", { ms?: FxRef<number>, until?: FxRef<Prop<boolean>|PromisedProp<any>> }>; // waitの拡張を反映
 type FxLoopNode = FxNodeBase<"loop", { cond: FxRef<boolean>, body: FxNode, maxIterations?: number, maxDuration?: number }>;
 type FxConditionNode = FxNodeBase<"condition", { if: FxRef<boolean>, then: FxNode, else?: FxNode }>;
 type FxSwitchNode = FxNodeBase<"switch", { by: FxRef<string | number | symbol>, cases: Map<string | number | symbol, FxNode>, default?: FxNode }>;

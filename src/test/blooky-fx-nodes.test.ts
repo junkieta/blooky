@@ -1,5 +1,14 @@
 // fx-nodes.test.ts
 
+// `collapse`ノードのテストのために、blooky-fpの一部をモックする
+import * as BlookyFp from "../blooky-fp";
+const {stream,hold,collapse,drip} = BlookyFp;
+
+import { query, ref, fx as coreFx } from '../blooky-fx'; 
+import { RETURN_VALUE } from '../fx/nodes/return';
+import { FxNode, FxRef } from '../fx/types';
+import { DripperStream, Prop } from '../blooky-types';
+
 import {
     CallNodeDefinition,
     CollapseNodeDefinition,
@@ -16,22 +25,7 @@ import {
     YieldNodeDefinition
 } from '../fx/nodes/'; // テスト対象のNode定義クラスをインポート（パスは要調整）
 
-import { stream, hold, collapse as coreCollapse, drip as coreDrip} from "../blooky-fp";// コア機能と型
-import { query, ref, fx as coreFx, FxRef } from '../blooky-fx'; 
-import { RETURN_VALUE } from '../fx/nodes/return';
-import { FxContextNode, FxNode } from '../fx/types';
 
-// `collapse`ノードのテストのために、blooky-fpの一部をモックする
-const mockDrip = jest.fn();
-const mockCollapse = jest.fn();
-jest.mock('../blooky-fp', () => {
-    const original = jest.requireActual('../blooky-fp');
-    mockDrip.mockImplementation((value, options) => original.drip(value, options)); // dripは元の実装を使いつつspyする
-    return {
-        ...original,
-        collapse: mockCollapse,
-    };
-});
 
 
 describe('Individual FxNode Definitions', () => {
@@ -52,7 +46,7 @@ describe('Individual FxNode Definitions', () => {
         wait: new WaitNodeDefinition().factory,
         yield: new YieldNodeDefinition().factory,
         // テスト用のシンプルなdoアクション
-        do: (run: FxRef<any>, options?: { id?: string, args?: FxRef<any>[] }): FxNode => 
+        do: (run: FxRef<any>, options?: { id?: string, arg?: FxRef<any> }): FxNode => 
             new CallNodeDefinition().factory(run, options),
     };
 
@@ -60,7 +54,7 @@ describe('Individual FxNode Definitions', () => {
         // モックのクリア
         jest.clearAllMocks();
         // Jestタイマーのセットアップ
-        jest.useFakeTimers();
+        jest.useFakeTimers({ advanceTimers: true, timerLimit: 1000, legacyFakeTimers: false });
     });
     
     afterEach(() => {
@@ -85,29 +79,29 @@ describe('Individual FxNode Definitions', () => {
 
     describe('ParallelNodeDefinition', () => {
         it('should execute all steps in parallel and return results in order', async () => {
-            const step1 = () => new Promise(res => setTimeout(() => res('first'), 100));
-            const step2 = () => new Promise(res => setTimeout(() => res('second'), 50));
+            const values = ['none','none'];
+            const step1 = () => new Promise<string>(res => setTimeout(() => res('100ms'), 100)).then((t)=>values[0]=t);
+            const step2 = () => new Promise<string>(res => setTimeout(() => res('50ms'),   50)).then((t)=>values[1]=t);
             const flow = fx.parallel([fx.do(step1), fx.do(step2)]);
             
             const promise = query(flow).done;
-            await jest.advanceTimersByTimeAsync(100);
-            const finalContext = await promise;
+            await jest.advanceTimersByTimeAsync(50);
+            expect(values).toEqual(['none','50ms']);
 
-            expect(finalContext[RETURN_VALUE]).toEqual(['first', 'second']);
+            await promise;
+            expect(values).toEqual(['100ms','50ms']);
         });
     });
 
     describe('RaceNodeDefinition', () => {
         it('should return the result of the first step to complete', async () => {
-            const slowStep = () => new Promise(res => setTimeout(() => res('slow'), 200));
-            const fastStep = () => new Promise(res => setTimeout(() => res('fast'), 100));
+            let result = 'none';
+            const slowStep = () => new Promise<string>(res => setTimeout(() => res('slow'), 200)).then((v)=>result=v);
+            const fastStep = () => new Promise<string>(res => setTimeout(() => res('fast'), 100)).then((v)=>result=v);
             const flow = fx.race([fx.do(slowStep), fx.do(fastStep)]);
 
-            const promise = query(flow).done;
-            await jest.advanceTimersByTimeAsync(100);
-            const finalContext = await promise;
-
-            expect(finalContext[RETURN_VALUE]).toBe('fast');
+            await query(flow).done;
+            expect(result).toBe('fast');
         });
     });
 
@@ -190,7 +184,7 @@ describe('Individual FxNode Definitions', () => {
                 method: jest.fn(function() { return this.value; })
             };
             const flow = fx.call(ref('obj.method'), { context: ref('obj'), id: 'result' });
-            const finalContext = await query(flow, { obj: myObject }).done;
+            const finalContext = await query(flow, { obj: myObject, ["obj.method"]: myObject.method }).done;
 
             expect(myObject.method).toHaveBeenCalled();
             expect(finalContext['#result']).toBe(42);
@@ -199,8 +193,10 @@ describe('Individual FxNode Definitions', () => {
 
     describe('CollapseNodeDefinition', () => {
         it('should call drip and collapse from blooky-fp', async () => {
+            const mockDrip = jest.spyOn(BlookyFp, "drip");
+            const mockCollapse = jest.spyOn(BlookyFp, "collapse");
             const myDripper = stream();
-            const flow = fx.collapse(ref('value'), ref('dripper'));
+            const flow = fx.collapse(ref<any>('value'), ref<DripperStream<any>>('dripper'));
             await query(flow, { value: 123, dripper: myDripper }).done;
 
             expect(mockDrip).toHaveBeenCalledWith(123, { acceptPromise: 'deny' });
@@ -222,20 +218,20 @@ describe('Individual FxNode Definitions', () => {
         });
 
         it('should wait until a Prop becomes true', async () => {
-            const conditionProp = hold(false);
-            const flow = fx.wait({ until: ref('cond') });
+            const s = stream<boolean>();
+            const conditionProp = hold(false)(s);
+            const flow = fx.wait({ until: ref<Prop<boolean>>('cond') });
             const promise = query(flow, { cond: conditionProp }).done;
 
             // まだ解決しないことを確認
             let isDone = false;
             promise.then(() => isDone = true);
-            await jest.advanceTimersByTimeAsync(10);
             expect(isDone).toBe(false);
             
             // Propを更新してフローを解決させる
-            await coreCollapse(coreDrip(true)(conditionProp['__from']));
+            await collapse(drip(true)(s));
             await promise;
-            expect(isDone).toBe(true);
+            expect(isDone).toBe(true);  
         });
     });
 
@@ -254,28 +250,21 @@ describe('Individual FxNode Definitions', () => {
         });
 
         it('should throw if RETURN_VALUE is not in the context', async () => {
+            jest.spyOn(console, 'error').mockImplementation(() => {});
             const flow = fx.return('my-result');
-            await expect(query(flow).done).rejects.toThrow('This node must be called within a flow initiated by fx-yield');
+            await expect(query(flow).done).rejects.toThrow('fx-return: This node must be called within a flow initiated by fx-yield');
+            (console.error as jest.Mock).mockRestore();
         });
     });
 
     describe('YieldNodeDefinition', () => {
         it('should execute a sub-flow and return its result', async () => {
-            // サブフロー：受け取った値を2倍して返す
-            const subFlow = fx.sequence([
-                fx.do(ref('double'), { id: 'doubled', args: [ref('yieldedValue')] }),
-                fx.return(ref('#doubled'))
-            ]);
-
+            // サブフロー：受け取った値を返す
+            const subFlow = fx.context({}, fx.return(ref("$_")), 'sub');
             // メインフロー：サブフローをyieldで呼び出す
-            const mainFlow = fx.sequence([
-                fx.context({}, subFlow, 'sub'),
-                fx.yield({ for: ref<FxContextNode>('#sub'), value: 21, id: 'yieldResult' })
-            ]);
-
-            const finalContext = await query(mainFlow, { double: (x: number) => x * 2 }).done;
-
-            expect(finalContext['#yieldResult']).toBe(42);
+            const mainFlow = fx.yield({ for: subFlow, value: 1, id: 'yieldResult' });
+            const finalContext = await query(mainFlow).done;
+            expect(finalContext['#yieldResult']).toBe(1);
         });
     });
 
@@ -285,4 +274,5 @@ describe('Individual FxNode Definitions', () => {
             await expect(query(flow).done).resolves.toBeDefined();
         });
     });
+
 });

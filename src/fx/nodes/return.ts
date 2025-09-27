@@ -12,7 +12,7 @@ export class ReturnNodeDefinition extends NodeDefinition<'return'> {
   }
 
   public async handle({node,context,appContext}: FxExecutionContext & { node: ThisNode }) {
-    if(!(RETURN_VALUE in appContext)) 
+    if(typeof appContext[RETURN_VALUE] !== "function") 
       throw blooky.error('flow', {
         code: 'INVALID_RETURN_CONTEXT',
         message: 'fx-return: This node must be called within a flow initiated by fx-yield',
