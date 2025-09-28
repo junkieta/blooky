@@ -4,8 +4,8 @@
  * 簡易な仕様でDOMを構築しつつ、Streamを利用した更新管理も行う。
  */
 import type { V_DATASET, V_STYLE, V_CLASSLIST, V_EVENTLISTENER, V_STRING, WritableCSSProperty, JSHTMLElementSource, JSHTMLAttrSource, JSHTMLNodeSource, JSHTMLAttributeMapSource, JSHTMLAttrRuntime, JSHTMLNodeRuntime, JSHTMLNodeSourceType, JSHTMLExtractedElementSource, JSHTMLNodeFactory, JSHTMLNodeSourceAnalyzer, BlookyMutationEvent, JSHTMLAttrAnalyzer, JSHTMLAttrBuilder } from "./blooky-dom-types";
-import { registerTickHandler, isDripperStream, drip, collapse, isChainedProp, blooky, stream } from "./blooky-fp";
-import { Prop, DripperStream, Stream, BlookyError } from "./blooky-types";
+import { registerTickHandler, isDripper, drip, collapse, isChainedProp, blooky, stream } from "./blooky-fp";
+import { Prop, Dripper, Stream, BlookyError } from "./blooky-types";
 
 // DOMをfpのtickに結び付ける
 registerTickHandler("visual", (effects) => {
@@ -166,7 +166,7 @@ class AttrPropBridge extends AbstractAttrPropBridge<JSHTMLAttrSource> {
             target.removeEventListener(name.slice(2), this.generatedListener);
             delete this.generatedListener;
         }
-        if(isDripperStream<Event>(next))
+        if(isDripper<Event>(next))
             next = this.generatedListener = listenerForCollapse(next);
         else if(name.startsWith("on"))
             this.generatedListener = next as EventListenerOrEventListenerObject;
@@ -202,7 +202,7 @@ class DatasetPropBridge extends AbstractAttrPropBridge<V_STRING> {
 }
 
 // PROPの観測。イベントリスナーとして登録し、collapseの実行とDOMイベントを接続する。
-const listenerForCollapse = <A extends Event>(d: DripperStream<A>) => (v: A) => {
+const listenerForCollapse = <A extends Event>(d: Dripper<A>) => (v: A) => {
     const target = v.currentTarget || v.target;
     if (!target) {
         console.warn('listenerForCollapse: no target available');
@@ -254,7 +254,7 @@ const setCSSProperty = (n: WritableCSSProperty|string, v: string) => (cssDec: CS
 // イベントリスナーの設定用関数を生成する
 const createEventListenerSetter =
     (v:V_EVENTLISTENER, n: string) => 
-        isDripperStream<Event>(v)
+        isDripper<Event>(v)
         ? (e:EventTarget) => e.addEventListener(n.slice(2), listenerForCollapse(v))
         : v && (typeof v === "function" || typeof (v as EventListenerObject).handleEvent === "function")
         ? (e:EventTarget) => e.addEventListener(n.slice(2), v as EventListenerOrEventListenerObject)
@@ -505,7 +505,7 @@ const jshtmlAttrBuilder: JSHTMLAttrBuilder = {
 /**
  * 宣言的なレンダラーを生成する
  * ex.
- * interface SenderContext { send: DripperStream<MouseEvent> }
+ * interface SenderContext { send: Dripper<MouseEvent> }
  * const render = prime(({send}:SenderContext)=>({ a:"send message", $: { onclick: send } }));
  * const sendStream = stream<MouseEvent>();
  * render({ send: ctx });// === HTMLAnchorElement(onclick->collapse(drip(MouseEvent)(sendStream)))
