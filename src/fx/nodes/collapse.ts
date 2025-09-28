@@ -1,13 +1,13 @@
 import type { FxNode, FxRef, FxExecutionContext} from '../types';
 import { collapse, drip } from '../../blooky-fp';
 import { NodeDefinition } from '../NodeDefinition';
-import { DripperStream } from '../../blooky-types';
+import { Dripper } from '../../blooky-types';
 type ThisNode = Extract<FxNode, { type: 'collapse' }>;
 
 export class CollapseNodeDefinition extends NodeDefinition<'collapse'> {
   public readonly type = 'collapse';
 
-  public factory(value: FxRef<any>, dripper: FxRef<DripperStream<any>>, options?: {
+  public factory<A>(value: FxRef<A>, dripper: FxRef<Dripper<A>>, options?: {
       promise?: FxRef<"deny"|"allow"|"await">, 
       catcher?: FxRef<(v:Error) => unknown>,
     }): ThisNode {

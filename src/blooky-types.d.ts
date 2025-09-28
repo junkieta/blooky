@@ -47,6 +47,8 @@ type Stream<A> =
    | MergedStream<A>
    | FilterStream<A>
 
+// 型エイリアス
+type Dripper<A> = DripperStream<A>;
 
 type Vertex = {
     sourceStream: Stream<any>
@@ -85,7 +87,6 @@ type CollapseObserver =
   | 'sequential'   // 順次観測者（timeout）
   | 'quantum'      // 量子観測者（microtask）
   | 'thrown'       // 理外観測者（error）
-
 
 type CollapseReservation = {
     effect: DripEffect,
@@ -149,7 +150,7 @@ type BlookyError<T extends keyof BlookyErrorCauseMap> = Error & {
 };
 
 export {
-  Stream,Prop,DripperStream,FilterStream,MappedStream,MergedStream,Vertex,
+  Dripper,Stream,Prop,DripperStream,FilterStream,MappedStream,MergedStream,Vertex, 
   DripStrategy,ShortDripStrategy,DripEffect,PropEffect,DripResult,
   FlowingState,StreamBase,
   CollapseObserver,

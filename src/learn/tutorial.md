@@ -398,7 +398,7 @@ fxdom.defineEffectElements();
 const DataFetcher = prime(({ fetch$, $data, $fetchStart, $loading }) => ({
   div: [
     { button: "Fetch Data", $: { onclick: fetch$ } },
-    { p: $loading ? "Loading..." : ["Data: ", $data] },
+    { p: lift(([loading,data]) => loading ? "Loading..." : ["Data: ", $data] })($loading,$data),
     {
       "fx-effect": {
         "fx-sequence": [

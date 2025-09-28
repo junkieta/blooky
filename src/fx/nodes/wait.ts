@@ -20,9 +20,7 @@ export class WaitNodeDefinition extends NodeDefinition<'wait'> {
     const until = context.resolve<Prop<boolean>|PromisedProp<any>>(node.until);
     if("then" in until)
       await until;
-    else if(until())
-      return;
-    else
+    else if(!until())
       await Promise.resolve(when(p => p === true)(until));
   }
 }
