@@ -6,7 +6,7 @@ import {
   fx, 
   ref,
 } from "./blooky-fx";
-import { CollapseObserver, DripperStream } from "./blooky-types";
+import { CollapseObserver, Dripper } from "./blooky-types";
 import { FxNode, ExecContext, PreparedFx, ExecutionHandle, AppContext, FxRef } from "./fx/types";
 
 // ---- Abstract Base ----
@@ -74,7 +74,6 @@ class FxWaitElement extends EffectElement {
       ms = () => parseInt(msAttr);
     else
       ms = ref<number>(msAttr);
-    // 属性値をそのまま渡す。数値かrefかはprepareが解決する
     const until = this.hasAttribute("until") ? ref<boolean>(this.getAttribute("until")!) : undefined;
     return fx.wait({ms,until,id:this.id});
   }
@@ -253,7 +252,7 @@ class FxCollapseElement extends EffectElement {
     if (!streamKey) return fx.none();
 
     const valueKey = this.getAttribute("value");
-    if(valueKey) return fx.collapse(ref<any>(valueKey), ref<DripperStream<any>>(streamKey));
+    if(valueKey) return fx.collapse(ref<any>(valueKey), ref<Dripper<any>>(streamKey));
 
     let data: any;
     const raw = this.textContent.trim();
@@ -262,7 +261,7 @@ class FxCollapseElement extends EffectElement {
     } catch(err) {
       data = raw.length ? raw : undefined;
     }
-    return fx.collapse(data, ref<DripperStream<any>>(streamKey));
+    return fx.collapse(data, ref<Dripper<typeof data>>(streamKey));
   }
 }
 
@@ -407,7 +406,7 @@ class FxEffectElement extends FxContextElement {
   }
 
   connectedCallback() {
-    this.igniteFx(!this.hasAttribute("ignite") ? "quantum" : this.getAttribute("ignite") as CollapseObserver | "none");
+    this.igniteFx(!this.hasAttribute("ignite") ? "none" : this.getAttribute("ignite") as CollapseObserver | "none");
   }
 
   disconnectedCallback() {
