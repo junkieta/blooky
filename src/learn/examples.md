@@ -45,7 +45,7 @@ const decrement$ = stream();
 const reset$ = stream();
 
 // 状態管理
-const changes$ = merge<number>()([
+const changes$ = merge([
   map(() => 1)(increment$),
   map(() => -1)(decrement$),
   map(() => (current: number) => -current)(reset$) // リセット用関数
@@ -82,17 +82,21 @@ document.body.append(Counter({ $count, increment$, decrement$, reset$ }));
 **学習ポイント**: debounce、非同期処理、ローディング状態
 
 ```typescript
-import { stream, hold, map, filter } from 'blooky-fp';
+import { stream, hold, map, filter, merge, remap } from 'blooky-fp';
 import { jshtml, prime } from 'blooky-dom';
 import { fx, execute, prepare } from 'blooky-fx';
 
 // debounce付きの検索ストリーム
-const searchInput$ = stream({ type: 'debounce', delay: 300 });
-const $searchTerm = hold("")(searchInput$);
-const $isSearching = hold(false)(stream());
-const $results = hold([])(stream());
-
+const searchInput$ = stream<Event>({ type: 'debounce', delay: 300 });
+// 2文字以上の入力値が発生したストリームとして変換
+const termUpdated$ = filter<string>((term)=>term.length>=2)
+    (map<string,Event>((e)=>(e.target as HTMLInputElement).value)(searchInput$));
+// 検索文字列のProp
+const $searchTerm = hold("")(termUpdated$);
+// 検索を開始イベントのストリーム
+const searchRunning$ = stream<string>();
 // 検索API（モック）
+type SearchResult = { id: number, title: string }[];
 const searchAPI = async (term: string) => {
   await new Promise(r => setTimeout(r, 500));
   return [
@@ -101,17 +105,26 @@ const searchAPI = async (term: string) => {
     { id: 3, title: `Result for "${term}" #3` }
   ];
 };
+// 検索結果を受け取るストリーム
+const searchDone$ = stream<SearchResult>();
+// 検索結果配列
+const $results = hold([])(searchDone$);
 
-// 検索フロー
-const searchFlow = fx.sequence([
-  fx.call(ref("setSearching"), { arg: true }),
-  fx.call(ref("searchAPI"), { arg: ref("term"), id: "results" }),
-  fx.call(ref("setResults"), { arg: ref("#results") }),
-  fx.call(ref("setSearching"), { arg: false })
-]);
+// サーチAPIの実行タイミング制御
+const $searchAPIIgnite = hold("none")(merge([
+    map(()=>"quantum")(termUpdated$),
+    map(()=>"none")(searchDone$)
+]));
+
+// サーチ状況に応じたメッセージ、結果のProp
+const $searchStatus = hold({ p: "input search term" })(merge([
+    map(()=>({ p: "input search term" }))(termUpdated$),
+    map(()=>({ p: "search started..." }))(searchRunning$),
+    map((results)=>({ ul: results.map((r)=>({ li: r.title })) })(searchDone$)
+]));
 
 // UI
-const SearchBox = prime(({ $searchTerm, $isSearching, $results, searchInput$ }) => ({
+const SearchBox = prime(({ $searchTerm, searchInput$, $searchStatus, $searchAPIIgnite, searchDone$ }) => ({
   div: [
     { h2: "Live Search" },
     {
@@ -119,27 +132,17 @@ const SearchBox = prime(({ $searchTerm, $isSearching, $results, searchInput$ }) 
       $: {
         type: "search",
         placeholder: "Type to search...",
-        oninput: (e) => {
-          const term = e.target.value;
-          collapse(drip(term)(searchInput$));
-          if (term.length >= 2) {
-            execute(prepare(searchFlow, {
-              term,
-              searchAPI,
-              setSearching: (v) => $isSearching.update(v),
-              setResults: (v) => $results.update(v)
-            }));
-          }
-        }
+        oninput: searchInput$
       }
     },
     {
-      div: $isSearching 
-        ? { p: "Searching..." }
-        : {
-            ul: $results.map(r => ({ li: r.title }))
-          }
-    }
+      div: $searchStatus
+    },
+    { "fx-effect": [
+        { "fx-collapse": null, $: { dripper: searchRunning$, value: "true" } },
+        { "fx-call": null, $: { fn: searchAPI, arg: $searchTerm, id: "searchResult" } },
+        { "fx-collapse": null, $: { dripper: searchDone$, value: "#searchResult" } }
+    ], $: { ignite: $searchAPIIgnite }}
   ]
 }));
 ```
@@ -341,11 +344,11 @@ const InfiniteScroll = prime(({ $items, $isLoading, $hasMore, loadMore$ }) => ({
       $: { class: "items-container" }
     },
     {
-      div: remap((isLoading, hasMore) => {
+      div: lift(([isLoading, hasMore]) => {
         if (isLoading) return { p: "Loading..." };
         if (!hasMore) return { p: "No more items" };
         return null;
-      })(lift((a, b) => [a, b])([$isLoading, $hasMore])),
+      })([$isLoading, $hasMore])),
       $: { 
         id: "sentinel",
         class: "loading-indicator"
