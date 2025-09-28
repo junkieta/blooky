@@ -1,8 +1,7 @@
 /**
- * blooky.ts
+ * blooky-fp.ts
  * 関数型のリアクティブプログラミングをtypescriptで行うためのライブラリ。
  */
-
 import { BlookyError, BlookyErrorCauseMap, CollapseObserver, CollapseReservation, DevConfigErrorCause, DripEffect, DripperStream, DripResult, DripStrategy, FilterStream, FlowingState, MappedStream, MergedStream, Prop, PropEffect, ShortDripStrategy, Stream, Vertex } from "./blooky-types";
 
 /**
@@ -133,7 +132,7 @@ const merge = <A> (s:Stream<A>[], f?:(a:A,b:A)=>A) : MergedStream<A> => {
  * @param s 
  * @returns 
  */
-const filter = <A>(f:Predicate<A>) : (s:Stream<A>)=>FilterStream<A> => (s:Stream<A>) : FilterStream<A> => {
+const filter = <A>(f:Predicate<A>) => (s:Stream<A>) : FilterStream<A> => {
     const _s: FilterStream<A> = {
         filterFn: toPredicate(f),
         next: new Set(),
@@ -193,8 +192,6 @@ function pipe<A>(v:A,...fns:any[]) { return fns.reduce((v,f)=>f(v),v) }
 
 /**
  * 引数がストリームであるかを判別する。
- * @param v 
- * @returns 
  */
 const isStream = <A>(v:unknown) : v is Stream<A> => 
     v != null && typeof v === "object" && "next" in v && "lazyNext" in v;
@@ -422,7 +419,7 @@ const lift = <A>(f: (values: any[]) => A) => (props: Prop<any>[]) : Prop<A> => {
   type reservation = [number, any];
   const valueFn = () => f(props.map(p => p()));
   // Streamを持っているPropだけを集める
-  const streams = props.flatMap((p, i) => PROP_FROM.has(p) ? map((v) => [[i, v]] as reservation[])(PROP_FROM.get(p)!) : []);
+  const streams: Stream<reservation[]>[] = props.flatMap((p, i) => PROP_FROM.has(p) ? map((v) => [[i, v]] as reservation[])(PROP_FROM.get(p)!) : []);
   const mergedStream = merge<[number,Stream<any>][]>(streams, (a, b) => a.concat(b));
   const transformed = map((updates: reservation[]) => {
     const map = new Map(updates);
@@ -527,18 +524,29 @@ const beat$ = stream<number>();
 const clock: Prop<number> = hold(performance.now())(beat$);
 
 // dobounce で一時保管するDrip情報
-const PendingEffect = new WeakMap<DripperStream<any>,(n:number)=>void>();
+const PendingEffect = new WeakMap<DripperStream<any>,{
+    pid: ReturnType<typeof setTimeout>
+    resolvers: ((v:number)=>void)[]
+}>();
+
 // Throttleで処理中のドリッパーと時刻
-const ThrottleRecord = new WeakMap<DripperStream<any>, number>();
+const ThrottleRecord = new WeakMap<DripperStream<any>, {
+    time: number
+    resolvers: ((v:number)=>void)[]
+}>();
+
 // collapse用のキュー。effectとそのpromise解決関数を保管。
 const RESERVATIONS : CollapseReservation[] = [];
+// RESERVATIONSに登録し、tickを予約する
+const enqueue = (reservation:CollapseReservation) => {
+    if (!RESERVATIONS.length)
+        queueMicrotask(()=>tick(performance.now()));
+    RESERVATIONS.push(reservation);
+};
+
 // effectの実行スケジュールを組む。
 // dripのstrategyで実行タイミングを調節し、実行処理はtickに投げる
 const collapse = async (effect:DripEffect) => new Promise<number>((resolve, reject) => {
-    const enqueue = () => {
-        if (!RESERVATIONS.length) queueMicrotask(()=>tick(performance.now()));
-        RESERVATIONS.push({ effect, resolve, reject });
-    };
     const dripper = effect.dripper;
     const strategy = dripper.dripStrategy;
     const now = performance.now();
@@ -546,28 +554,49 @@ const collapse = async (effect:DripEffect) => new Promise<number>((resolve, reje
     switch (strategy.type) {
 
         case 'immediate':
-            enqueue();
+            enqueue({ effect, resolve, reject });
             break;
 
         case 'debounce':
-            if(PendingEffect.has(dripper)) PendingEffect.get(dripper)!(now);
-            const timerId = setTimeout(enqueue, strategy.delay);
-            PendingEffect.set(dripper, (n: number) => {
-                clearTimeout(timerId);
-                reject(n);
-            });
+            let pending: { pid: ReturnType<typeof setTimeout>, resolvers: ((t:number)=>void)[] };
+            if(PendingEffect.has(dripper)) {
+                pending = PendingEffect.get(dripper)!;
+                pending.resolvers.push(resolve);
+                clearTimeout(pending.pid);
+            } else {
+                pending = { pid: 0 as any, resolvers: [resolve] }
+                PendingEffect.set(dripper, pending);
+            }
+            pending.pid = setTimeout(()=>{
+                PendingEffect.delete(dripper);
+                enqueue({ effect, reject, resolve: (t:number) => pending.resolvers.forEach((r)=>r(t)) });
+            }, strategy.delay);
             break;
             
-        case 'throttle': 
-            if(ThrottleRecord.has(dripper)) {
-                const lastRecord = ThrottleRecord.get(dripper)!;
-                if((now - lastRecord) < strategy.interval) {
-                    reject(now);
+        case 'throttle':
+            let lastRecord: { time: number, resolvers: ((n:number)=>void)[] }
+            if(!ThrottleRecord.has(dripper)) {
+                // 新しいスロット開始
+                lastRecord = { time: now, resolvers: [resolve] };
+                ThrottleRecord.set(dripper, lastRecord);
+            } else {
+                lastRecord = ThrottleRecord.get(dripper)!;
+                if((now - lastRecord.time) < strategy.interval) {
+                    // 実行待ちに溜めるだけ
+                    lastRecord.resolvers.push(resolve);
                     break;
                 }
+                // 前回がintervalより前なので継続
+                lastRecord.time = now;
             }
-            ThrottleRecord.set(dripper, now);
-            enqueue();
+            enqueue({
+                effect,
+                reject,
+                resolve: (t:number) => {
+                    lastRecord.resolvers.forEach((r)=>r(t));
+                    lastRecord.resolvers.length = 0;
+                }
+            });
             break;
 
     }
@@ -594,9 +623,7 @@ function registerTickHandler(observer: CollapseObserver, handler: (effect: DripE
 // tickハンドラをそれぞれのobserverに合わせて全て呼び出した後、Propを更新する。
 function tick(now: number) {
     // 現時点のRESERVATIONSを移す
-    const reservations = RESERVATIONS.slice(0);
-    // 元の予約は消去
-    RESERVATIONS.length = 0;
+    const reservations = RESERVATIONS.splice(0);
     // 実行キュー作成
     const queue = reservations.map(({effect})=>effect);
     // 時刻更新を追加
@@ -687,10 +714,10 @@ const blooky = {
 
 export {
     drip,stream,vertex,
-    isStream,isDripperStream,isChainedProp,isVertex,
+    isStream,isDripperStream as isDripper,isDripperStream,isChainedProp,isVertex,
     clear,
     merge,junction,map,filter,
-    hold,accum,lift,remap,when,
+    hold,accum,lift,remap,when,NotThen,
     proxy,
     pipe,
     clock,collapse,registerTickHandler,
