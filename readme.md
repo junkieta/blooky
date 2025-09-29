@@ -1,101 +1,82 @@
 # blooky.js
 
-`blooky.js`は、TypeScript開発者のための関数型リアクティブプログラミング（FRP）フレームワークです。複雑な非同期処理や状態管理を直感的に扱えるようにし、**コーディング体験そのものの進化**を目指しています。
+**宣言的オーケストレーション・フレームワーク** *データフロー、UI、そして複雑な副作用までを、一つのフローとして統合する*
 
-単にUIを構築するライブラリではありません。`blooky.js`は、アプリケーションを\*\*空間 (`fp`)、作用 (`fx`)、文脈 (`fc`)、そして時間 (`ft`)\*\*という4つの次元で捉え、それらを宣言的かつ合成可能な形で操作するための、一貫した哲学とツール群を提供します。
+## Current Status: Professional & Experimental
 
-これにより、開発における思考は、 HOW（どのように実装するか）から \*\*WHAT（何がしたいのか）\*\*を指向するものになります。
-
------
-
-## 哲学と4つの柱
-
-`blooky.js`は、4つのコアモジュール（柱）によって構成されています。これらは互いに連携し、堅牢で、予測可能で、そして書くのが楽しいアプリケーション開発を実現します。
-
-  * ### `fp` (Functional Programming) - データフローと状態の源泉を作る
-
-    全ての基本となる、データの流れ（**空間**）を定義するモジュールです。
-
-      * **`Stream`**: 未来に発生するイベントの「可能性の流れ」。全てのリアクティビティの源泉です。
-      * **`Prop`**: `Stream`から生成される「確定した状態」。UIに直接バインドできます。
-
-  * ### `fx` (Effects) - 副作用を管理する
-
-    副作用（**作用**）のエンジンです。宣言的なオーケストレーションエンジンです。
-
-      * **DOMとしての副作用**: API通信やタイマーといった副作用のフローを、`<fx-wait>`や`<fx-call>`のようなカスタム要素として、DOM上に宣言的に記述します。
-      * **`fc`との連携**: `fx`が利用する`Prop`や関数は、`fc`によって提供されるコンテキストを通して、安全に注入することができます。
-
-  * ### `fc` (Functional Context) - 依存関係と状態をまとめる
-
-    アプリケーションの状態、依存関係、そしてその「**契約**」を定義する、フレームワークのつなぎ役です。
-
-      * **設計図 (Blueprint)**: プレーンなオブジェクトから、プロパティの可視性や不変性といったルールを記述した「設計図」を生成します。
-      * **TypeScriptユーティリティ型の再現**: `pick`や`omit`といった、慣れ親しんだ語彙で、実行時のコンテキストを安全かつ宣言的に操作できます。
-
-  * ### `ft` (Functional Time) - 時間を操作する
-
-    アプリケーションの「**時間**」を操作し、状態の歴史を管理する、強力な時間旅行エンジンです。
-
-      * **自動的なスナップショット**: `fc`によって追跡対象とされたコンテキストの状態は、`ft.snapshot()`を呼び出すことで、その瞬間の`Effect`と共にプロトタイプチェーンに記録されます。
-      * **ブランチとチェックアウト**: `undo`/`redo`はもちろん、「もしも」の歴史をブランチとして派生させ、`checkout`で自在に時間軸を移動できます。デバッグやテストのあり方を根底から変える可能性を秘めています。
+> ⚠️ **コミュニティプレビュー** \> `blooky`のコアアーキテクチャは安定しており、`blooky`が解決しようとする課題に対する明確なビジョンを持っています。しかしプロダクトとして発展途上であり、APIはまだ変更される可能性があります。エコシステムも未整備のため、現時点での本番環境（プロダクション）での利用は推奨しません。アプローチの可能性を検証するために、コミュニティからのフィードバックを求めています。
 
 -----
 
-## クイックスタート
+## What is blooky?
 
-以下は、`blooky.js`の要素を使った、シンプルなカウンターアプリケーションの例です。
+現代のWebアプリケーション開発は、UI（React/Vue）、状態管理（Redux/Pinia）、副作用（Saga/Query）といった、強力ですが**分断された**ツール群を「接着剤」となるコードで繋ぎ合わせる複雑な作業になりがちです。
 
-### `index.html`
+`blooky`はこの分断に終止符を打ち、**シームレスに統合するアーキテクチャ**として設計したものです。検索、ストリーミング、ワークフローのように、UIと非同期処理が密接に絡むアプリケーションで特に力を発揮します。
 
-```html
-<!doctype html>
-<html lang="ja">
-<head>
-  <meta charset="UTF-8" />
-  <title>Blooky Quick Start</title>
-</head>
-<body>
-  <div id="app"></div>
-  <script type="module" src="/src/main.ts"></script>
-</body>
-</html>
-```
+  * **`blooky-fp` (Reactive Core)**: FRPの思想に基づき、予測可能でメモリ安全なデータフローを構築します。
+  * **`blooky-dom` (Declarative UI)**: リアクティブな状態を、仮想DOMを介さず効率的にDOMに反映させます。
+  * **`blooky-fx` (Orchestration Engine)**: アプリケーション全体の複雑な非同期処理やシナリオを、HTMLタグのように宣言的に記述し、**実行過程そのものを可視化・デバッグ**可能にします。
 
-### `src/main.ts`
+`blooky`の主眼はこれらの要素を「寄せ集める」のではなく、\*\*「オーケストレーション（指揮）」\*\*という統一的な視点から設計し、開発者が本質的なロジックの記述に集中できる、これまでにない開発体験を提供することにあります。
+
+-----
+
+## Core Features
+
+  * ✨ **統一されたアーキテクチャ**: 状態、UI、副作用の間に、もはや「接着剤」は必要ありません。
+  * ✍️ **宣言的な副作用**: `async/await`の連鎖やコールバック地獄を、`<fx-sequence>`や`<fx-race>`といった見通しの良いフロー定義に置き換えます。
+  * 🔍 **圧倒的なデバッグ体験**: `devtools`が副作用のライフサイクルをリアルタイムに可視化。複雑な非同期処理が「見てわかる」ようになります。
+  * 🔒 **型安全**: TypeScriptの能力を引き出し、FRPの複雑な型推論をスムーズに行えます。
+  * 🧠 **自動メモリ管理**: `FinalizationRegistry`や`WeakMap`を活用し、不要になった`Stream`や`Prop`の参照を自動的にクリーンアップします。
+
+### Code at a Glance
 
 ```typescript
-import { stream, accum, merge, map } from "./blooky-fp";
-import { jshtml } from "./blooky-dom";
-import { ft } from "./blooky-ft";
+// 1. debounce戦略を持つStreamを定義
+const searchInput$ = stream<Event>({ type: 'debounce', delay: 300 });
+const $query = hold("")(map(e => e.target.value.trim())(searchInput$));
+const $isQueryPrepared = remap((text) => text != null && text.length > 1)($query);
 
-// --- 1. コンテキストを定義する ---
-// 複雑なものが必要なら、fc.plueprint->buildを用いた設計と生成がよい。ここではシンプルに変数を用いる。
+// 2. UIを定義
+const SearchUI = prime(() => ([
+  { input: null, $: { oninput: searchInput$ } },
+  { p: ["Searching for: ", $query] }
+]));
 
-// 変数の推奨命名ルール: fpのDripperStreamは末尾に$
-const increment$ = stream<void>();
-const decrement$ = stream<void>();
-// 変数の推奨命名ルール: fpのPropは先頭に$
-const $count = 
-  accum((c, v) => c + v, 0)
-    (merge<number>()([
-      map(() => 1)(increment$),
-      map(() => -1)(decrement$)
-    ]));
-const log = (msg) => console.log(msg);
-
-// --- 2. UIを定義する ---
-const AppUI = jshtml({
-  main: [
-    { h1: ["Count: ", $count] },
-    // UIイベントをStreamに接続
-    { button: "+", $: { onclick: increment$ } },
-    { button: "-", $: { onclick: decrement$ } },
-    // Prop($count)は直接呼び出してもよい
-    { button: "Log", $: { onclick: () => log(`Count is: ${$count()}`) } }
+// 3. 副作用を定義
+const SearchEffect = prime(() => ({
+  "fx-effect": [
+    { "fx-wait": null, $: { until: $isQueryPrepared } },
+    { "fx-call": null, $: { fn: api.search, arg: $query, id: "users" } },
+    { "fx-collapse": null, $: { dripper: fetchUsers$, value: ref("#users") } }
   ]
-});
+}));
 
-// --- 3. マウント ---
-document.getElementById('app')?.append(AppUI);
+// 4. contextで結合し、マウント
+const context = { searchInput$, $query, api, $isQueryPrepared, fetchUsers$ };
+document.body.append(SearchUI(context), SearchEffect(context));
 ```
+
+-----
+
+-----
+
+<!-- 準備中 --
+
+## Getting Started & Contribution
+
+`blooky`の思想に共感し、この旅に参加してくれるコントリビューターを歓迎します！
+
+  * **📖 Tutorial**: [（ここにチュートリアルへのリンクを設置）]
+  * **🔧 API Reference**: [（ここにAPIリファレンスへのリンクを設置）]
+
+インストール:
+
+```bash
+npm install blooky
+```
+
+バグ報告、機能提案、そして`blooky`の思想に関するディスカッションは、GitHubのIssuesやDiscussionsでいつでもお待ちしています。
+
+-->
