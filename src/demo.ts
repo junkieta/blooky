@@ -110,7 +110,7 @@ const EffectRenderer = prime(({
     "fx-effect": 
     [
         { "fx-context": [
-            { "fx-collapse": jshtml.$({ dripper: confirmQuestionActivated$, value: "yieldedValue" }) },
+            { "fx-collapse": jshtml.$({ dripper: confirmQuestionActivated$, value: "$_" }) },
             { "fx-wait": jshtml.$({ until: $confirmAnswerResolved }) },
             { "fx-return": jshtml.$({ value: $selectedConfirmAnswer }) }
             ],
@@ -136,7 +136,7 @@ const EffectRenderer = prime(({
             $: { by: "#confirmResult" }
         }
     ],
-    $: { "onsave": save$, },
+    $: { "onsave": save$, ignite: "quantum" },
 }));
 
 // Stream/Prop構造のdot
