@@ -4,33 +4,22 @@
  * 簡易な仕様でDOMを構築しつつ、Streamを利用した更新管理も行う。
  */
 import type { V_DATASET, V_STYLE, V_CLASSLIST, V_EVENTLISTENER, V_STRING, WritableCSSProperty, JSHTMLElementSource, JSHTMLAttrSource, JSHTMLNodeSource, JSHTMLAttributeMapSource, JSHTMLAttrRuntime, JSHTMLNodeRuntime, JSHTMLNodeSourceType, JSHTMLExtractedElementSource, JSHTMLNodeFactory, JSHTMLNodeSourceAnalyzer, BlookyMutationEvent, JSHTMLAttrAnalyzer, JSHTMLAttrBuilder } from "./blooky-dom-types";
-import { registerTickHandler, isDripper, drip, collapse, isChainedProp, blooky, stream } from "./blooky-fp";
+import { registerCollapseObserver, isDripper, drip, collapse, isChainedProp, blooky, stream } from "./blooky-fp";
 import { Prop, Dripper, Stream, BlookyError } from "./blooky-types";
 
 // DOMをfpのtickに結び付ける
-registerTickHandler("visual", (effects) => {
-    const update_target = effects.flatMap((e) => [...e.effects.keys()].flatMap((p)=>PROP_BRIDGE_RECORD.has(p) ? PROP_BRIDGE_RECORD.get(p)! : []));
-    // ツリーから外れたものと、更新の発生したPropに包含されているPropはbindから外す
-    const isGCTarget = (a:PropBridge) => !a.isConnected() || update_target.some((b)=>b.contains(a)&&a!==b);
-    // メモリ解放
-    PROP_BRIDGE_RECORD.forEach((bridge,prop)=>{
-        if(!Array.isArray(bridge)) {
-            if(isGCTarget(bridge))
-                PROP_BRIDGE_RECORD.delete(prop);
-        } else {
-            const filtered = bridge.filter((b)=>!isGCTarget(b));
-            if(!filtered.length) 
-                PROP_BRIDGE_RECORD.delete(prop);
-            else if(filtered.length < bridge.length)
-                PROP_BRIDGE_RECORD.set(prop, filtered);
-        }
-    });
-    // メモリに確保されているbridgeからアップデートする
-    effects.forEach((e)=>e.effects.forEach((v,p)=>{
+registerCollapseObserver("visual", (dripEffects) => {
+    // DOMに関係するPropを残す
+    const update_target = dripEffects.flatMap((e) => [...e.effects.keys()].flatMap((p)=>PROP_BRIDGE_RECORD.has(p) ? PROP_BRIDGE_RECORD.get(p)! : []));
+    // ガベージコレクション
+    garbageCollectForBridgeRecords(update_target);
+    // メモリに残ったbridgeはアップデートする
+    dripEffects.forEach(({effects})=>effects.forEach((v,p)=>{
         if(!PROP_BRIDGE_RECORD.has(p)) return;
         const prev = p() as any;
-        const bridges = update_target.filter((bridge)=>bridge.prop === p);
-        bridges.forEach((bridge)=>bridge.update(v,prev));
+        if(prev !== v) return;
+            update_target.filter((bridge)=>bridge.prop === p)
+                .forEach((bridge)=>bridge.update(v,prev));
     }));
 })
 
@@ -57,6 +46,28 @@ const bindPropBridge = (b:PropBridge) => {
             PROP_BRIDGE_RECORD.set(p, [value, b]);
         }
     }
+}
+
+/**
+ * ツリー内に残っていてかつ最も外側を管轄しているPropだけを残す
+ * @param bridges ガベージコレクトの候補となっているbridgeの配列
+ */
+const garbageCollectForBridgeRecords = (bridges: PropBridge[]) => {
+    // ツリーから外れたものと、他のPropに包含されているPropはbindから外す
+    const isGCTarget = (a:PropBridge) => !a.isConnected() || bridges.some((b)=>b.contains(a)&&a!==b);
+    // メモリ解放
+    PROP_BRIDGE_RECORD.forEach((bridge,prop)=>{
+        if(!Array.isArray(bridge)) {
+            if(isGCTarget(bridge))
+                PROP_BRIDGE_RECORD.delete(prop);
+        } else {
+            const filtered = bridge.filter((b)=>!isGCTarget(b));
+            if(!filtered.length) 
+                PROP_BRIDGE_RECORD.delete(prop);
+            else if(filtered.length < bridge.length)
+                PROP_BRIDGE_RECORD.set(prop, filtered);
+        }
+    });
 }
 
 // aにbが含まれているならtrue
@@ -160,7 +171,6 @@ abstract class AbstractAttrPropBridge<A> implements PropBridgeInterface<A> {
 class AttrPropBridge extends AbstractAttrPropBridge<JSHTMLAttrSource> {
     generatedListener?: EventListenerOrEventListenerObject
     update(next: JSHTMLAttrSource, prev: JSHTMLAttrSource){
-        if(next === prev) return;
         const {name,target} = this;
         if(this.generatedListener) {
             target.removeEventListener(name.slice(2), this.generatedListener);
@@ -187,7 +197,6 @@ class AttrPropBridge extends AbstractAttrPropBridge<JSHTMLAttrSource> {
 
 class StylePropBridge extends AbstractAttrPropBridge<V_STRING> {
     update(v: V_STRING, prev: V_STRING) {
-        if(v === prev) return;
         setCSSProperty(this.name, v != null ? v + "" : "")(this.target.style);
         this.dispatchPropUpdateEvent("style-prop-update", v, prev);
     }
@@ -195,7 +204,6 @@ class StylePropBridge extends AbstractAttrPropBridge<V_STRING> {
 
 class DatasetPropBridge extends AbstractAttrPropBridge<V_STRING> {
     update(v: V_STRING, prev: V_STRING) {
-        if(v === prev) return;
         this.target.dataset[this.name] = v == null ? "" : v+"";
         this.dispatchPropUpdateEvent("dataset-prop-update",v,prev);
     }
@@ -503,7 +511,7 @@ const jshtmlAttrBuilder: JSHTMLAttrBuilder = {
 
 
 /**
- * 宣言的なレンダラーを生成する
+ * 宣言的なレンダラーを生成するためのヘルパー
  * ex.
  * interface SenderContext { send: Dripper<MouseEvent> }
  * const render = prime(({send}:SenderContext)=>({ a:"send message", $: { onclick: send } }));
