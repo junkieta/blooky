@@ -614,7 +614,7 @@ const tickHandlers: { [key in CollapseObserver]: Set<(effect:DripEffect[])=>void
 }
 
 // ミドルウェアの登録用関数
-function registerTickHandler(observer: CollapseObserver, handler: (effect: DripEffect[]) => void) {
+function registerCollapseObserver(observer: CollapseObserver, handler: (effect: DripEffect[]) => void) {
   tickHandlers[observer].add(handler);
   return () => tickHandlers[observer].delete(handler);
 }
@@ -720,7 +720,7 @@ export {
     hold,accum,lift,remap,when,NotThen,
     proxy,
     pipe,
-    clock,collapse,registerTickHandler,
+    clock,collapse,registerCollapseObserver,
     blooky
 };
 
