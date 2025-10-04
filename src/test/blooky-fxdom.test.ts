@@ -110,7 +110,7 @@ describe('blooky-fx-dom.ts', () => {
     describe('FxEffectElement Lifecycle', () => {
 
         it('should call prepare and execute on connectedCallback', async () => {
-            const el = jshtml({ "fx-effect": [] });
+            const el = jshtml({ "fx-effect": [], $: { ignite: "quantum" } });
             document.body.appendChild(el);
             
             // connectedCallback内のqueueMicrotaskを実行
@@ -133,7 +133,7 @@ describe('blooky-fx-dom.ts', () => {
             const mockCancel = jest.fn();
             (execute as jest.Mock).mockReturnValue({ cancel: mockCancel, done: new Promise(() => {}) });
 
-            const el = jshtml({ "fx-effect": [] }) as FxEffectElement;
+            const el = jshtml({ "fx-effect": [], $: { ignite: "quantum" } }) as FxEffectElement;
             document.body.appendChild(el);
             await jest.runAllTicks();
 
