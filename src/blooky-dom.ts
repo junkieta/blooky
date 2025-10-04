@@ -8,19 +8,19 @@ import { registerCollapseObserver, isDripper, drip, collapse, isChainedProp, blo
 import { Prop, Dripper, Stream, BlookyError } from "./blooky-types";
 
 // DOMをfpのtickに結び付ける
-registerCollapseObserver("visual", (dripEffects) => {
+registerCollapseObserver("visual", (dripEffect) => {
     // DOMに関係するPropを残す
-    const update_target = dripEffects.flatMap((e) => [...e.effects.keys()].flatMap((p)=>PROP_BRIDGE_RECORD.has(p) ? PROP_BRIDGE_RECORD.get(p)! : []));
+    const update_target = [...dripEffect.effects.keys()].flatMap((p)=>PROP_BRIDGE_RECORD.has(p) ? PROP_BRIDGE_RECORD.get(p)! : []);
     // ガベージコレクション
     garbageCollectForBridgeRecords(update_target);
     // メモリに残ったbridgeはアップデートする
-    dripEffects.forEach(({effects})=>effects.forEach((v,p)=>{
+    dripEffect.effects.forEach((v,p)=>{
         if(!PROP_BRIDGE_RECORD.has(p)) return;
         const prev = p() as any;
-        if(prev !== v) return;
+        if(prev === v) return;
             update_target.filter((bridge)=>bridge.prop === p)
                 .forEach((bridge)=>bridge.update(v,prev));
-    }));
+    });
 })
 
 // PropとDOMのバインドに責任を持つ

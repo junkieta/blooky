@@ -13,15 +13,18 @@ type StreamBase<A,T> = {
     lazyNext: Set<MergedStream<A>>
 } & T;
 
-type DripStrategy = 
-  | { type: 'immediate' }  // デフォルト：即座実行
+type DripStrategy = { listener?: Function } & (
+  | { type: 'immediate' }
   | { type: 'debounce', delay: number }
-  | { type: 'throttle', interval: number };
+  | { type: 'throttle', interval: number }
+) ;
+
 // DripStrategyのシンタックスシュガー
-type ShortDripStrategy = 
-  | { immediate: true }  
+type ShortDripStrategy = { listener?: Function } & (
+  | { immediate: Function|true }
   | { debounce: number }
-  | { throttle: number };
+  | { throttle: number }
+);
 
 type DripperStream<A> = StreamBase<A, {
     dripStrategy: DripStrategy
@@ -70,17 +73,14 @@ type FlowingState = [PropEffect<unknown>[], [MergedStream<any>,any][]];
 type Prop<A> = ()=>A;
 
 // Drip一回分のEffect
-type DripEffect = {
-  dripper: DripperStream<any>
+type DripEffect<A> = {
+  value: A,
+  dripper: DripperStream<A>
   effects: Map<Prop<any>,any>;
 }
 // 各Propとその値を示す、最小のEffect。
 type PropEffect<A> = [Prop<A>,A]
 
-type DripResult<A,M="deny"> = M extends 'await'
-  ? Promise<DripEffect>
-  : DripEffect;
- 
 type CollapseObserver = 
   | 'immediate'    // 即座観測者
   | 'visual'       // 視覚観測者（RAF）
@@ -89,7 +89,7 @@ type CollapseObserver =
   | 'thrown'       // 理外観測者（error）
 
 type CollapseReservation = {
-    effect: DripEffect,
+    effect: DripEffect<any>,
     resolve: (v:number)=>void,
     reject: (v:BlookyError<keyof BlookyErrorCauseMap>[])=>void
 }
@@ -151,7 +151,7 @@ type BlookyError<T extends keyof BlookyErrorCauseMap> = Error & {
 
 export {
   Dripper,Stream,Prop,DripperStream,FilterStream,MappedStream,MergedStream,Vertex, 
-  DripStrategy,ShortDripStrategy,DripEffect,PropEffect,DripResult,
+  DripStrategy,ShortDripStrategy,DripEffect,PropEffect,
   FlowingState,StreamBase,
   CollapseObserver,
   CollapseReservation,

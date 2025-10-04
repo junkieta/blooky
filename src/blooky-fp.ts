@@ -2,7 +2,7 @@
  * blooky-fp.ts
  * 関数型のリアクティブプログラミングをtypescriptで行うためのライブラリ。
  */
-import { BlookyError, BlookyErrorCauseMap, CollapseObserver, CollapseReservation, DevConfigErrorCause, DripEffect, DripperStream, DripResult, DripStrategy, FilterStream, FlowingState, MappedStream, MergedStream, Prop, PropEffect, ShortDripStrategy, Stream, Vertex } from "./blooky-types";
+import { BlookyError, BlookyErrorCauseMap, CollapseObserver, CollapseReservation, DevConfigErrorCause, DripEffect, DripperStream, DripStrategy, FilterStream, FlowingState, MappedStream, MergedStream, Prop, PropEffect, ShortDripStrategy, Stream, Vertex } from "./blooky-types";
 
 /**
  * ガベージコレクション用クリーナー関数
@@ -90,12 +90,13 @@ const toPredicate = <A>(predicate: Predicate<A>) =>
  * ストリーム状態を生成する。
  */
 const stream = <A>(strategy: ShortDripStrategy|DripStrategy = { type: "immediate" }) : DripperStream<A> => {
+    const listener = strategy.listener;
     if(!("type" in strategy))
         return "throttle" in strategy
-            ? stream({ type: "throttle", interval: strategy.throttle })
+            ? stream({ type: "throttle", interval: strategy.throttle, listener })
             : "debounce" in strategy
-            ? stream({ type: "debounce", delay: strategy.debounce })
-            : stream({ type: "immediate" });
+            ? stream({ type: "debounce", delay: strategy.debounce, listener })
+            : stream({ type: "immediate", listener: typeof strategy.immediate === "function" ? strategy.immediate : listener });
     const s: DripperStream<A> = {
         next: new Set(),
         lazyNext: new Set(),
@@ -282,107 +283,16 @@ const flowLazy = <A>(v:A, allowPromise = false) => (s:Stream<A>) : FlowingState 
     return [...m].map(([s,v])=>flowLazy(v.reduce(s.reduceFn))(s)).reduce(concatTuple, [updates,[]]);
 }
 
-// 戻り値の型を定義
-type AsyncFlowState = {
-  effects: PropEffect<any>[],
-  waiting: [MergedStream<any>, any][]
-};
-
-/**
- * 【内部用】非同期でグラフを走査し、Effectと待機リストを収集する
- */
-const collectFlowStateAsync = async <A>(v: A, s: Stream<A>): Promise<FlowingState> => {
-  // streamToFlowingStateは同期的
-  const [initialEffects, initialWaiting] = streamToFlowingState(v)(s);
-  
-  const finalEffects = [...initialEffects];
-  const finalWaiting = [...initialWaiting];
-
-  // s.next を非同期で処理
-  for (const child of s.next) {
-    if ("filterFn" in child && !child.filterFn(v)) continue;
-    
-    let nextValue: any = v;
-    if ("mapFn" in child) {
-      const result = child.mapFn(v);
-      nextValue = result instanceof Promise ? await result : result;
-    }
-    
-    // 再帰的に収集
-    const [effects, waiting] = await collectFlowStateAsync(nextValue, child);
-    finalEffects.push(...effects);
-    finalWaiting.push(...waiting);
-  }
-
-  // s.lazyNext はここでは処理せず、そのまま待機リストに追加
-  for (const child of s.lazyNext) {
-    finalWaiting.push([child, v]);
-  }
-
-  return [finalEffects,finalWaiting];
-};
-
-/**
- * 非同期版のflow。AsyncMappedStreamとlazyNextを処理できる。
- */
-async function* flowAsync<A>(v: A, s: Stream<A>): AsyncGenerator<PropEffect<unknown>> {
-  // --- フェーズ0：Promiseは即await 
-  if(v instanceof Promise) return flowAsync(await v, s);
-
-  // --- フェーズ1：収集 ---
-  // ヘルパーを呼び出し、グラフ全体の実行計画を一度に収集する
-  const [effects, waiting] = await collectFlowStateAsync(v, s);
-
-  // --- フェーズ2：実行と遅延処理 ---
-  // 1. まず、直接の副作用（Propの更新）を全てyieldする
-  for (const effect of effects) {
-    yield effect;
-  }
-  // 2. lazyNextの処理を行う
-  if (waiting.length === 0) {
-    return; // 遅延処理がなければ終了
-  }
-  // 2a. 待機リストを、合流先のMergedStreamごとにグループ化する
-  const waitingMap = waiting.reduce((map, [stream, value]) => {
-    map.set(stream, (map.get(stream) || []).concat(value));
-    return map;
-  }, new Map<MergedStream<any>, any[]>());
-
-  // 2b. グループごとにreducerを適用し、flowAsyncを再帰的に呼び出す
-  for (const [mergedStream, values] of waitingMap.entries()) {
-    if (values.length > 0) {
-      const reducedValue = values.reduce(mergedStream.reduceFn);
-      // 解決した値で、再びflowAsyncの実行を委譲する
-      yield* flowAsync(reducedValue, mergedStream);
-    }
-  }
-}
-
 /**
  * 起点となるストリームに時変値を流し込み、関連する時変値で構成されたEffectを返す。
  * @param s 
  * @returns 
  */
-function drip<
-  A,
-  M extends 'deny' | 'allow' | 'await' = 'deny' // モードをジェネリック型Mとして定義
->(value:A, options?: { acceptPromise?: M }) : (d:DripperStream<A>)=>DripResult<A,M> {
-    // デフォルトは最も安全な 'deny'
-    const mode = options?.acceptPromise ?? 'deny';
-    return (mode === 'await'
-        // "await"モードの場合は、非同期エンジンを呼び出し、Promise<Effect>を返す
-        ? async (dripper:DripperStream<A>) => {
-            const effects = new Map<Prop<any>,any>();
-            for await (const [p,v] of flowAsync(value, dripper)) effects.set(p,v);
-            return { dripper, effects }
-        }
-        // "deny" または "allow" の場合は、同期的エンジンを呼び出し、Effectを返す
-        : (dripper:DripperStream<A>) => ({
-            dripper,
-            effects: new Map(flowLazy(value, mode === "allow")(dripper)[0])
-        })
-    ) as (d:DripperStream<A>) => DripResult<A,M>;
-}
+const drip = <A>(value:A, options?: { acceptPromise: boolean }) => (dripper:DripperStream<A>) : DripEffect<A> => ({
+    dripper,
+    value,
+    effects: new Map(flowLazy(value, options && options.acceptPromise === true)(dripper)[0])
+});
 
 
 /**
@@ -521,7 +431,7 @@ function proxy<T, K extends keyof T>(obj: T, key: K): [DripperStream<T[K]>, Prop
 const beat$ = stream<number>();
 
 // アプリケーション全体で共有される、現在の時間を表すProp。
-const clock: Prop<number> = hold(performance.now())(beat$);
+const clock: Prop<number> = hold(0)(beat$);
 
 // dobounce で一時保管するDrip情報
 const PendingEffect = new WeakMap<DripperStream<any>,{
@@ -535,44 +445,18 @@ const ThrottleRecord = new WeakMap<DripperStream<any>, {
     resolvers: ((v:number)=>void)[]
 }>();
 
-// collapse用のキュー。effectとそのpromise解決関数を保管。
-const RESERVATIONS : CollapseReservation[] = [];
-// RESERVATIONSに登録し、tickを予約する
-const enqueue = (reservation:CollapseReservation) => {
-    if (!RESERVATIONS.length)
-        queueMicrotask(()=>tick(performance.now()));
-    RESERVATIONS.push(reservation);
-};
-
 // effectの実行スケジュールを組む。
 // dripのstrategyで実行タイミングを調節し、実行処理はtickに投げる
-const collapse = async (effect:DripEffect) => new Promise<number>((resolve, reject) => {
+const collapse = async <A>(effect:DripEffect<A>) => new Promise<number>((resolve, reject) => {
     const dripper = effect.dripper;
     const strategy = dripper.dripStrategy;
     const now = performance.now();
-
     switch (strategy.type) {
 
         case 'immediate':
-            enqueue({ effect, resolve, reject });
+            tick({ effect, resolve, reject }, now);
             break;
 
-        case 'debounce':
-            let pending: { pid: ReturnType<typeof setTimeout>, resolvers: ((t:number)=>void)[] };
-            if(PendingEffect.has(dripper)) {
-                pending = PendingEffect.get(dripper)!;
-                pending.resolvers.push(resolve);
-                clearTimeout(pending.pid);
-            } else {
-                pending = { pid: 0 as any, resolvers: [resolve] }
-                PendingEffect.set(dripper, pending);
-            }
-            pending.pid = setTimeout(()=>{
-                PendingEffect.delete(dripper);
-                enqueue({ effect, reject, resolve: (t:number) => pending.resolvers.forEach((r)=>r(t)) });
-            }, strategy.delay);
-            break;
-            
         case 'throttle':
             let lastRecord: { time: number, resolvers: ((n:number)=>void)[] }
             if(!ThrottleRecord.has(dripper)) {
@@ -589,23 +473,39 @@ const collapse = async (effect:DripEffect) => new Promise<number>((resolve, reje
                 // 前回がintervalより前なので継続
                 lastRecord.time = now;
             }
-            enqueue({
+            tick({
                 effect,
                 reject,
                 resolve: (t:number) => {
                     lastRecord.resolvers.forEach((r)=>r(t));
                     lastRecord.resolvers.length = 0;
                 }
-            });
+            }, now);
             break;
 
+        case 'debounce':
+            let pending: { pid: ReturnType<typeof setTimeout>, resolvers: ((t:number)=>void)[] };
+            if(PendingEffect.has(dripper)) {
+                pending = PendingEffect.get(dripper)!;
+                pending.resolvers.push(resolve);
+                clearTimeout(pending.pid);
+            } else {
+                pending = { pid: 0 as any, resolvers: [resolve] }
+                PendingEffect.set(dripper, pending);
+            }
+            pending.pid = setTimeout(()=>{
+                PendingEffect.delete(dripper);
+                tick({ effect, reject, resolve: (t:number) => pending.resolvers.forEach((r)=>r(t)) }, performance.now());// timeout後のnowに切り替える
+            }, strategy.delay);
+            break;
+            
     }
 
 });
 
 
 // Effect処理のミドルウェア
-const tickHandlers: { [key in CollapseObserver]: Set<(effect:DripEffect[])=>void> } = {
+const tickHandlers: { [key in CollapseObserver]: Set<(effect:DripEffect<any>)=>void> } = {
     immediate: new Set(),
     visual: new Set(),
     quantum: new Set(),
@@ -614,79 +514,97 @@ const tickHandlers: { [key in CollapseObserver]: Set<(effect:DripEffect[])=>void
 }
 
 // ミドルウェアの登録用関数
-function registerCollapseObserver(observer: CollapseObserver, handler: (effect: DripEffect[]) => void) {
+function registerCollapseObserver(observer: CollapseObserver, handler: <A>(effect: DripEffect<A>) => void) {
   tickHandlers[observer].add(handler);
   return () => tickHandlers[observer].delete(handler);
 }
 
 // 予約されたEffectを処理する
 // tickハンドラをそれぞれのobserverに合わせて全て呼び出した後、Propを更新する。
-function tick(now: number) {
-    // 現時点のRESERVATIONSを移す
-    const reservations = RESERVATIONS.splice(0);
-    // 実行キュー作成
-    const queue = reservations.map(({effect})=>effect);
-    // 時刻更新を追加
-    queue.push(drip(now)(beat$));
+function tick(reservation: CollapseReservation, now: number) {
+    // clockが未更新であれば先に実行する
+    if(now > clock() && reservation.effect.dripper !== beat$) {
+        tick({ effect: drip(now)(beat$), resolve: ()=>{}, reject: ()=>{} }, now);
+    }
     // ハンドラー呼び出し中のエラーを格納
     const errors: BlookyError<keyof BlookyErrorCauseMap>[] = [];
-    // ハンドラーの呼び出し
-    const callHandlers = (ticker: Function) => (handlers: Set<(e:DripEffect[])=>void>) => new Promise((resolve,reject)=>{
-        ticker(()=>{
-            try {
-                handlers.forEach((handler)=>handler(queue));
-                resolve(void 0);
-            } catch(err) {
-                errors.push(err instanceof Error && 'category' in err 
-                    ? err as BlookyError<any>
-                    : blooky.error("user", {
-                        code: "TICK_HANDLER_ERROR", 
-                        message: "Tick handler threw error",
-                        originalError: err,
-                        recoverable: true
-                    })
-                );
-                resolve(void 0); // エラーでもresolve（thrown observerで処理）
-            }
-        })
-    });
+    // collapse開始のリスナーを呼び出す(同期処理のフェーズ)
+    try {
+        reservation.effect.dripper.dripStrategy.listener?.(reservation.effect.value);
+    } catch(err) {
+        errors.push(err instanceof Error && 'category' in err 
+            ? err as BlookyError<any>
+            : blooky.error("user", {
+                code: "TICK_LISTENER_ERROR", 
+                message: "dripStrategy:listener threw error",
+                originalError: err,
+                recoverable: true
+            }));
+    }
 
     // thrownを除くオブザーバーのハンドラ呼び出し用関数
     const observers: { [key in Exclude<CollapseObserver,"thrown">]: (f:()=>void)=>void } = {
-        "immediate": (f:Function)=>f(),
+        "immediate": (f)=>f(),
         "visual": globalThis.requestAnimationFrame || (globalThis as any).nextTick || (globalThis as any).setImmediate,
-        "sequential": setTimeout,
+        "sequential": setTimeout,   
         "quantum": queueMicrotask
     };
-    // 各オブザーバー毎にハンドラ呼び出しのPromiseを生成
-    const promises: Promise<unknown>[] = Object.entries(observers).flatMap(([key,fn])=>{
-        const handlers = tickHandlers[key as Exclude<CollapseObserver,"thrown">];
-        return handlers.size
-            ? callHandlers(fn)(handlers)
-            : [];
-    });
-    Promise.allSettled(promises).then((r)=>{
+
+    // 各オブザーバーの呼び出し予約をし、その完了待ちPromiseを集める
+    const promises: Promise<unknown>[] = 
+        Object.entries(observers).flatMap(([key,ticker])=> {
+            const handlers = tickHandlers[key as CollapseObserver];
+            return !handlers.size
+                ? []
+                : new Promise((resolve) => ticker(()=>{
+                    const handlers = tickHandlers[key as CollapseObserver];
+                    handlers.forEach((handler) => {
+                        const err = handleCollapse(reservation.effect)(handler);
+                        if(err instanceof Error) errors.push(err);
+                    });
+                    resolve(void 0);
+                }));
+        });
+
+    Promise.allSettled(promises).then(()=>{
         // エラーがあればthrown observerに送信
         if (errors.length && tickHandlers.thrown.size) {
             const errorEffects = errors.map(error => drip(error)(blooky.errorStream[error.category]));
             tickHandlers.thrown.forEach(handler => {
                 try {
-                    handler(errorEffects);
+                    errorEffects.forEach((errEffect)=>handler(errEffect));
                 } catch (thrownError) {
                     console.error('Error in thrown handler:', thrownError);
                 }
             });
         }
         // ハンドラの処理が完了したら、PropEffectの更新を処理する
-        queue.forEach(({effects})=>effects.forEach((v,p)=>PROP_UPDATE.get(p)!(v)));
-        // 完了通知
-        reservations.forEach(errors.length
-            ? ({reject})  => reject(errors)
-            : ({resolve}) => resolve(now)
-        );
+        reservation.effect.effects.forEach((v,p)=>PROP_UPDATE.get(p)!(v));
+        // collapse全体の完了通知
+        if(errors.length)
+            reservation.reject(errors);
+        else
+            reservation.resolve(now);
     });
 
 }
+
+const handleCollapse = (effect: DripEffect<any>) => (handler: (e:DripEffect<any>)=>void) : BlookyError<keyof BlookyErrorCauseMap>|0 => {
+    try {
+        handler(effect);
+    } catch(err) {
+        return err instanceof Error && 'category' in err 
+            ? err as BlookyError<any>
+            : blooky.error("user", {
+                code: "TICK_HANDLER_ERROR", 
+                message: "Tick handler threw error",
+                originalError: err,
+                recoverable: true
+            });
+    }
+    return 0;
+};
+
 
 // 全モジュール共通ユーティリティ。
 const blooky = {
