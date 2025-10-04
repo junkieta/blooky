@@ -454,7 +454,7 @@ const collapse = async <A>(effect:DripEffect<A>) => new Promise<number>((resolve
     switch (strategy.type) {
 
         case 'immediate':
-            tick({ effect, resolve, reject }, now);
+            tick({ now, effect, resolve, reject });
             break;
 
         case 'throttle':
@@ -465,22 +465,21 @@ const collapse = async <A>(effect:DripEffect<A>) => new Promise<number>((resolve
                 ThrottleRecord.set(dripper, lastRecord);
             } else {
                 lastRecord = ThrottleRecord.get(dripper)!;
-                if((now - lastRecord.time) < strategy.interval) {
-                    // 実行待ちに溜めるだけ
-                    lastRecord.resolvers.push(resolve);
-                    break;
-                }
-                // 前回がintervalより前なので継続
+                lastRecord.resolvers.push(resolve);
+                // クールタイム中なら実行待ちに溜めるだけでbreak
+                if((now - lastRecord.time) < strategy.interval)  break;
+                // でなければ前回がintervalより前なので継続
                 lastRecord.time = now;
             }
             tick({
+                now,
                 effect,
                 reject,
                 resolve: (t:number) => {
                     lastRecord.resolvers.forEach((r)=>r(t));
                     lastRecord.resolvers.length = 0;
                 }
-            }, now);
+            });
             break;
 
         case 'debounce':
@@ -495,7 +494,8 @@ const collapse = async <A>(effect:DripEffect<A>) => new Promise<number>((resolve
             }
             pending.pid = setTimeout(()=>{
                 PendingEffect.delete(dripper);
-                tick({ effect, reject, resolve: (t:number) => pending.resolvers.forEach((r)=>r(t)) }, performance.now());// timeout後のnowに切り替える
+                // timeout後のnowに切り替える
+                tick({ now: performance.now(), effect, reject, resolve: (t:number) => pending.resolvers.forEach((r)=>r(t)) });
             }, strategy.delay);
             break;
             
@@ -521,10 +521,11 @@ function registerCollapseObserver(observer: CollapseObserver, handler: <A>(effec
 
 // 予約されたEffectを処理する
 // tickハンドラをそれぞれのobserverに合わせて全て呼び出した後、Propを更新する。
-function tick(reservation: CollapseReservation, now: number) {
+function tick(reservation: CollapseReservation) {
+    const now = reservation.now;
     // clockが未更新であれば先に実行する
     if(now > clock() && reservation.effect.dripper !== beat$) {
-        tick({ effect: drip(now)(beat$), resolve: ()=>{}, reject: ()=>{} }, now);
+        tick({ now, effect: drip(now)(beat$), resolve: ()=>{}, reject: ()=>{} });
     }
     // ハンドラー呼び出し中のエラーを格納
     const errors: BlookyError<keyof BlookyErrorCauseMap>[] = [];
@@ -589,6 +590,7 @@ function tick(reservation: CollapseReservation, now: number) {
 
 }
 
+// collapseハンドラーの呼び出しとエラー処理
 const handleCollapse = (effect: DripEffect<any>) => (handler: (e:DripEffect<any>)=>void) : BlookyError<keyof BlookyErrorCauseMap>|0 => {
     try {
         handler(effect);

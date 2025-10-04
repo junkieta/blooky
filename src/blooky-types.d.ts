@@ -89,9 +89,10 @@ type CollapseObserver =
   | 'thrown'       // 理外観測者（error）
 
 type CollapseReservation = {
-    effect: DripEffect<any>,
-    resolve: (v:number)=>void,
-    reject: (v:BlookyError<keyof BlookyErrorCauseMap>[])=>void
+  now: number
+  effect: DripEffect<any>
+  resolve: (v:number)=>void
+  reject: (v:BlookyError<keyof BlookyErrorCauseMap>[])=>void
 }
 
 // エラー詳細の型定義

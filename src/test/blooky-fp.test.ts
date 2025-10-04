@@ -18,7 +18,7 @@ import {
     hold, accum, lift, remap, when,
     proxy,
     pipe,
-    collapse, registerTickHandler,
+    collapse,
     blooky,
     junction
 } from '../blooky-fp';
@@ -30,7 +30,7 @@ describe('blooky-fp.ts', () => {
     beforeEach(() => {
         jest.useFakeTimers({
             advanceTimers: true,
-            timerLimit: 1000,
+            timerLimit: 500,
             legacyFakeTimers: false
         });
     });
@@ -264,25 +264,35 @@ describe('blooky-fp.ts', () => {
             expect(p()).toBe(20); // 最後の値で更新
         });
 
-        test('throttle strategy should limit execution frequency', async () => {
+        test('throttle strategy should limit execution frequency and resolve all callers', async () => {
+            // 1. セットアップ：strategyの指定方法を修正
             const s = stream<number>({ throttle: 100 });
             const p = hold(0)(s);
             
-            // 1回目: 実行される
+            // 2. 最初の呼び出し (t=0)
             await collapse(drip(10)(s));
-            expect(p()).toBe(10);
-            
-            // 2回目 (50ms後): スロットルされる (rejectされるがここでは確認しない)
-            await jest.advanceTimersByTimeAsync(50);
-            collapse(drip(20)(s)).catch(() => {}); // Promiseがrejectされるのでcatch
-            await jest.runAllTicks();
-            expect(p()).toBe(10); // 値は変わらない
+            expect(p()).toBe(10); // 即時実行され、値が更新される
 
-            // 3回目 (さらに70ms後、合計120ms): 実行される
+            // 3. 2回目の呼び出し (t=50) - スロットルされる
+            await jest.advanceTimersByTimeAsync(50);
+            const throttledPromise = collapse(drip(20)(s)); // このPromiseは保留される
+
+            // スロットルされている間、値は変わらないことを確認
+            await jest.runAllTicks(); // 念のためマイクロタスクをすべて実行
+            expect(p()).toBe(10); 
+            
+            // 4. 3回目の呼び出し (t=120) - 実行される
             await jest.advanceTimersByTimeAsync(70);
-            await collapse(drip(30)(s));
+            const triggerPromise = collapse(drip(30)(s));
+            
+            // 3回目の呼び出しと、保留されていた2回目の呼び出しが両方解決されるのを待つ
+            await Promise.all([throttledPromise, triggerPromise]);
+            
+            // 5. 最終的な値の確認
+            // 実行されたのは3回目のdrip(30)のエフェクトなので、値は30になる
             expect(p()).toBe(30);
         });
+
     });
 
     // =================================
