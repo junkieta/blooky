@@ -90,13 +90,12 @@ const toPredicate = <A>(predicate: Predicate<A>) =>
  * ストリーム状態を生成する。
  */
 const stream = <A>(strategy: ShortDripStrategy|DripStrategy = { type: "immediate" }) : DripperStream<A> => {
-    const listener = strategy.listener;
     if(!("type" in strategy))
         return "throttle" in strategy
-            ? stream({ type: "throttle", interval: strategy.throttle, listener })
+            ? stream({ type: "throttle", interval: strategy.throttle })
             : "debounce" in strategy
-            ? stream({ type: "debounce", delay: strategy.debounce, listener })
-            : stream({ type: "immediate", listener: typeof strategy.immediate === "function" ? strategy.immediate : listener });
+            ? stream({ type: "debounce", delay: strategy.debounce })
+            : stream({ type: "immediate" });
     const s: DripperStream<A> = {
         next: new Set(),
         lazyNext: new Set(),
@@ -436,13 +435,19 @@ const clock: Prop<number> = hold(0)(beat$);
 // dobounce で一時保管するDrip情報
 const PendingEffect = new WeakMap<DripperStream<any>,{
     pid: ReturnType<typeof setTimeout>
-    resolvers: ((v:number)=>void)[]
+    resolvers: ((t:number)=>void)[]
 }>();
 
 // Throttleで処理中のドリッパーと時刻
 const ThrottleRecord = new WeakMap<DripperStream<any>, {
     time: number
-    resolvers: ((v:number)=>void)[]
+    resolvers: ((t:number)=>void)[]
+}>();
+
+const LockRecord = new WeakMap<DripperStream<any>, {
+    locked: boolean
+    queue: ((t:number)=>void)[]
+    resolvers: ((t:number)=>void)[]
 }>();
 
 // effectの実行スケジュールを組む。
@@ -498,6 +503,55 @@ const collapse = async <A>(effect:DripEffect<A>) => new Promise<number>((resolve
                 tick({ now: performance.now(), effect, reject, resolve: (t:number) => pending.resolvers.forEach((r)=>r(t)) });
             }, strategy.delay);
             break;
+
+        case 'lock':
+            let record = LockRecord.get(dripper);
+            if (!record) {
+                record = { locked: false, queue: [], resolvers: [] };
+                LockRecord.set(dripper, record);
+            }
+
+            if (record.locked) {
+                switch (strategy.mode) {
+                case 'ignore':
+                    return;
+                case 'queue':
+                    record.queue.push((t:number) =>
+                    tick({ now: t, effect, resolve, reject })
+                    );
+                    return;
+                case 'restart':
+                    // resolve/reject が複数呼ばれないよう、前の完了を伝達
+                    record.resolvers.push(resolve);
+                    break;
+                }
+            }
+
+            record.locked = true;
+
+            const releaseLock = (v: any) => {
+                // resolve待ちをすべて通知
+                record!.resolvers.forEach((f) => f(v));
+                record!.resolvers.length = 0;
+                record!.locked = false;
+
+                // 次のキュー処理をスケジュール
+                const next = record!.queue.shift();
+                if (next) next(performance.now());
+            };
+
+            const wrappedResolve = (v: any) => {
+                resolve(v);
+                releaseLock(v);
+            };
+
+            const wrappedReject = (e: any) => {
+                reject(e);
+                releaseLock(e);
+            };
+
+            tick({ now, effect, resolve: wrappedResolve, reject: wrappedReject });
+            break;
             
     }
 
@@ -529,19 +583,6 @@ function tick(reservation: CollapseReservation) {
     }
     // ハンドラー呼び出し中のエラーを格納
     const errors: BlookyError<keyof BlookyErrorCauseMap>[] = [];
-    // collapse開始のリスナーを呼び出す(同期処理のフェーズ)
-    try {
-        reservation.effect.dripper.dripStrategy.listener?.(reservation.effect.value);
-    } catch(err) {
-        errors.push(err instanceof Error && 'category' in err 
-            ? err as BlookyError<any>
-            : blooky.error("user", {
-                code: "TICK_LISTENER_ERROR", 
-                message: "dripStrategy:listener threw error",
-                originalError: err,
-                recoverable: true
-            }));
-    }
 
     // thrownを除くオブザーバーのハンドラ呼び出し用関数
     const observers: { [key in Exclude<CollapseObserver,"thrown">]: (f:()=>void)=>void } = {

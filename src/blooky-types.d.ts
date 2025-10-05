@@ -13,18 +13,20 @@ type StreamBase<A,T> = {
     lazyNext: Set<MergedStream<A>>
 } & T;
 
-type DripStrategy = { listener?: Function } & (
+type DripStrategy =
   | { type: 'immediate' }
   | { type: 'debounce', delay: number }
   | { type: 'throttle', interval: number }
-) ;
+  | { type: 'lock', mode: 'ignore' | 'queue' | 'restart' }
+;
 
 // DripStrategyのシンタックスシュガー
-type ShortDripStrategy = { listener?: Function } & (
-  | { immediate: Function|true }
+type ShortDripStrategy =
+  | { immediate: true }
   | { debounce: number }
   | { throttle: number }
-);
+  | { lock: 'ignore' | 'queue' | 'restart' }
+;
 
 type DripperStream<A> = StreamBase<A, {
     dripStrategy: DripStrategy

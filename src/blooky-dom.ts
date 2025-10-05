@@ -5,7 +5,7 @@
  */
 import type { V_DATASET, V_STYLE, V_CLASSLIST, V_EVENTLISTENER, V_STRING, WritableCSSProperty, JSHTMLElementSource, JSHTMLAttrSource, JSHTMLNodeSource, JSHTMLAttributeMapSource, JSHTMLAttrRuntime, JSHTMLNodeRuntime, JSHTMLNodeSourceType, JSHTMLExtractedElementSource, JSHTMLNodeFactory, JSHTMLNodeSourceAnalyzer, BlookyMutationEvent, JSHTMLAttrAnalyzer, JSHTMLAttrBuilder } from "./blooky-dom-types";
 import { registerCollapseObserver, isDripper, drip, collapse, isChainedProp, blooky, stream } from "./blooky-fp";
-import { Prop, Dripper, Stream, BlookyError } from "./blooky-types";
+import { Prop, Dripper, Stream, BlookyError, DripStrategy } from "./blooky-types";
 
 // DOMをfpのtickに結び付ける
 registerCollapseObserver("visual", (dripEffect) => {
@@ -23,17 +23,40 @@ registerCollapseObserver("visual", (dripEffect) => {
     });
 })
 
-// PropとDOMのバインドに責任を持つ
+// PropとDOMのバインドに責任を持つインターフェース
 type PropBridgeInterface<A> = {
     prop: Prop<A>
+    /**
+     * DOMの接続状態
+     */
     isConnected() : boolean
+    /**
+     * DOMを更新する
+     * @param next 
+     * @param prev 
+     */
     update(next:A,prev:A): void
+    /**
+     * 特定のPropBridgeを含むか
+     * @param p 
+     */
     contains(p:PropBridge): boolean    
 }
 
+/**
+ * PropとDOMのバインド
+ */
 type PropBridge = (RangePropBridge | AttrPropBridge | StylePropBridge);
 
+/**
+ * 更新時に参照するため、PropとDOMのバインドを保管するMap
+ */
 const PROP_BRIDGE_RECORD = new Map<Prop<any>, PropBridge|PropBridge[]>();// 最適化用に共用型
+
+/**
+ * PropとDOMのバインドを記録する
+ * @param b 
+ */
 const bindPropBridge = (b:PropBridge) => {
     const p = b.prop;
     if(!PROP_BRIDGE_RECORD.has(p)) {
@@ -77,6 +100,9 @@ const contains_range = (a: Range) => (b: Range) => {
         && a.compareBoundaryPoints(Range.END_TO_END, b) >= 0;
 }
 
+/**
+ * PropとDOMをRangeでバインドするクラス
+ */
 class RangePropBridge implements PropBridgeInterface<JSHTMLNodeSource> {
     prop: Prop<JSHTMLNodeSource>
     target: [Node, Node];
@@ -133,6 +159,9 @@ class RangePropBridge implements PropBridgeInterface<JSHTMLNodeSource> {
     }
 }
 
+/**
+ * PropとDOMを属性でバインドする抽象クラス
+ */
 abstract class AbstractAttrPropBridge<A> implements PropBridgeInterface<A> {
     prop: Prop<A>
     target: HTMLElement
@@ -168,6 +197,9 @@ abstract class AbstractAttrPropBridge<A> implements PropBridgeInterface<A> {
     }
 }
 
+/**
+ * PropとDOMを属性でバインドするクラス
+ */
 class AttrPropBridge extends AbstractAttrPropBridge<JSHTMLAttrSource> {
     generatedListener?: EventListenerOrEventListenerObject
     update(next: JSHTMLAttrSource, prev: JSHTMLAttrSource){
@@ -195,6 +227,9 @@ class AttrPropBridge extends AbstractAttrPropBridge<JSHTMLAttrSource> {
     }
 }
 
+/**
+ * PropとDOMのstyleをバインドするクラス
+ */
 class StylePropBridge extends AbstractAttrPropBridge<V_STRING> {
     update(v: V_STRING, prev: V_STRING) {
         setCSSProperty(this.name, v != null ? v + "" : "")(this.target.style);
@@ -202,6 +237,9 @@ class StylePropBridge extends AbstractAttrPropBridge<V_STRING> {
     }
 }
 
+/**
+ * PropとDOMのdatasetをバインドするクラス
+ */
 class DatasetPropBridge extends AbstractAttrPropBridge<V_STRING> {
     update(v: V_STRING, prev: V_STRING) {
         this.target.dataset[this.name] = v == null ? "" : v+"";
@@ -209,7 +247,11 @@ class DatasetPropBridge extends AbstractAttrPropBridge<V_STRING> {
     }
 }
 
-// PROPの観測。イベントリスナーとして登録し、collapseの実行とDOMイベントを接続する。
+/**
+ * PROPの観測。イベントリスナーとして登録し、collapseの実行とDOMイベントを接続する。
+ * @param d 
+ * @returns 
+ */
 const listenerForCollapse = <A extends Event>(d: Dripper<A>) => (v: A) => {
     const target = v.currentTarget || v.target;
     if (!target) {
@@ -244,6 +286,25 @@ const listenerForCollapse = <A extends Event>(d: Dripper<A>) => (v: A) => {
     }
 }
 
+// DOMイベントの同期的処理のオプション。dripStrategy拡張
+type InterceptOptions = Partial<{
+    preventDefault: boolean
+    stopPropagation: boolean
+    stopImmediatePropagation: boolean
+}>;
+
+// Event用のdripperをEventListenerObjectとして成立する形で生成する。
+const eventDripper = <E extends Event>(strategy?: DripStrategy & InterceptOptions): Dripper<E> & EventListenerObject => {
+    const dripper = stream<E>(strategy);
+    return Object.assign(dripper, {
+        handleEvent(e: E) {
+            if(strategy.preventDefault) e.preventDefault();
+            if(strategy.stopImmediatePropagation) e.stopImmediatePropagation();
+            else if(strategy.stopPropagation) e.stopPropagation();
+            listenerForCollapse(dripper)(e);
+        }
+    })
+}
 
 /**
  * tag指定がjshtmlの仕様に沿わなかった場合に生成される要素の定義。
@@ -262,10 +323,10 @@ const setCSSProperty = (n: WritableCSSProperty|string, v: string) => (cssDec: CS
 // イベントリスナーの設定用関数を生成する
 const createEventListenerSetter =
     (v:V_EVENTLISTENER, n: string) => 
-        isDripper<Event>(v)
-        ? (e:EventTarget) => e.addEventListener(n.slice(2), listenerForCollapse(v))
-        : v && (typeof v === "function" || typeof (v as EventListenerObject).handleEvent === "function")
+        v && (typeof v === "function" || typeof (v as EventListenerObject).handleEvent === "function")
         ? (e:EventTarget) => e.addEventListener(n.slice(2), v as EventListenerOrEventListenerObject)
+        : isDripper<Event>(v)
+        ? (e:EventTarget) => e.addEventListener(n.slice(2), listenerForCollapse(v))
         : (e:Element) => e.setAttribute(n,v+"");
 
 /**
@@ -299,7 +360,9 @@ const defineAttrUpdateHandlers = (handlers: { [key:string]: (value: any, target:
     Object.assign(ATTRIBUTE_HANDLER_RREGISTRY, handlers);
 }
 
-
+/**
+ * Promiseの解決時に生成した要素と入れ替わるプレースホルダーとしてのカスタム要素
+ */
 class PromisedElement extends HTMLElement {
     promise: Promise<JSHTMLNodeSource|Node>
     constructor(promise: Promise<JSHTMLNodeSource|Node>) {
@@ -367,8 +430,13 @@ const mutations = (init: MutationObserverInit) => (n: Node) : Stream<BlookyMutat
     return s;
 };
 
+/**
+ * カスタム要素をjshtmlで生成する際の独自フックを登録する
+ */
 const JSHTML_ELEMENT_HANDLER = Symbol("JSHTML_ELEMENT_FACTORY");
-
+/**
+ * カスタム要素の独自属性の設定用フックを登録する
+ */
 const JSHTML_ATTR_HANDLER = Symbol("JSHTML_ATTR_HANDLER");
 
 
@@ -385,8 +453,18 @@ function jshtml(this: object|void, source: JSHTMLNodeSource, context?: Record<st
     return build(source);
 }
 
+/**
+ * attributeマップを要素内容に記載しても正常に属性として扱うためのラッパを生成する。空要素用。
+ * @param attrs 
+ * @returns 
+ */
 jshtml.$ = (attrs: JSHTMLAttributeMapSource) => new EmptyElementAttributeMapSource(attrs);
 
+/**
+ * jshtml仕様に合わせてオブジェクトの型を分類する
+ * @param s 
+ * @returns 
+ */
 const analyzeNodeSource: JSHTMLNodeSourceAnalyzer = (s: JSHTMLNodeSource): JSHTMLNodeSourceType => {
     if(s instanceof Node) return "node";
     if(s instanceof Promise) return "promise";
@@ -397,6 +475,9 @@ const analyzeNodeSource: JSHTMLNodeSourceAnalyzer = (s: JSHTMLNodeSource): JSHTM
     return "element";
 }
 
+/**
+ * jshtml仕様に沿ったDOMを生成して返す
+ */
 const nodeFactory: JSHTMLNodeFactory = {
     "node": ({source}:JSHTMLNodeRuntime<Node>) => source.nodeName === "TEMPLATE" ? (source as HTMLTemplateElement).content.cloneNode(true) : source,
     "promise": ({source}:JSHTMLNodeRuntime<Promise<JSHTMLNodeSource>>) => new PromisedElement(source),
@@ -447,6 +528,12 @@ const nodeFactory: JSHTMLNodeFactory = {
     },
 }
 
+/**
+ * 属性の種類を判別する
+ * @param name 
+ * @param value 
+ * @returns 
+ */
 const analyzeAttrSource: JSHTMLAttrAnalyzer = (name, value) => {
     if(/^on/.test(name)) return "listener";
     if(value == null) return "nullable";
@@ -461,6 +548,9 @@ const analyzeAttrSource: JSHTMLAttrAnalyzer = (name, value) => {
     return "string";
 }
 
+/**
+ * 属性を設定する
+ */
 const jshtmlAttrBuilder: JSHTMLAttrBuilder = {
     "nullable": ({target,name}: JSHTMLAttrRuntime<null|undefined>) => {
         target.removeAttribute(name);
@@ -522,8 +612,8 @@ const prime = <T extends object>(fn:(v:T)=>JSHTMLNodeSource) => (ctx:T) => jshtm
 
 export {
     defineAttrUpdateHandlers,
-    listenerForCollapse,
-    promised, jshtml, mutations, prime,
+    listenerForCollapse, eventDripper,
+    promised, jshtml,mutations, prime,
     JSHTMLNodeRuntime,JSHTMLAttrRuntime,
     JSHTML_ELEMENT_HANDLER,
     JSHTML_ATTR_HANDLER 
