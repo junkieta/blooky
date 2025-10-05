@@ -1,86 +1,182 @@
-# blooky
+# Blooky
 
-**宣言的オーケストレーション・TypeScriptフレームワーク** *データフロー、UI、そして副作用までを、一つのフローとして統一的に指揮する*
+> **「データが流れる」ことを軸に、開発体験を再設計する。**
 
-## Current Status: Professional & Experimental
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-blue.svg)](https://www.typescriptlang.org/)
+[![Status](https://img.shields.io/badge/status-community%20preview-yellow.svg)]()
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-> ⚠️ **コミュニティプレビュー** \> `blooky`のコアアーキテクチャは安定しており、`blooky`が解決しようとする課題に対する明確なビジョンを持っています。しかしプロダクトとして発展途上であり、APIはまだ変更される可能性があります。エコシステムも未整備のため、現時点での本番環境（プロダクション）での利用は推奨しません。アプローチの可能性を検証するために、コミュニティからのフィードバックを求めています。
+## Web開発の分断と向け合う
 
-## What is blooky?
+React、RxJS、Redux、Saga... 優れたツール群はあれど、それぞれが異なる世界観を持ち、開発者は「翻訳」と「接着」に時間を費やしています。
 
-* blooky は「学習コストや移行性」といった現実的な課題を解決するものではありません。
-* 代わりに「状態・UI・副作用を一つの視座から統合する」という新しい開発体験を提示します。
-
-現代のWebアプリケーション開発は、UI（React/Vue）、状態管理（Redux/Pinia）、副作用（Saga/Query）といった、強力ですが**分断された**ツール群を「接着剤」となるコードで繋ぎ合わせる複雑な作業になりがちです。
-
-`blooky`はこの分断に問題意識を持ち、**シームレスに統合するアーキテクチャ**として設計したものです。検索、ストリーミング、ワークフローのように、UIと非同期処理が密接に絡むアプリケーションで特に力を発揮します。
-
-  * **`blooky-fp` (Reactive Core)**: FRPの思想に基づき、予測可能でメモリ安全なデータフローを構築します。
-  * **`blooky-dom` (Declarative UI)**: リアクティブな状態を、仮想DOMを介さず効率的にDOMに反映させます。
-  * **`blooky-fx` (Orchestration Engine)**: アプリケーション全体の複雑な非同期処理やシナリオを、HTMLタグのように宣言的に記述し、**実行過程そのものを可視化・デバッグ**可能にします。
-
-`blooky`の主眼はこれらの要素を「寄せ集める」のではなく、\*\*「オーケストレーション（指揮）」\*\*という統一的な視点から設計し、開発者が本質的なロジックの記述に集中できる、これまでにない開発体験を提供することにあります。
-
-## Who is it for?
-* **一般的なWeb制作の道具ではありません**
-blookyは、小規模サイト制作のような作業を効率化するツールではなく、複雑な状態遷移や非同期フローが絡み合うアプリケーションを持続的に構築するためのアーキテクチャです。
-
-* **学習は必要ですが、その見返りがあります**
-新しい概念（Stream/Prop/fx）を理解するには一定の学習曲線があります。しかしそれは、長期的な安定性、可観測性、拡張性を手に入れるための前段階です。
-
-* **制御と可視化を取り戻す**
-宣言的フローとdevtoolsにより、アプリケーションの振る舞いを可視化し、再現性の低い非同期バグを効率的に特定できます。結果として、コードベースを安心して成長させられます。
-
-## Core Features
-
-  * ✨ **統一されたアーキテクチャ**: 状態、UI、副作用の間に、「接着剤」は必要ありません。
-  * ✍️ **宣言的な副作用**: `async/await`の連鎖やコールバック地獄を、`<fx-sequence>`や`<fx-race>`といった見通しの良いフロー定義に置き換えます。
-  * 🔍 **圧倒的なデバッグ体験**: `devtools`が副作用のライフサイクルをリアルタイムに可視化。複雑な非同期処理が「見てわかる」ようになります。
-  * 🔒 **型安全**: TypeScriptの能力を引き出し、FRPの複雑な型推論をスムーズに行えます。
-  * 🧠 **自動メモリ管理**: `FinalizationRegistry`や`WeakMap`を活用し、不要になった`Stream`や`Prop`の参照を自動的にクリーンアップします。
-
-### Code at a Glance
+Blookyは、**データフロー・UI・副作用を一つの抽象で統合**します。
 
 ```typescript
-// 1. debounce戦略を持つStreamを定義
-const searchInput$ = stream<Event>({ type: 'debounce', delay: 300 });
-const $query = hold("")(map(e => e.target.value)(searchInput$));
+// これが全て - データ、UI、副作用が同じ言語で繋がる
+const search$ = stream({ debounce: 300 });
+const $results = hold([])(search$);
 
-// 2. UIを定義
-const SearchUI = jshtml([
-  { input: null, $: { oninput: searchInput$ } },
-  { p: ["Searching for: ", $query] }
-]);
-
-// 3. 副作用を定義
-const fetchUsers$ = stream();
-const SearchEffect = jshtml({
-  "fx-effect": [
-    { "fx-wait": null, $: { until: $query } },
-    { "fx-call": null, $: { fn: api.search, arg: $query, id: "users" } },
-    { "fx-collapse": null, $: { dripper: fetchUsers$, value: ref("#users") } }
-  ],
-  $: { ignite: "quantum" }
+const App = jshtml({
+  input: null,
+  $: { oninput: search$ },
+  div: $results  // 自動的にリアクティブ
 });
 
-document.body.append(SearchUI, SearchEffect);
+const Effect = jshtml({
+  "fx-effect": {
+    "fx-call": null,
+    $: { fn: api.search, arg: $results }
+  }
+});
 ```
 
-<!-- 準備中 --
+## コア思想
 
-## Getting Started & Contribution
+### 1. 開発体験の再設計
 
-`blooky`の思想に共感し、この旅に参加してくれるコントリビューターを歓迎します！
+`blooky`が目指すのは、単なる「生産性の向上」ではありません。開発という行為そのものにまつわる**体験**を再設計することです。
 
-  * **📖 Tutorial**: [（ここにチュートリアルへのリンクを設置）]
-  * **🔧 API Reference**: [（ここにAPIリファレンスへのリンクを設置）]
+**概念を理解する体験**  
+「データが流れる」という一つの概念から、すべてが派生します。理解は直線的に深まり、断片化しません。
 
-インストール:
+**問題を分解する体験**  
+Stream / Prop / fx が明確な役割を持ち、問題は自然に分解されます。
+
+**デバッグする体験**  
+DevToolsがデータフローと副作用の実行を統一的に可視化し、問題の所在を明らかにします。
+
+**コードを成長させる体験**  
+Streamの接続を変えるだけで、影響は自動的に伝播します。コードは有機的に成長します。
+
+### 2. 統一された抽象
+
+```
+Stream → Prop → DOM
+   ↓      ↓      ↓
+  全て同じデータフローの一部
+```
+
+useState、useEffect、dispatch、saga... 異なる概念を覚える必要はありません。  
+**「データが流れる」** - この一つの概念から全てが派生します。
+
+### 3. Web標準へのリスペクト
+
+- 仮想DOMではなく、実DOM
+- 独自テンプレートではなく、JavaScript
+- 特殊なイベントではなく、標準EventTarget
+
+MDNが最高のドキュメント。Web標準の知識がそのまま活きます。
+
+### 4. 可視化可能な副作用
+
+```html
+<fx-sequence>
+  <fx-wait ms="1000" />
+  <fx-parallel>
+    <fx-call fn="fetchUser" />
+    <fx-call fn="fetchPosts" />
+  </fx-parallel>
+  <fx-if when="hasData">
+    <fx-call fn="render" />
+  </fx-if>
+</fx-sequence>
+```
+
+複雑な非同期処理が「見える」。DevToolsでリアルタイムに実行状態を追跡できます。
+
+## アーキテクチャ
+
+```
+blooky-fp       # Stream/Propによるリアクティブコア
+blooky-dom      # 宣言的DOM構築
+blooky-fx       # 副作用オーケストレーション
+blooky-fxdom    # HTMLでの副作用記述
+blooky-devtools # 開発ツール
+```
+
+各モジュールは疎結合。必要なものだけを段階的に学習・使用できます。
+
+## Quick Start
 
 ```bash
 npm install blooky
 ```
 
-バグ報告、機能提案、そして`blooky`の思想に関するディスカッションは、GitHubのIssuesやDiscussionsでいつでもお待ちしています。
+```typescript
+import { stream, hold, map } from 'blooky-fp';
+import { jshtml, prime } from 'blooky-dom';
 
--->
+// 最小のカウンター
+const click$ = stream();
+const $count = hold(0)(map(() => 1)(click$));
+
+const Counter = prime(({ $count, click$ }) => ({
+  div: [
+    { h1: ["Count: ", $count] },
+    { button: "+", $: { onclick: click$ } }
+  ]
+}));
+
+document.body.append(Counter({ $count, click$ }));
+```
+
+## 誰のために
+
+### 🎯 特に適している
+
+- **初学者**: 一つの概念から段階的に学べる
+- **データ駆動開発者**: 複雑なフローを扱う
+- **標準技術愛好者**: フレームワーク独自の魔法を避けたい
+
+### ⚠️ 向いていないかも
+
+- 既存React/Vueプロジェクトの移行
+- 豊富なUIライブラリが今すぐ必要
+- エコシステムの成熟度を重視
+
+## 開発体験
+
+### データフローの可視化
+
+```typescript
+import { dumpGraphDOT } from 'blooky-devtools';
+
+// あなたのアプリケーションの全体像を一瞬で把握
+const graph = dumpGraphDOT({ 
+  click$, 
+  $count, 
+  saveEffect$ 
+});
+```
+
+### リアルタイムデバッグ
+
+fx要素の実行状態がCSS-CustomStateSetで可視化：
+- `running`: 実行中
+- `paused`: 待機中  
+- `failed`: エラー
+- `completed`: 完了
+
+## Status: Community Preview
+
+コアは安定していますが、エコシステムは発展途上です。  
+現時点での本番利用は推奨しませんが、**このビジョンに共感する方のフィードバックを歓迎します**。
+
+## Learn More
+
+- [チュートリアル](./docs/tutorial.md) - 段階的に学ぶ
+- [サンプル集](./docs/examples.md) - 実践的な15のサンプル
+- [Blooky Vision](./docs/vision.md) - Blookyをもっと知る
+- [API Reference](./docs/api.md) - 詳細なAPIドキュメント
+
+## Contributing
+
+Blookyの思想に共感し、この旅に参加してくれる方を歓迎します。
+
+- [GitHub Issues](https://github.com/junkieta/blooky/issues)
+- [Discussions](https://github.com/junkieta/blooky/discussions)
+
+---
+
+**blooky** — 統合された視座から、Web 開発を再び「理解できるもの」に。
