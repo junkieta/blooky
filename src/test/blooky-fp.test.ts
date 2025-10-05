@@ -295,6 +295,36 @@ describe('blooky-fp.ts', () => {
 
     });
 
+    describe('collapse lock strategy', () => {
+
+        it('should ignore new collapse while locked (ignore mode)', async () => {
+            const dripper = stream<number>({ type: 'lock', mode: 'ignore' });
+            const calls = accum((arr,v)=>arr.concat(v),[])(dripper);
+            collapse(drip(1)(dripper));
+            collapse(drip(2)(dripper));
+            await new Promise(r => setTimeout(r, 10));
+            expect(calls()).toEqual([1]); // only first executed
+        });
+
+        it('should queue next collapse (queue mode)', async () => {
+            const dripper = stream<number>({ type: 'lock', mode: 'queue' });
+            const calls = accum((arr,v)=>arr.concat(v),[])(dripper);
+            await collapse(drip(1)(dripper));
+            await collapse(drip(2)(dripper));
+            expect(calls()).toEqual([1,2]);
+        });
+
+        it('should restart latest collapse (restart mode)', async () => {
+            const dripper = stream<number>({ type: 'lock', mode: 'restart' });
+            const calls = accum((arr,v)=>arr.concat(v),[])(dripper);
+            collapse(drip(1)(dripper));
+            collapse(drip(2)(dripper));
+            await new Promise(r => setTimeout(r, 10));
+            expect(calls()).toEqual([2]); // only latest executed
+        });
+    });
+    
+
     // =================================
     // その他ユーティリティ
     // =================================
