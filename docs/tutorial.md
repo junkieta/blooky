@@ -674,8 +674,13 @@ document.body.append(DebugDashboard(debugContext));
 3. **パフォーマンス最適化**: 大規模アプリケーションへの対応
 4. **テスト戦略**: 各モジュールのユニットテスト作成
 
-## 📚 リファレンス
-- [Readme](../readme.md)
-- [Visions](./vision.md)
-- [API Documentation](./api.md)
-- [Examples](./examples.md)
+
+## リファレンス
+- [readme](../readme.md) - 簡易的な全体像の紹介
+- [チュートリアル](./tutorial.md) - 段階的に学ぶ
+- [サンプル集](./examples.md) - 実践的な15のサンプル
+- [API Reference](./api.md) - 詳細なAPIドキュメント
+- [FAQ](./faq.md) - よくあるご質問
+
+**blooky** — 統合された視座から、Web 開発を再び「理解できるもの」に。
+
