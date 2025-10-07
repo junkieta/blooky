@@ -109,7 +109,7 @@ import { jshtml, prime } from 'blooky-dom';
 
 // 最小のカウンター
 const click$ = stream();
-const $count = hold(0)(map(() => 1)(click$));
+const $count = accum((count)=>count+1,0)(click$);
 
 const Counter = prime(({ $count, click$ }) => ({
   div: [
