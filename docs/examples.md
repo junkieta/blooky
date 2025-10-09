@@ -1854,3 +1854,15 @@ const RealtimeChart = prime((context) => ({
 }));
 
 ```
+
+
+## リファレンス
+- [readme](../readme.md) - 簡易な全体像の紹介
+- [ビジョン](./vision.md) - マニフェスト
+- [アーキテクチャ](./architecture.md) - アーキテクチャの設計原則
+- [チュートリアル](./tutorial.md) - 段階的に学ぶ
+- [サンプル集](./examples.md) - 実践的な15のサンプル
+- [API](./api.md) - 詳細なAPIドキュメント
+- [FAQ](./faq.md) - よくあるご質問
+
+**blooky** — 統合された視座から、Web 開発を再び「理解できるもの」に。

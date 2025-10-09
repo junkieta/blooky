@@ -2,6 +2,9 @@
 
 > **a small rebellion for the joy of building**
 
+— この文書は、blooky がなぜ生まれたのか、何を目指しているのかを語るマニフェストです。
+技術仕様ではなく、思想と設計哲学を伝えるためのものです。
+
 ---
 
 ## 1. Why we build — なぜつくるのか
@@ -129,12 +132,15 @@ blooky は、コードを書くことがもう一度楽しくなる世界を目�
 
 ### — a small rebellion for the joy of building —
 
+---
 
 ## リファレンス
-- [readme](../readme.md) - 簡易的な全体像の紹介
+- [readme](../readme.md) - 簡易な全体像の紹介
+- [ビジョン](./vision.md) - マニフェスト
+- [アーキテクチャ](./architecture.md) - アーキテクチャの設計原則
 - [チュートリアル](./tutorial.md) - 段階的に学ぶ
 - [サンプル集](./examples.md) - 実践的な15のサンプル
-- [API Reference](./api.md) - 詳細なAPIドキュメント
+- [API](./api.md) - 詳細なAPIドキュメント
 - [FAQ](./faq.md) - よくあるご質問
 
 **blooky** — 統合された視座から、Web 開発を再び「理解できるもの」に。
