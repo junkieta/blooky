@@ -1,13 +1,7 @@
 /**
  * blooky-fp.ts
  * 関数型リアクティブプログラミングをTypeScriptで行うためのライブラリ。
- * 
- * 核となる概念:
- * - Stream: 時間とともに流れる値の系列
- * - Prop: Streamから生成される現在値
- * - Dripper: collapseで実行可能な特別なStream
  */
-
 import { 
   BlookyError, BlookyErrorCauseMap, CollapseObserver, CollapseReservation,
   DripEffect, DripperStream, DripStrategy, FilterStream, FlowingState,
@@ -33,19 +27,8 @@ const PROP_UPDATE = new WeakMap<Prop<any>, ((v:any)=>void)>();
 
 /**
  * ストリーム/プロパティのメモリを解放する。
- * 
- * 通常は自動ガベージコレクションが動作するため、明示的に呼ぶ必要はない。
- * 大量のStreamを生成する場合など、メモリを即座に解放したい場合に使用。
- * 
  * @param s - クリアするStream
  * @param recursive - 接続されたStreamも再帰的にクリアするか（デフォルト: true）
- * 
- * @example
- * ```typescript
- * const temp$ = stream();
- * // ... 一時的な使用 ...
- * clear(temp$); // メモリを即座に解放
- * ```
  */
 const clear = <A>(s: Stream<A>, recursive = true, visited = new WeakSet<Stream<any>>()) => {
     if (!isStream(s))
@@ -104,36 +87,9 @@ const toPredicate = <A>(predicate: Predicate<A>) =>
 ;
 
 /**
- * Dripperを生成する。
- * 
- * Dripperは、値を流し込むための「入り口」となる特別なStream。
- * drip()とcollapse()を通じて値を実行できる。
- * 
- * strategyで実行タイミングを制御できる:
- * - immediate: 即座に実行（デフォルト）
- * - debounce: 連続入力の最後だけ実行
- * - throttle: 一定間隔で間引いて実行
- * - lock: 実行中は新しい実行を制御
- * 
+ * 値を流し込むための「入り口」となるDripperStreamを生成する。drip()とcollapse()を通じて実行できる。
  * @param strategy - 実行タイミングの制御（省略時はimmediate）
  * @returns 新しいDripper
- * 
- * @example
- * ```typescript
- * // 基本的な使い方
- * const click$ = stream<MouseEvent>();
- * 
- * // debounce: 300ms待って最後の値だけ処理
- * const search$ = stream<string>({ debounce: 300 });
- * 
- * // throttle: 100msごとに1回だけ処理
- * const scroll$ = stream<number>({ throttle: 100 });
- * 
- * // lock: 実行中の新しいdripを制御
- * const save$ = stream({ type: 'lock', mode: 'ignore' }); // 実行中は無視
- * const fetch$ = stream({ type: 'lock', mode: 'queue' }); // 実行後にキューを処理
- * const action$ = stream({ type: 'lock', mode: 'restart' }); // 実行中を中断して再開
- * ```
  */
 const stream = <A>(strategy: ShortDripStrategy|DripStrategy = { type: "immediate" }) : DripperStream<A> => {
     if(!("type" in strategy))
@@ -155,25 +111,11 @@ const stream = <A>(strategy: ShortDripStrategy|DripStrategy = { type: "immediate
 
 /**
  * 複数のStreamを一つに合流させる。
- * 
  * いずれかのStreamに値が流れると、合流後のStreamにも値が流れる。
  * reduceFnで、複数の値をどう統合するかを指定できる。
- * 
  * @param streams - 合流させるStreamの配列
  * @param reduceFn - 値の統合方法（省略時は後の値で上書き）
  * @returns 合流後のStream
- * 
- * @example
- * ```typescript
- * const userAction$ = stream();
- * const systemEvent$ = stream();
- * 
- * // どちらかに値が流れたら反応
- * const anyEvent$ = merge([userAction$, systemEvent$]);
- * 
- * // 値を配列として蓄積
- * const accumulated$ = merge([stream1$, stream2$], (a, b) => [...a, b]);
- * ```
  */
 const merge = <A> (s:Stream<A>[], f?:(a:A,b:A)=>A) : MergedStream<A> => {
     const _s : MergedStream<A> = {
@@ -191,31 +133,8 @@ const merge = <A> (s:Stream<A>[], f?:(a:A,b:A)=>A) : MergedStream<A> => {
 
 /**
  * Streamから条件に合う値だけを通過させる。
- * 
- * predicateには以下が指定可能:
- * - 関数: (v) => boolean
- * - 正規表現: /pattern/
- * - 値: 一致する値だけ通過
- * 
- * ⚠️ 注意: filterの戻り値はDripperではないStream。
- * 新しいDripperが必要な場合は stream() を使うこと。
- * 
- * @param predicate - フィルタ条件
+ * @param predicate - フィルタ条件 / (v)=>boolean または RegExp または 一致を調べる値
  * @returns Streamを受け取りFilterStreamを返す関数
- * 
- * @example
- * ```typescript
- * const input$ = stream<string>();
- * 
- * // 長さ3以上の文字列だけ通過
- * const valid$ = filter((s: string) => s.length >= 3)(input$);
- * 
- * // 数字だけ通過
- * const numeric$ = filter(/^\d+$/)(input$);
- * 
- * // "yes"だけ通過
- * const yes$ = filter("yes")(input$);
- * ```
  */
 const filter = <A>(f:Predicate<A>) => (s:Stream<A>) : FilterStream<A> => {
     const _s: FilterStream<A> = {
@@ -231,34 +150,8 @@ const filter = <A>(f:Predicate<A>) => (s:Stream<A>) : FilterStream<A> => {
 
 /**
  * Streamの値を別の値に変換する。
- * 
- * ⚠️ 重要: mapの戻り値はDripperではないため、直接dripすることはできない。
- * 
- * Data Flow:
- * ```
- * Stream<B> ──map(fn)──> MappedStream<A>
- * ```
- * 
  * @param fn - 変換関数、Prop、または固定値
  * @returns Streamを受け取りMappedStreamを返す関数
- * 
- * @example
- * ```typescript
- * const num$ = stream<number>();
- * 
- * // 2倍に変換
- * const doubled$ = map((n: number) => n * 2)(num$);
- * 
- * // 固定値に置き換え
- * const constant$ = map("clicked")(click$);
- * 
- * // ❌ これは間違い（mapの戻り値はDripperではない）
- * collapse(drip(value)(doubled$)); // TypeError
- * 
- * // ✅ 正しい使い方
- * const result$ = stream();
- * const doubled = pipe(num$, map(n => n * 2), hold(0));
- * ```
  */
 const map = <A,B>(f:((v:B)=>A)|Prop<A>|A) => (s:Stream<B>) : MappedStream<A> => {
     const _s: MappedStream<A> = {
@@ -274,26 +167,8 @@ const map = <A,B>(f:((v:B)=>A)|Prop<A>|A) => (s:Stream<B>) : MappedStream<A> => 
 
 /**
  * Prop<A>の値に応じて、異なるStreamを選択的に合流させる。
- * 
- * Propの現在値に一致するキーのStreamからのみ値が流れる。
- * 
  * @param records - { key: Stream } の形式のレコードまたはMap
  * @returns Propを受け取りMergedStreamを返す関数
- * 
- * @example
- * ```typescript
- * const mode$ = stream<string>();
- * const $mode = hold("idle")(mode$);
- * 
- * const idle$ = stream();
- * const active$ = stream();
- * 
- * // modeの値に応じて異なるStreamから値を受け取る
- * const selected$ = junction({
- *   idle: idle$,
- *   active: active$
- * })($mode);
- * ```
  */
 const junction = <A,B>(records: Map<A,Stream<B>>|Record<string|symbol|number,Stream<B>>) => {
     if(!(records instanceof Map)) return junction(new Map(Object.entries(records)));
@@ -307,26 +182,9 @@ const junction = <A,B>(records: Map<A,Stream<B>>|Record<string|symbol|number,Str
 
 /**
  * Streamから値を蓄積し、累積値を保持するPropを生成する。
- * 
- * Data Flow:
- * ```
- * Stream<A> ──accum(fn, initial)──> Prop<S>
- * ```
- * 
  * @param fn - 累積関数 (currentState, newValue) => nextState
  * @param initial - 初期状態
  * @returns Streamを受け取りPropを返す関数
- * 
- * @example
- * ```typescript
- * const add$ = stream<number>();
- * 
- * // 値を足し込んでいく
- * const $sum = accum((sum, n) => sum + n, 0)(add$);
- * 
- * collapse(drip(5)(add$)); // $sum() === 5
- * collapse(drip(3)(add$)); // $sum() === 8
- * ```
  */
 const accum = <S,A>(f:(s:S,v:A)=>S, s: S) => (_s:Stream<A>) : Prop<S> => {
     const p: Prop<S> = hold(s)(map((v:A)=>f(p(),v))(_s));
@@ -334,20 +192,16 @@ const accum = <S,A>(f:(s:S,v:A)=>S, s: S) => (_s:Stream<A>) : Prop<S> => {
 }
 
 /**
- * 関数を順次適用するパイプライン。
- * 
- * Stream操作を読みやすく記述するためのユーティリティ。
- * 
+ * 関数を順次適用するパイプライン。Stream操作を読みやすく記述するためのユーティリティ。
  * @param value - 初期値
  * @param ops - 適用する関数の列
  * @returns 最終結果
- * 
  * @example
  * ```typescript
  * const result = pipe(
- *   stream(),
- *   filter((n: number) => n > 0),
- *   map((n: number) => n * 2),
+ *   stream<number>(),
+ *   filter((n) => n > 0),
+ *   map((n) => n * 2),
  *   hold(0)
  * );
  * ```
@@ -361,7 +215,6 @@ function pipe<A>(v:A,...fns:any[]) { return fns.reduce((v,f)=>f(v),v) }
 
 /**
  * 値がStreamかどうかを判定。
- * 
  * @param v - 判定対象
  * @returns Streamならtrue
  */
@@ -370,7 +223,6 @@ const isStream = <A>(v:unknown) : v is Stream<A> =>
 
 /**
  * StreamがDripperかどうかを判定。
- * 
  * @param v - 判定対象
  * @returns Dripperならtrue
  */
@@ -379,7 +231,6 @@ const isDripperStream = <A>(v:unknown) : v is DripperStream<A> =>
 
 /**
  * PropがStreamから生成されたものかを判定。
- * 
  * @param v - 判定対象
  * @returns Streamと接続されたPropならtrue
  */
@@ -387,9 +238,6 @@ const isChainedProp = <A>(v: unknown): v is Prop<A> => PROP_UPDATE.has(v as Prop
 
 /**
  * StreamをVertex（グラフ構造）として表現したオブジェクトか判定する。
- * 
- * 主にDevToolsでのデータフロー可視化に使用。
- * 
  * @param v - 判定対象
  * @returns Vertexならtrue
  */
@@ -399,10 +247,7 @@ const isVertex = (v: unknown) : v is Vertex =>  v ? isStream((v as Vertex).sourc
 const VERTEX_MAP = new WeakMap<Stream<any>,Vertex>();
 
 /**
- * Streamをグラフ構造（Vertex）に変換する。
- * 
- * DevToolsでのデータフロー可視化に使用されます。通常のアプリケーション開発では直接使用しない。
- * 
+ * Streamをグラフ構造（Vertex）に変換する。データフローの可視化に使用。
  * @param s - 変換するStream
  * @returns グラフ構造
  */
@@ -460,11 +305,7 @@ const flowLazy = <A>(v:A, allowPromise = false) => (s:Stream<A>) : FlowingState 
 }
 
 /**
- * Dripperに値を流し込むための「効果(Effect)」を生成。
- * 
- * ⚠️ 重要: この関数は値の流し込み、更新を実行しない。
- * 実行するには必ず collapse() を呼ぶこと。
- * 
+ * Dripperに値を流し込むための「効果(Effect)」を生成。値の更新は、この関数の結果を引数として collapse() を呼ぶことで生じる。
  * Data Flow:
  * ```
  * value + Dripper ──drip()──> DripEffect<A> ──collapse()──> 実行
@@ -472,20 +313,6 @@ const flowLazy = <A>(v:A, allowPromise = false) => (s:Stream<A>) : FlowingState 
  * 
  * @param value - 流し込む値
  * @returns Dripperを受け取りDripEffect<A>を返す関数
- * 
- * @example
- * ```typescript
- * const click$ = stream<MouseEvent>();
- * 
- * // ❌ これだけでは何も起きない
- * drip(event)(click$);
- * 
- * // ✅ collapseで実行
- * collapse(drip(event)(click$));
- * 
- * // ✅ イベントハンドラとして
- * button.onclick = (e) => collapse(drip(e)(click$));
- * ```
  */
 const drip = <A>(value:A) => (dripper:DripperStream<A>) : DripEffect<A> => ({
     dripper,
@@ -495,30 +322,8 @@ const drip = <A>(value:A) => (dripper:DripperStream<A>) : DripEffect<A> => ({
 
 /**
  * Streamから現在値を保持するPropを生成する。
- * 
- * Propは必ずStreamから生成する必要がある。独立したPropは存在しない。
- * 
- * Data Flow:
- * ```
- * Stream<A> ──hold(initial)──> Prop<A>
- * ```
- * 
  * @param initial - 初期値
  * @returns Streamを受け取りPropを返す関数
- * 
- * @example
- * ```typescript
- * const click$ = stream();
- * 
- * // ❌ これは間違い（Streamがない）
- * const $count = hold(0); // TypeError
- * 
- * // ✅ 正しい使い方
- * const $count = hold(0)(map(() => $count() + 1)(click$));
- * 
- * // Propは関数として呼び出す
- * console.log($count()); // 現在値を取得
- * ```
  */
 const hold = <A>(v:A) => (s:Stream<A>): Prop<A> => {
     const p = () => v;
@@ -533,20 +338,9 @@ const hold = <A>(v:A) => (s:Stream<A>): Prop<A> => {
 }
 
 /**
- * Propを別のPropに変換する。
- * 
- * 元のPropがStreamと接続されていれば、新しいPropも同じStreamから自動的に値を受け取る。
- * 
+ * Propを別のPropに変換する。元のPropがStreamと接続されていれば、新しいPropも同じStreamから自動的に値を受け取る。
  * @param fn - 変換関数
  * @returns Propを受け取り新しいPropを返す関数
- * 
- * @example
- * ```typescript
- * const $count = hold(0)(count$);
- * 
- * // 常に2倍の値を持つProp
- * const $doubled = remap((n: number) => n * 2)($count);
- * ```
  */
 const remap = <A,B>(f:(v:B,p?:B)=>A) => (p:Prop<B>) : Prop<A> => 
     PROP_FROM.has(p)
@@ -554,25 +348,9 @@ const remap = <A,B>(f:(v:B,p?:B)=>A) => (p:Prop<B>) : Prop<A> =>
         : ()=>f(p());
 
 /**
- * 複数のPropを組み合わせて新しいPropを生成。
- * 
- * いずれかのPropが更新されると、新しいPropも自動的に再計算される。
- * 
+ * 複数のPropを組み合わせて新しいPropを生成。いずれかのPropが更新されると、新しいPropも自動的に再計算される。
  * @param fn - 統合関数
  * @returns Props配列を受け取り新しいPropを返す関数
- * 
- * @example
- * ```typescript
- * const $firstName = hold("John")(firstName$);
- * const $lastName = hold("Doe")(lastName$);
- * 
- * // 2つのPropを組み合わせる
- * const $fullName = lift(
- *   ([first, last]) => `${first} ${last}`
- * )([$firstName, $lastName]);
- * 
- * console.log($fullName()); // "John Doe"
- * ```
  */
 const lift = <A>(f: (values: any[]) => A) => (props: Prop<any>[]) : Prop<A> => {
   type reservation = [number, any];
@@ -593,25 +371,10 @@ const NotThen = Symbol("NotThen");
 type PromisedProp<T> = PromiseLike<T> & Prop<T|typeof NotThen>
 
 /**
- * Propが特定の条件を満たすまで待機するPromiseLike Propを生成する。
- * 
- * 条件を満たすと自動的に解決される。
- * thenを複数回呼ぶことで、条件を満たす度に新しい値を取得できる。
- * 
+ * Propが特定の条件を満たすまで待機するPromiseLike Propを生成する。条件を満たすと自動的に解決される。
+ * 条件を満たす度、thenを呼びなおせば新しいPromiseを取得できる。
  * @param predicate - 条件（関数、正規表現、または値）
  * @returns 条件を満たすまで待機するPromisedProp
- * 
- * @example
- * ```typescript
- * const $status = hold("loading")(status$);
- * 
- * // "ready"になるまで待機
- * const $ready = when("ready")($status);
- * await $ready.then(status => console.log(status)); // "ready"
- * 
- * // 関数で条件指定
- * const $positive = when((n: number) => n > 0)($count);
- * ```
  */
 const when = <A>(predicate: Predicate<A>) => (p: Prop<A>): PromisedProp<A> => {
     const f = toPredicate(predicate);
@@ -648,22 +411,10 @@ const when = <A>(predicate: Predicate<A>) => (p: Prop<A>): PromisedProp<A> => {
 
 /**
  * 既存オブジェクトのプロパティをblookyのデータフローと同期させる。
- * 
  * 返されたPropの更新は、元のオブジェクトのプロパティにも同期される。
- * 
  * @param obj - 対象オブジェクト
  * @param key - プロパティ名
  * @returns [Dripper, Prop]のタプル
- * 
- * @example
- * ```typescript
- * const config = { theme: "light" };
- * const [theme$, $theme] = proxy(config, "theme");
- * 
- * // Propを更新すると、元のオブジェクトも更新される
- * collapse(drip("* collapse(drip("dark")(theme$));
- * console.log(config.theme); // "dark"
- * ```
  */
 function proxy<T, K extends keyof T>(obj: T, key: K): [DripperStream<T[K]>, Prop<T[K]>] {
   const desc = Object.getOwnPropertyDescriptor(obj, key);
@@ -689,15 +440,7 @@ const beat$ = stream<number>();
 
 /**
  * アプリケーション全体で共有される現在時刻を表すProp。
- * 
- * collapse()が実行される度に自動的に更新される。
- * 
- * @example
- * ```typescript
- * import { clock } from 'blooky/fp';
- * 
- * console.log(clock()); // performance.now()の値
- * ```
+ * collapse()実行時に自動的に更新される。
  */
 const clock: Prop<number> = hold(performance.now())(beat$);
 
@@ -721,9 +464,7 @@ const LockRecord = new WeakMap<DripperStream<any>, {
 }>();
 
 /**
- * DripEffectを実行する。
- * 
- * これはblookyにおける「実行」の唯一のエントリーポイント。
+ * DripEffectを実行する。blookyにおける「実行」の唯一のエントリーポイント。
  * drip()で生成したEffectは、collapse()を呼ぶまで実行されない。
  * 
  * Dripperのstrategyに応じて実行タイミングが制御される:
@@ -734,34 +475,8 @@ const LockRecord = new WeakMap<DripperStream<any>, {
  *   - ignore: 実行中は無視
  *   - queue: 実行後にキューを順次処理
  *   - restart: 実行中を中断して新しい値で再開
- * 
  * @param effect - drip()で生成したDripEffect
  * @returns 実行完了時のタイムスタンプを返すPromise
- * 
- * @example
- * ```typescript
- * const click$ = stream<MouseEvent>();
- * 
- * button.onclick = async (e) => {
- *   // Effectを生成して実行
- *   await collapse(drip(e)(click$));
- *   console.log("処理完了");
- * };
- * 
- * // debounce付きDripper
- * const search$ = stream<string>({ debounce: 300 });
- * input.oninput = (e) => {
- *   // 300ms後に実行される
- *   collapse(drip(e.target.value)(search$));
- * };
- * 
- * // lock付きDripper（API呼び出し等で二重実行を防ぐ）
- * const save$ = stream({ type: 'lock', mode: 'ignore' });
- * saveButton.onclick = () => {
- *   // 実行中なら無視される
- *   collapse(drip(data)(save$));
- * };
- * ```
  */
 const collapse = async <A>(effect:DripEffect<A>) => new Promise<number>((resolve, reject) => {
     const dripper = effect.dripper;
@@ -887,25 +602,10 @@ const tickHandlers: { [key in CollapseObserver]: Set<(effect:DripEffect<any>)=>v
  * - visual: requestAnimationFrame
  * - sequential: setTimeout
  * - thrown: エラー時のみ
- * 
- * 主にDevToolsや副作用の観測に使用。
- * 
  * @param observer - オブザーバーの種類
  * @param handler - 実行されるハンドラ（DripEffect<any>を受け取る）
  * @returns 登録解除用の関数
- * 
- * @example
- * ```typescript
- * // すべてのcollapse実行をログ出力
- * const unregister = registerTickHandler('immediate', (effect) => {
- *   console.log('drip value:', effect.value);
- *   console.log('dripper:', effect.dripper);
- * });
- * 
- * // 登録解除
- * unregister();
- * ```
- */
+*/
 function registerCollapseObserver(observer: CollapseObserver, handler: (effect: DripEffect<any>) => void) {
   tickHandlers[observer].add(handler);
   return () => tickHandlers[observer].delete(handler);
@@ -972,34 +672,11 @@ function tick(reservation: CollapseReservation) {
 
 /**
  * blooky全体で共有されるユーティリティとエラーストリーム。
- * 
- * エラーストリームは、blooky内部で発生したエラーを
- * カテゴリ別に流すDripperです。
+ * エラーストリームは、blooky内部で発生したエラーをカテゴリ別に流すDripper。
  */
 const blooky = {
     /**
-     * カテゴリ別のエラーストリーム。
-     * 
-     * アプリケーションでエラーハンドリングを行う際に使用できます。
-     * 
-     * @example
-     * ```typescript
-     * import { blooky, registerTickHandler } from 'blooky/fp';
-     * 
-     * // ユーザーエラーを監視
-     * registerTickHandler('thrown', (effect) => {
-     *   console.error('Error:', effect.value);
-     * });
-     * 
-     * // エラーを発生させる
-     * collapse(drip(
-     *   blooky.error('user', {
-     *     code: 'CUSTOM_ERROR',
-     *     message: 'Something went wrong',
-     *     originalError: new Error()
-     *   })
-     * )(blooky.errorStream.user));
-     * ```
+     * カテゴリ別のエラーストリーム。アプリケーションでエラーハンドリングを行う際に使用。
      */
     errorStream : {
       'dev-config': stream<BlookyError<'dev-config'>>(),
@@ -1030,25 +707,18 @@ const blooky = {
 export {
     // Core
     drip, collapse, stream,
-    
     // Stream operators
     merge, junction, map, filter,
-    
     // Prop creators
     hold, accum, lift, remap, when,
-    
     // Utilities
     proxy, pipe, clear, vertex,
-    
     // Type guards
     isStream, isDripperStream as isDripper, isDripperStream, isChainedProp, isVertex,
-    
     // Observers
     registerCollapseObserver,
-    
     // Shared
     clock, blooky,
-    
     // Symbol
     NotThen
 };

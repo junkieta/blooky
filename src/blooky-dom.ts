@@ -1,22 +1,14 @@
 /**
  * blooky-dom.ts
  * blookyを用いてリアクティブなDOMを構築するライブラリ。
- * * blooky-fpのStream/Propの概念をDOMにバインドし、宣言的なHTML記述（JSHTML）を可能にする。
- * Propの更新は、blooky-fpのtickサイクル（`collapse`の`visual`フェーズ）に同期してDOMに反映される。
- * * 核となる概念:
- * - JSHTML: JavaScriptオブジェクトでDOM構造を表現する形式。
- * - PropBridge: PropとDOMノード/属性/スタイル間の同期を担当する内部機構。
+ * blooky-fpのStream/Propの概念をDOMにバインドし、宣言的なHTML記述（JSHTML）を可能にする。
  */
 import type { V_DATASET, V_STYLE, V_CLASSLIST, V_EVENTLISTENER, V_STRING, WritableCSSProperty, JSHTMLElementSource, JSHTMLAttrSource, JSHTMLNodeSource, JSHTMLAttributeMapSource, JSHTMLAttrRuntime, JSHTMLNodeRuntime, JSHTMLNodeSourceType, JSHTMLExtractedElementSource, JSHTMLNodeFactory, JSHTMLNodeSourceAnalyzer, BlookyMutationEvent, JSHTMLAttrAnalyzer, JSHTMLAttrBuilder } from "./blooky-dom-types";
 import { registerCollapseObserver, isDripper, drip, collapse, isChainedProp, blooky, stream } from "./blooky-fp";
 import { Prop, Dripper, Stream, BlookyError, DripStrategy } from "./blooky-types";
 
-// DOMをfpのtickに結び付ける
 /**
- * Propの変更をDOMに反映させるためのオブザーバーを登録する。
- * * blooky-fpの`visual`ティックフェーズ（通常は`requestAnimationFrame`）で実行され、
- * PropとDOM間のバインディング（PropBridge）を通じてDOMを更新する。
- * また、DOMから切り離されたPropBridgeのガベージコレクションもこのフェーズで行う。
+ * Propの変更をDOMに反映させるためのオブザーバーを登録。
  */
 registerCollapseObserver("visual", (dripEffect) => {
     // DOMに関係するPropを残す
@@ -33,10 +25,8 @@ registerCollapseObserver("visual", (dripEffect) => {
     });
 })
 
-// PropとDOMのバインドに責任を持つインターフェース
 /**
  * PropとDOM要素（ノード、属性、スタイルなど）間の双方向バインディングを管理するインターフェース。
- * * 内部実装の詳細であり、アプリケーション開発者が直接使用することはない。
  */
 type PropBridgeInterface<A> = {
     prop: Prop<A>
@@ -52,10 +42,9 @@ type PropBridgeInterface<A> = {
     update(next:A,prev:A): void
     /**
      * 別のPropBridgeがこのPropBridgeによって包含されているかを判定する
-     * （主にガベージコレクションで使用）
      * @param p - 判定対象のPropBridge
      */
-    contains(p:PropBridge): boolean    
+    contains(p:PropBridge): boolean
 }
 
 /**
@@ -65,7 +54,6 @@ type PropBridge = (RangePropBridge | AttrPropBridge | StylePropBridge | DatasetP
 
 /**
  * 更新時に参照するため、PropとDOMのバインドを保管するMap
- * Propをキーとし、PropBridgeまたはその配列を値とする。
  */
 const PROP_BRIDGE_RECORD = new Map<Prop<any>, PropBridge|PropBridge[]>();// 最適化用に共用型
 
@@ -88,8 +76,7 @@ const bindPropBridge = (b:PropBridge) => {
 }
 
 /**
- * DOMツリーから外れたPropBridgeや、より外側のBridgeに包含されているBridgeを
- * ガベージコレクト（内部レコードから削除）する。
+ * DOMツリーから外れたPropBridgeや、より外側のBridgeに包含されているBridgeをガベージコレクトする。
  * @param bridges - ガベージコレクトの候補となっているbridgeの配列
  */
 const garbageCollectForBridgeRecords = (bridges: PropBridge[]) => {
@@ -118,8 +105,7 @@ const contains_range = (a: Range) => (b: Range) => {
 }
 
 /**
- * PropとDOMをRange（DOMの連続した部分）でバインドするクラス。
- * * 主に `Prop<JSHTMLNodeSource>` の更新時に、DOMノード全体を置き換えるために使用される。
+ * PropとDOMをRangeでバインドするクラス。主に `Prop<JSHTMLNodeSource>` の更新時に、DOMノード全体を置き換えるために使用される。
  */
 class RangePropBridge implements PropBridgeInterface<JSHTMLNodeSource> {
     prop: Prop<JSHTMLNodeSource>
@@ -235,21 +221,17 @@ abstract class AbstractAttrPropBridge<A> implements PropBridgeInterface<A> {
     /**
      * 属性更新イベントをDOMにディスパッチする。
      */
-    protected dispatchPropUpdateEvent(type: string, next:A, prev:A) {
+    protected dispatchPropUpdateEvent(type: string, nextValue:A, prevValue:A) {
+        const {prop,name} = this;
         this.target.dispatchEvent(new CustomEvent(type, {
-            detail: {
-                prop: this.prop,
-                name: this.name,
-                nextValue: next,
-                prevValue: prev
-            }
+            detail: { prop, name, nextValue, prevValue }
         }));
     }
 }
 
 /**
  * PropとDOMの一般的な属性（`href`, `value`, `onclick`など）をバインドするクラス。
- * * イベントリスナー（`on*`）属性の場合、`Dripper`を`listenerForCollapse`でラップして適用する。
+ * イベントリスナー（`on*`）属性の場合、`Dripper`を`listenerForCollapse`でラップして適用する。
  */
 class AttrPropBridge extends AbstractAttrPropBridge<JSHTMLAttrSource> {
     generatedListener?: EventListenerOrEventListenerObject
@@ -290,8 +272,7 @@ class AttrPropBridge extends AbstractAttrPropBridge<JSHTMLAttrSource> {
 }
 
 /**
- * PropとDOMの`style`プロパティ（CSS宣言）をバインドするクラス。
- * * 個々のCSSプロパティの更新に使用される。
+ * PropとDOMの`style`プロパティ（CSS宣言）をバインドするクラス。個々のCSSプロパティの更新に使用される。
  */
 class StylePropBridge extends AbstractAttrPropBridge<V_STRING> {
     /**
@@ -306,8 +287,7 @@ class StylePropBridge extends AbstractAttrPropBridge<V_STRING> {
 }
 
 /**
- * PropとDOMの`dataset`プロパティをバインドするクラス。
- * * 個々のデータ属性の更新に使用される。
+ * PropとDOMの`dataset`プロパティをバインドするクラス。個々のデータ属性の更新に使用される。
  */
 class DatasetPropBridge extends AbstractAttrPropBridge<V_STRING> {
     /**
@@ -323,7 +303,7 @@ class DatasetPropBridge extends AbstractAttrPropBridge<V_STRING> {
 
 /**
  * `Dripper`を通常のDOMイベントリスナーに変換する。
- * * イベント発生時に`drip`で`DripEffect`を生成し、`collapse`を呼び出す。
+ * イベント発生時に`drip`で`DripEffect`を生成し、`collapse`を呼び出す。
  * また、`blooky-collapse-*` イベントを発火させることで、外部から実行の制御や監視を可能にする。
  * * @param d - 値を流し込むDripper
  * @returns DOMイベントリスナー関数
@@ -372,17 +352,10 @@ type InterceptOptions = Partial<{
 
 /**
  * DOMイベントを処理するための`Dripper`を生成する。
- * * 生成された`Dripper`は`EventListenerObject`としても振る舞い、
- * イベント発生時に即座にDOMイベントの伝播を制御（`preventDefault`など）し、
- * その後、`collapse`を実行する。
- * * @param strategy - blookyの実行戦略とイベント伝播制御オプション
+ * dripStrategyを拡張した引数を受け取り、`preventDefault`などの呼び出しを可能にした上で、
+ * EventListenerとして使用可能なDripperを生成する。
+ * @param strategy - blookyの実行戦略とイベント伝播制御オプション
  * @returns イベントリスナーとして使用可能なDripper
- * * @example
- * ```typescript
- * const click$ = eventDripper({ preventDefault: true, debounce: 100 });
- * button.addEventListener("click", click$);
- * click$.map(e => ...); // click$にイベントが流れる
- * ```
  */
 const eventDripper = <E extends Event>(strategy?: DripStrategy & InterceptOptions): Dripper<E> & EventListenerObject => {
     const dripper = stream<E>(strategy);
@@ -459,8 +432,7 @@ const defineAttrUpdateHandlers = (handlers: { [key:string]: (value: any, target:
 }
 
 /**
- * Promiseの解決を待つ間に表示されるプレースホルダー要素。
- * * Promiseが解決すると、生成されたDOMノードに置き換えられる。
+ * Promiseの解決を待つ間に表示されるプレースホルダー要素。Promiseが解決すると、生成されたDOMノードに置き換えられる。
  */
 class PromisedElement extends HTMLElement {
     promise: Promise<JSHTMLNodeSource|Node>
@@ -495,14 +467,9 @@ customElements.define("blooky-promised-placeholder", PromisedElement);
 
 /**
  * Promiseが解決するまでプレースホルダーを表示する要素を生成する。
- * * @param p - DOMノードまたはJSHTMLノードソースを返すPromise
+ * @param p - DOMノードまたはJSHTMLノードソースを返すPromise
  * @param msg - プレースホルダーとして表示するノードソース（省略時は非表示のプレースホルダー）
  * @returns PromisedElement
- * * @example
- * ```typescript
- * const data = promised(fetchData(), { div: "Loading..." });
- * // dataはDOMツリーに追加され、Promise解決後に実際のデータに置き換わる
- * ```
  */
 const promised = (p: Promise<JSHTMLNodeSource|Node>, msg: JSHTMLNodeSource) => {
     const element = new PromisedElement(p);
@@ -526,15 +493,8 @@ export class EmptyElementAttributeMapSource {
 
 /**
  * MutationObserverを介して、DOMの変異をイベントストリームに接続する。
- * * @param init - MutationObserverの初期設定
+ * @param init - MutationObserverの初期設定
  * @returns Nodeを受け取り、変異を流すStreamを返す関数
- * * @example
- * ```typescript
- * const node = document.createElement("div");
- * const mutation$ = mutations({ childList: true })(node);
- * * collapse(map(() => console.log('DOM changed'))(mutation$));
- * node.appendChild(document.createElement('span')); // mutation$にイベントが流れる
- * ```
  */
 const mutations = (init: MutationObserverInit) => (n: Node) : Stream<BlookyMutationEvent> => {
     const s = stream<BlookyMutationEvent>();
@@ -557,12 +517,12 @@ const mutations = (init: MutationObserverInit) => (n: Node) : Stream<BlookyMutat
 
 /**
  * カスタム要素をjshtmlで生成する際の独自フックを登録するためのSymbol。
- * * カスタム要素クラスの静的プロパティとして使用し、要素生成時の初期化ロジックを提供する。
+ * カスタム要素クラスの静的プロパティとして使用し、要素生成時の初期化ロジックを提供する。
  */
 const JSHTML_ELEMENT_HANDLER = Symbol("JSHTML_ELEMENT_FACTORY");
 /**
  * カスタム要素の独自属性の設定用フックを登録するためのSymbol。
- * * カスタム要素クラスの静的プロパティとして使用し、独自の属性処理ロジックを提供する。
+ * カスタム要素クラスの静的プロパティとして使用し、独自の属性処理ロジックを提供する。
  * `{ [属性名]: (v:JSHTMLAttrRuntime<any>)=>boolean|void }` 形式で定義される。
  */
 const JSHTML_ATTR_HANDLER = Symbol("JSHTML_ATTR_HANDLER");
@@ -574,16 +534,6 @@ const JSHTML_ATTR_HANDLER = Symbol("JSHTML_ATTR_HANDLER");
  * @param source - JSHTMLノードソース
  * @param context - 要素生成時に利用可能なコンテキストオブジェクト
  * @returns 生成されたDOMノードまたはDocumentFragment
- * * @example
- * ```typescript
- * const $count = hold(0)(count$);
- * const dom = jshtml({
- * div: [
- * "Count: ", $count // Propがノードとしてバインドされる
- * ]
- * });
- * document.body.appendChild(dom);
- * ```
  */
 function jshtml(this: object|void, source: JSHTMLNodeSource, context?: Record<string,any>) {
     const build = (source: JSHTMLNodeSource) : Node => {
@@ -596,7 +546,7 @@ function jshtml(this: object|void, source: JSHTMLNodeSource, context?: Record<st
 
 /**
  * 属性マップが要素内容に記載されても正常に属性として扱うためのラッパを生成する。空要素用。
- * * @param attrs - 属性マップ
+ * @param attrs - 属性マップ
  * @returns EmptyElementAttributeMapSourceインスタンス
  */
 jshtml.$ = (attrs: JSHTMLAttributeMapSource) => new EmptyElementAttributeMapSource(attrs);
@@ -747,20 +697,20 @@ const jshtmlAttrBuilder: JSHTMLAttrBuilder = {
 
 
 /**
- * コンテキストオブジェクトからJSHTMLノードソースを返す関数をラップし、
  * 宣言的なレンダラーを生成するためのヘルパー関数。
- * * レンダリングロジックと外部コンテキストを分離し、コンポーネント的な記述を可能にする。
- * * @param fn - コンテキストオブジェクトを受け取り、JSHTMLノードソースを返す関数
+ * レンダリングロジックと外部コンテキストを分離し、コンポーネント的な記述を可能にする。
+ * @param fn - コンテキストオブジェクトを受け取り、JSHTMLノードソースを返す関数
  * @returns コンテキストオブジェクトを受け取り、DOMノードを返す関数
- * * @example
+ * @example
  * ```typescript
+ * // コンテキスト定義
  * interface SenderContext { send$: Dripper<MouseEvent> }
- * * // レンダラー定義
+ * // レンダラー定義
  * const renderButton = prime(({ send$ }: SenderContext) => ({
- * button: "Send Message",
- * $: { onclick: send$ } // Dripperがイベントリスナーとして設定される
+ *  button: "Send Message",
+ *  $: { onclick: send$ } // Dripperがイベントリスナーとして設定される
  * }));
- * * // 利用
+ * // 利用
  * const sendStream = stream<MouseEvent>();
  * const dom = renderButton({ send$: sendStream });
  * document.body.appendChild(dom);
