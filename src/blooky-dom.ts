@@ -7,23 +7,6 @@ import type { V_DATASET, V_STYLE, V_CLASSLIST, V_EVENTLISTENER, V_STRING, Writab
 import { registerCollapseObserver, isDripper, drip, collapse, isChainedProp, blooky, stream } from "./blooky-fp";
 import { Prop, Dripper, Stream, BlookyError, DripStrategy } from "./blooky-types";
 
-/**
- * Propの変更をDOMに反映させるためのオブザーバーを登録。
- */
-registerCollapseObserver("visual", (dripEffect) => {
-    // DOMに関係するPropを残す
-    const update_target = [...dripEffect.effects.keys()].flatMap((p)=>PROP_BRIDGE_RECORD.has(p) ? PROP_BRIDGE_RECORD.get(p)! : []);
-    // ガベージコレクション
-    garbageCollectForBridgeRecords(update_target);
-    // メモリに残ったbridgeはアップデートする
-    dripEffect.effects.forEach((v,p)=>{
-        if(!PROP_BRIDGE_RECORD.has(p)) return;
-        const prev = p() as any;
-        if(prev === v) return;
-            update_target.filter((bridge)=>bridge.prop === p)
-                .forEach((bridge)=>bridge.update(v,prev));
-    });
-})
 
 /**
  * PropとDOM要素（ノード、属性、スタイルなど）間の双方向バインディングを管理するインターフェース。
@@ -76,13 +59,10 @@ const bindPropBridge = (b:PropBridge) => {
 }
 
 /**
- * DOMツリーから外れたPropBridgeや、より外側のBridgeに包含されているBridgeをガベージコレクトする。
- * @param bridges - ガベージコレクトの候補となっているbridgeの配列
+ * 判定関数がtrueを返すBridgeをメモリから解放する
+ * @param isGCTarget - メモリ解放対象の判定関数
  */
-const garbageCollectForBridgeRecords = (bridges: PropBridge[]) => {
-    // ツリーから外れたものと、他のPropに包含されているPropはbindから外す
-    const isGCTarget = (a:PropBridge) => !a.isConnected() || bridges.some((b)=>b.contains(a)&&a!==b);
-    // メモリ解放
+const garbageCollectForBridgeRecords = (isGCTarget: (a:PropBridge) => boolean) => {
     PROP_BRIDGE_RECORD.forEach((bridge,prop)=>{
         if(!Array.isArray(bridge)) {
             if(isGCTarget(bridge))
@@ -97,8 +77,36 @@ const garbageCollectForBridgeRecords = (bridges: PropBridge[]) => {
     });
 }
 
+/**
+ * Propの変更をDOMに反映させるためのオブザーバーを登録。
+ */
+registerCollapseObserver("visual", {
+    props: PROP_BRIDGE_RECORD,
+    handler(effectMap) {
+        // DOMに関係するPropを残してガベージコレクト
+        const update_target = [...effectMap.keys()].flatMap((p)=>PROP_BRIDGE_RECORD.get(p)||[]);
+        // ツリーから外れたものと、他のPropに包含されているPropはbindから外す
+        const isGCTarget = (a:PropBridge) => !a.isConnected() || update_target.some((b)=>b.contains(a)&&a!==b);
+        garbageCollectForBridgeRecords(isGCTarget);
+        // メモリに残ったbridgeだけでアップデートする
+        effectMap.forEach((v,p)=>{
+            if(!PROP_BRIDGE_RECORD.has(p)) return;
+            const prev = p() as any;
+            if(prev === v) return;
+            const bridge = PROP_BRIDGE_RECORD.get(p)!;
+            if(!Array.isArray(bridge)) {
+                bridge.update(v,prev);
+            } else {
+                bridge.forEach((b)=>b.update(v,prev));
+            }
+        });
+    }
+
+});
+
+
 // aにbが含まれているならtrue
-const contains_range = (a: Range) => (b: Range) => {
+const containsRange = (a: Range) => (b: Range) => {
     // a の開始 <= b の開始 かつ a の終了 >= b の終了 なら a は b を包含する
     return a.compareBoundaryPoints(Range.START_TO_START, b) <= 0
         && a.compareBoundaryPoints(Range.END_TO_END, b) >= 0;
@@ -178,7 +186,7 @@ class RangePropBridge implements PropBridgeInterface<JSHTMLNodeSource> {
      */
     contains(p:PropBridge) {
         // PropBridgeがRangeBridgeに変換可能であることを前提
-        return contains_range(this.toRange())(p.toRange());
+        return containsRange(this.toRange())(p.toRange());
     }
 }
 
@@ -414,7 +422,7 @@ const ATTRIBUTE_HANDLER_RREGISTRY: { [key:string]: <V>(runtime:JSHTMLAttrRuntime
 
 /**
  * グローバルなカスタム属性更新ハンドラを登録する。
- * * 組み込み属性処理や`jshtmlAttrBuilder`の実行前にカスタムロジックを挿入できる。
+ * 組み込み属性処理や`jshtmlAttrBuilder`の実行前にカスタムロジックを挿入できる。
  * ハンドラが`false`を返した場合、後続の属性処理はスキップされる。
  * * @param handlers - `{ 属性名: (value, target) => boolean|void }` 形式のハンドラマップ
  * @throws 既に登録されている属性ハンドラがある場合、`blooky.error`を発火
@@ -482,7 +490,7 @@ const promised = (p: Promise<JSHTMLNodeSource|Node>, msg: JSHTMLNodeSource) => {
 
 /**
  * 属性マップが要素の子ノードの位置に記載された場合、それを属性として扱うためのラッパー。
- * * `jshtml({ br: jshtml.$({ class: "clear" }) })` のように、子ノードを持たない要素の属性定義に使用される。
+ * `jshtml({ br: jshtml.$({ class: "clear" }) })` のように、子ノードを持たない要素の属性定義に使用される。
  */
 export class EmptyElementAttributeMapSource {
     source: JSHTMLAttributeMapSource
@@ -526,7 +534,6 @@ const JSHTML_ELEMENT_HANDLER = Symbol("JSHTML_ELEMENT_FACTORY");
  * `{ [属性名]: (v:JSHTMLAttrRuntime<any>)=>boolean|void }` 形式で定義される。
  */
 const JSHTML_ATTR_HANDLER = Symbol("JSHTML_ATTR_HANDLER");
-
 
 /**
  * JSHTML形式のソースからDOMノードを生成する。

@@ -83,7 +83,23 @@ type DripEffect<A> = {
 // 各Propとその値を示す、最小のEffect。
 type PropEffect<A> = [Prop<A>,A]
 
-type CollapseObserver = 
+type PropFilter = (prop: Prop<any>) => boolean;
+
+interface PropObserver {
+  filter?: PropFilter;
+  handler: (effects: Map<Prop<any>,any>) => void;
+}
+
+interface PropObserverArg {
+  /** Prop のホワイトリスト（Set/Map など） */
+  props?: Set<Prop<any>> | WeakSet<Prop<any>> | Map<Prop<any>, any> | WeakMap<Prop<any>, any> | { has: PropFilter }
+  /** 追加のフィルタ条件（props と両方指定されたら AND で結合） */
+  filter?: PropFilter;
+  /** 変更されたPropの処理ハンドラー */
+  handler: (effects: Map<Prop<any>, any>) => void;
+}
+
+type CollapseObservationType = 
   | 'immediate'    // 即座観測者
   | 'visual'       // 視覚観測者（RAF）
   | 'sequential'   // 順次観測者（timeout）
@@ -156,7 +172,7 @@ export {
   Dripper,Stream,Prop,DripperStream,FilterStream,MappedStream,MergedStream,Vertex, 
   DripStrategy,ShortDripStrategy,DripEffect,PropEffect,
   FlowingState,StreamBase,
-  CollapseObserver,
+  CollapseObservationType,PropObserver,PropObserverArg,
   CollapseReservation,
   BlookyError,BlookyErrorCauseMap,
   ConstraintErrorCause,DevConfigErrorCause,FlowErrorCause,StructureErrorCause,UserErrorCause,

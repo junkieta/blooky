@@ -3,9 +3,9 @@
  * 関数型リアクティブプログラミングをTypeScriptで行うためのライブラリ。
  */
 import { 
-  BlookyError, BlookyErrorCauseMap, CollapseObserver, CollapseReservation,
+  BlookyError, BlookyErrorCauseMap, CollapseObservationType, CollapseReservation,
   DripEffect, DripperStream, DripStrategy, FilterStream, FlowingState,
-  MappedStream, MergedStream, Prop, PropEffect, ShortDripStrategy, Stream, Vertex 
+  MappedStream, MergedStream, Prop, PropEffect, PropObserver, PropObserverArg, ShortDripStrategy, Stream, Vertex 
 } from "./blooky-types";
 
 /**
@@ -77,8 +77,8 @@ const cleanupRegistry =
     } as FinalizationRegistry<WeakRef<Stream<any>|Prop<any>>>;
 
 // filter, when用の内部ヘルパー
-type Predicate<A> = ((v:A)=>boolean)|RegExp|A;
-const toPredicate = <A>(predicate: Predicate<A>) => 
+type Predicate<A> = A|RegExp|((v:A)=>boolean)|(()=>boolean);
+const toPredicate = <A>(predicate: Predicate<unknown>) => 
     typeof predicate === "function"
     ? predicate as (v:A)=>boolean
     : predicate instanceof RegExp
@@ -191,6 +191,7 @@ const accum = <S,A>(f:(s:S,v:A)=>S, s: S) => (_s:Stream<A>) : Prop<S> => {
     return p;
 }
 
+
 /**
  * 関数を順次適用するパイプライン。Stream操作を読みやすく記述するためのユーティリティ。
  * @param value - 初期値
@@ -198,12 +199,7 @@ const accum = <S,A>(f:(s:S,v:A)=>S, s: S) => (_s:Stream<A>) : Prop<S> => {
  * @returns 最終結果
  * @example
  * ```typescript
- * const result = pipe(
- *   stream<number>(),
- *   filter((n) => n > 0),
- *   map((n) => n * 2),
- *   hold(0)
- * );
+ * const result = pipe(stream<number>(),filter((n) => n > 0),map((n) => n * 2),hold(0)); // 0以上の数値が2倍になるProp
  * ```
  */
 function pipe<A,B>(value:A,op1:(a:A)=>B):B;
@@ -342,7 +338,7 @@ const hold = <A>(v:A) => (s:Stream<A>): Prop<A> => {
  * @param fn - 変換関数
  * @returns Propを受け取り新しいPropを返す関数
  */
-const remap = <A,B>(f:(v:B,p?:B)=>A) => (p:Prop<B>) : Prop<A> => 
+const remap = <A,B>(f:(v:A,p?:A)=>B) => (p:Prop<A>) : Prop<B> => 
     PROP_FROM.has(p)
         ? hold(f(p()))(map(f)(PROP_FROM.get(p)!))
         : ()=>f(p());
@@ -585,7 +581,7 @@ const collapse = async <A>(effect:DripEffect<A>) => new Promise<number>((resolve
 
 
 // Effect処理のミドルウェア
-const tickHandlers: { [key in CollapseObserver]: Set<(effect:DripEffect<any>)=>void> } = {
+const tickHandlers: { [key in CollapseObservationType]: Set<PropObserver> } = {
     immediate: new Set(),
     visual: new Set(),
     quantum: new Set(),
@@ -602,13 +598,22 @@ const tickHandlers: { [key in CollapseObserver]: Set<(effect:DripEffect<any>)=>v
  * - visual: requestAnimationFrame
  * - sequential: setTimeout
  * - thrown: エラー時のみ
- * @param observer - オブザーバーの種類
- * @param handler - 実行されるハンドラ（DripEffect<any>を受け取る）
+ * @param type - オブザーバーの種類
+ * @param observer - 実行されるハンドラ（DripEffect<any>を受け取る）
  * @returns 登録解除用の関数
 */
-function registerCollapseObserver(observer: CollapseObserver, handler: (effect: DripEffect<any>) => void) {
-  tickHandlers[observer].add(handler);
-  return () => tickHandlers[observer].delete(handler);
+function registerCollapseObserver(type: CollapseObservationType, observer: PropObserverArg) {
+  if(observer.props) {
+    const props = observer.props;
+    return registerCollapseObserver(type, {
+        handler: observer.handler,
+        filter: typeof observer.filter !== "function"
+            ? props.has.bind(props)
+            : (p:Prop<any>) => props.has(p) && observer.filter(p)
+    });
+  }
+  tickHandlers[type].add(observer);
+  return () => tickHandlers[type].delete(observer);
 }
 // 予約されたEffectを処理する（内部実装）
 function tick(reservation: CollapseReservation) {
@@ -619,23 +624,28 @@ function tick(reservation: CollapseReservation) {
     
     const errors: BlookyError<keyof BlookyErrorCauseMap>[] = [];
     
-    const observers: { [key in Exclude<CollapseObserver,"thrown">]: (f:()=>void)=>void } = {
+    const observers: { [key in Exclude<CollapseObservationType,"thrown">]: (f:()=>void)=>void } = {
         "immediate": (f)=>f(),
         "visual": globalThis.requestAnimationFrame || (globalThis as any).nextTick || (globalThis as any).setImmediate,
         "sequential": setTimeout,  
         "quantum": queueMicrotask
     };
+
+    const changedProps = [...reservation.effect.effects.keys()];
+    const effects = reservation.effect.effects;
     
     const promises: Promise<unknown>[] =
         Object.entries(observers).flatMap(([key,ticker])=> {
-            const handlers = tickHandlers[key as CollapseObserver];
+            const handlers = tickHandlers[key as CollapseObservationType];
             return !handlers.size
                 ? []
                 : new Promise((resolve) => ticker(()=>{
-                    const handlers = tickHandlers[key as CollapseObserver];
-                    handlers.forEach((handler) => {
+                    handlers.forEach((observer) => {
                         try {
-                            handler(reservation.effect);
+                            const relevantEffects = observer.filter
+                                ? new Map([...effects].filter(([p])=>observer.filter(p)))
+                                : effects;
+                            if(relevantEffects.size) observer.handler(relevantEffects);
                         } catch(err) {
                             errors.push(err instanceof Error && 'category' in err 
                                 ? err as BlookyError<any>
@@ -653,10 +663,10 @@ function tick(reservation: CollapseReservation) {
     
     Promise.allSettled(promises).then(()=>{
         if (errors.length && tickHandlers.thrown.size) {
-            const errorEffects = errors.map(error => drip(error)(blooky.errorStream[error.category]));
-            tickHandlers.thrown.forEach(handler => {
+            const errorEffects = errors.map((error) => drip(error)(blooky.errorStream[error.category]));
+            tickHandlers.thrown.forEach((observer) => {
                 try {
-                    handler(errorEffects[0]);
+                    observer.handler(errorEffects[0].effects);
                 } catch (thrownError) {
                     console.error('Error in thrown handler:', thrownError);
                 }
