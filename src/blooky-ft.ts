@@ -1,5 +1,5 @@
 // blooky-ft.ts
-import { stream as coreStream, collapse as coreCollapse, blooky, drip, DripEffect, hold, Prop, Stream, vertex, clear } from './blooky-fp';
+import { stream as coreStream, collapse as coreCollapse, blooky, drip, DripEffect, hold, Prop, Stream, vertex, clear, when } from './blooky-fp';
 import { ShortDripStrategy, DripStrategy, StrategicDripper, DripperStream, CollapseObservationType, PropObserver, PropObserverArg, CollapseReservation, BlookyError, BlookyErrorCauseMap } from './blooky-types';
 
 // --- 時間の源泉 ---
@@ -9,8 +9,45 @@ const beat$ = coreStream<number>();
  * アプリケーション全体で共有される現在時刻を表すProp。
  * collapse()実行時に自動的に更新される。
  */
-const clock: Prop<number> = hold(performance.now())(beat$);
+const clock = hold(performance.now())(beat$) as Prop<number> & {
+    resume: (p?: Prop<boolean>) => void
+    pause: () => void
+};
+{
+    let pid : number = 0;
+    let ticker = globalThis.requestAnimationFrame || ((f:(t:number)=>void) => setTimeout(f, Math.ceil(1000/60)));
+    let canceler = ticker === globalThis.requestAnimationFrame ? cancelAnimationFrame : clearTimeout;
+    
+    clock.resume = (p?: Prop<boolean>) => {
+        clock.pause();
+        pid = ticker(function recursion() {
+            if(pid) {
+                const t = performance.now();
+                console.log(t - clock());
+                collapse(drip(t)(beat$)).finally(()=> pid = ticker(recursion));
+            }
+        })
 
+        return p
+            ? registerCollapseObserver("immediate", {
+                props: new Set([p]),
+                handler: (v) => {
+                    if(v.get(p)) {
+                        clock.resume();
+                    } else {
+                        clock.pause();
+                    }
+                }
+            })
+            : ()=>{};
+    }
+
+    clock.pause = () => {
+        canceler(pid)
+        pid = 0;
+    }
+
+}
 
 const stream = <A>(strategy: ShortDripStrategy|DripStrategy = { type: "immediate" }) : StrategicDripper<A> => {
     if(!("type" in strategy))
@@ -27,16 +64,11 @@ const stream = <A>(strategy: ShortDripStrategy|DripStrategy = { type: "immediate
 };
 
 
-// debounce
 const debounce = <A>(delay: number): StrategicDripper<A> => stream({ type: 'debounce', delay });
 
-// throttle
-const throttle = <A>(interval: number) => stream({ type: 'throttle', interval });
+const throttle = <A>(interval: number): StrategicDripper<A> => stream({ type: 'throttle', interval });
 
-const lock = <A>(mode: 'ignore' | 'queue' | 'restart') => stream({ type: 'lock', mode });
-
-
-
+const lock = <A>(mode: 'ignore' | 'queue' | 'restart'): StrategicDripper<A> => stream({ type: 'lock', mode });
 
 // dobounce で一時保管するDrip情報
 const PendingEffect = new WeakMap<DripperStream<any>,{
@@ -220,16 +252,17 @@ function tick(reservation: CollapseReservation) {
         tick({ now, effect: drip(now)(beat$), resolve: ()=>{}, reject: ()=>{} });
     }
     
+    const effects = reservation.effect.effects;
+    if(!effects.size) return;
+
     const errors: BlookyError<keyof BlookyErrorCauseMap>[] = [];
     
     const observers: { [key in Exclude<CollapseObservationType,"thrown">]: (f:()=>void)=>void } = {
         "immediate": (f)=>f(),
         "visual": globalThis.requestAnimationFrame || (globalThis as any).nextTick || (globalThis as any).setImmediate,
-        "sequential": setTimeout,  
+        "sequential": setTimeout,
         "quantum": queueMicrotask
     };
-
-    const effects = reservation.effect.effects;
     
     const promises: Promise<unknown>[] =
         Object.entries(observers).flatMap(([key,ticker])=> {
@@ -278,6 +311,7 @@ function tick(reservation: CollapseReservation) {
 }
 
 export {
-    stream,debounce,throttle,lock,collapse,clock,
+    stream,debounce,throttle,lock,collapse,
+    clock,
     registerCollapseObserver
 }
