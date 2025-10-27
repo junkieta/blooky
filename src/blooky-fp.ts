@@ -3,9 +3,9 @@
  * 関数型リアクティブプログラミングをTypeScriptで行うためのライブラリ。
  */
 import { 
-  BlookyError, BlookyErrorCauseMap, CollapseObservationType, CollapseReservation,
-  DripEffect, DripperStream, DripStrategy, FilterStream, FlowingState,
-  MappedStream, MergedStream, Prop, PropEffect, PropObserver, PropObserverArg, ShortDripStrategy, Stream, Vertex 
+  BlookyError, BlookyErrorCauseMap,
+  DripEffect, DripperStream, FilterStream, FlowingState,
+  MappedStream, MergedStream, Prop, PropEffect, Stream, Vertex 
 } from "./blooky-types";
 
 /**
@@ -91,19 +91,11 @@ const toPredicate = <A>(predicate: Predicate<unknown>) =>
  * @param strategy - 実行タイミングの制御（省略時はimmediate）
  * @returns 新しいDripper
  */
-const stream = <A>(strategy: ShortDripStrategy|DripStrategy = { type: "immediate" }) : DripperStream<A> => {
-    if(!("type" in strategy))
-        return "throttle" in strategy
-            ? stream({ type: "throttle", interval: strategy.throttle })
-            : "debounce" in strategy
-            ? stream({ type: "debounce", delay: strategy.debounce })
-            : "lock" in strategy
-            ? stream({ type: "lock", mode: strategy.lock })
-            : stream({ type: "immediate" });
+const stream = <A>() : DripperStream<A> => {
     const s: DripperStream<A> = {
         next: new Set(),
         lazyNext: new Set(),
-        dripStrategy: strategy
+        isDripper: true
     };
     cleanupRegistry.register(s, new WeakRef(s));
     return s;
@@ -223,7 +215,7 @@ const isStream = <A>(v:unknown) : v is Stream<A> =>
  * @returns Dripperならtrue
  */
 const isDripperStream = <A>(v:unknown) : v is DripperStream<A> =>
-    isStream<A>(v) && "dripStrategy" in v;
+    isStream<A>(v) && v["isDripper"] === true;
 
 /**
  * PropがStreamから生成されたものかを判定。
@@ -248,73 +240,27 @@ const VERTEX_MAP = new WeakMap<Stream<any>,Vertex>();
  * @returns グラフ構造
  */
 const vertex = (s:Stream<any>): Vertex => {
-    const buildVertex = (source:Stream<any>, from?: Vertex) => {
-        if(VERTEX_MAP.has(source)) return VERTEX_MAP.get(source)!;
-        const vert: Vertex = {
-            sourceStream: source,
-            from,
-            props: STREAM_PROP_RELATIONS.get(source)
-        };
-        VERTEX_MAP.set(source, vert);
-        if(source.next.size)
-            vert.next = [...source.next].map((s)=>buildVertex(s,vert));
-        if(source.lazyNext.size)
-            vert.lazyNext = [...source.lazyNext].map((s)=>buildVertex(s,vert));
-        return vert;
-    }
-    return buildVertex(s);
+    if(VERTEX_MAP.has(s)) return VERTEX_MAP.get(s)!;
+    const vert: Vertex = Object.defineProperties({
+        sourceStream: s
+    },{
+        next: {
+            get: () => [...s.next].map(vertex),
+            configurable: true
+        },
+        lazyNext: {
+            get: () => [...s.lazyNext].map(vertex),
+            configurable: true
+        },
+        props: {
+            get: () => STREAM_PROP_RELATIONS.get(s),
+            configurable: true
+        }
+    });
+    VERTEX_MAP.set(s, vert);
+    return vert;
 }
 
-// 内部実装用の関数群
-const streamToFlowingState = <A>(v:A) => (s:Stream<A>) : FlowingState => {
-    const waiting = [...s.lazyNext].map((s) => [s,v] as [MergedStream<A>,A]);
-    if(!STREAM_PROP_RELATIONS.has(s)) return [[], waiting];
-    const p = STREAM_PROP_RELATIONS.get(s)!;
-    const effect: PropEffect<A>[] = p.map((prop)=>([prop,v]));
-    return [effect,waiting];
-}
-
-const concatTuple = <T extends any[][]>(a: T, b: T): T => a.map((x, i) => x.concat(b[i])) as T;
-
-const flow = <A>(v:A, allowPromise: boolean) => (s:Stream<A>) : FlowingState => {
-    if(v instanceof Promise && !allowPromise)
-        throw new Error("Asynchronous function was used in a synchronous stream.");
-    const state = streamToFlowingState(v)(s);
-    const next = [...s.next].filter((s)=> !("filterFn" in s) || s.filterFn(v));
-    return next.length
-        ? next.map((_s) => flow("mapFn" in _s ? _s.mapFn(v) : v, allowPromise)(_s)).reduce(concatTuple, state)
-        : state;
-}
-
-const flowLazy = <A>(v:A, allowPromise = false) => (s:Stream<A>) : FlowingState => {
-    const r = flow(v, allowPromise)(s);
-    const [updates,waiting] = r;
-    if(!waiting.length) return r;
-    const m = waiting.reduce((m,[s,v])=> {
-        if(m.has(s))
-            m.get(s)!.push(v);
-        else
-            m.set(s, [v]);
-        return m;
-    }, new Map<MergedStream<any>,any[]>());
-    return [...m].map(([s,v])=>flowLazy(v.reduce(s.reduceFn))(s)).reduce(concatTuple, [updates,[]]);
-}
-
-/**
- * Dripperに値を流し込むための「効果(Effect)」を生成。値の更新は、この関数の結果を引数として collapse() を呼ぶことで生じる。
- * Data Flow:
- * ```
- * value + Dripper ──drip()──> DripEffect<A> ──collapse()──> 実行
- * ```
- * 
- * @param value - 流し込む値
- * @returns Dripperを受け取りDripEffect<A>を返す関数
- */
-const drip = <A>(value:A) => (dripper:DripperStream<A>) : DripEffect<A> => ({
-    dripper,
-    value,
-    effects: new Map(flowLazy(value, false)(dripper)[0])
-});
 
 /**
  * Streamから現在値を保持するPropを生成する。
@@ -431,254 +377,61 @@ function proxy<T, K extends keyof T>(obj: T, key: K): [DripperStream<T[K]>, Prop
   return [dripper, getter];
 }
 
-// --- 時間の源泉 ---
-const beat$ = stream<number>();
+// 内部実装用の関数群
+const streamToFlowingState = <A>(v:A) => (s:Stream<A>) : FlowingState => {
+    const waiting = [...s.lazyNext].map((s) => [s,v] as [MergedStream<A>,A]);
+    if(!STREAM_PROP_RELATIONS.has(s)) return [[], waiting];
+    const p = STREAM_PROP_RELATIONS.get(s)!;
+    const effect: PropEffect<A>[] = p.map((prop)=>([prop,v]));
+    return [effect,waiting];
+}
+
+const concatTuple = <T extends any[][]>(a: T, b: T): T => a.map((x, i) => x.concat(b[i])) as T;
+
+const flow = <A>(v:A, allowPromise: boolean) => (s:Stream<A>) : FlowingState => {
+    if(v instanceof Promise && !allowPromise)
+        throw new Error("Asynchronous function was used in a synchronous stream.");
+    const state = streamToFlowingState(v)(s);
+    const next = [...s.next].filter((s)=> !("filterFn" in s) || s.filterFn(v));
+    return next.length
+        ? next.map((_s) => flow("mapFn" in _s ? _s.mapFn(v) : v, allowPromise)(_s)).reduce(concatTuple, state)
+        : state;
+}
+
+const flowLazy = <A>(v:A, allowPromise = false) => (s:Stream<A>) : FlowingState => {
+    const r = flow(v, allowPromise)(s);
+    const [updates,waiting] = r;
+    if(!waiting.length) return r;
+    const m = waiting.reduce((m,[s,v])=> {
+        if(m.has(s))
+            m.get(s)!.push(v);
+        else
+            m.set(s, [v]);
+        return m;
+    }, new Map<MergedStream<any>,any[]>());
+    return [...m].map(([s,v])=>flowLazy(v.reduce(s.reduceFn))(s)).reduce(concatTuple, [updates,[]]);
+}
 
 /**
- * アプリケーション全体で共有される現在時刻を表すProp。
- * collapse()実行時に自動的に更新される。
- */
-const clock: Prop<number> = hold(performance.now())(beat$);
-
-// dobounce で一時保管するDrip情報
-const PendingEffect = new WeakMap<DripperStream<any>,{
-    pid: ReturnType<typeof setTimeout>
-    resolvers: ((t:number)=>void)[]
-}>();
-
-// Throttleで処理中のドリッパーと時刻
-const ThrottleRecord = new WeakMap<DripperStream<any>, {
-    time: number
-    resolvers: ((t:number)=>void)[]
-}>();
-
-// lock用の内部状態
-const LockRecord = new WeakMap<DripperStream<any>, {
-    locked: boolean
-    queue: ((t:number)=>void)[]
-    resolvers: ((t:number)=>void)[]
-}>();
-
-/**
- * DripEffectを実行する。blookyにおける「実行」の唯一のエントリーポイント。
- * drip()で生成したEffectは、collapse()を呼ぶまで実行されない。
+ * Dripperに値を流し込むための「効果(Effect)」を生成。値の更新は、この関数の結果を引数として collapse() を呼ぶことで生じる。
+ * Data Flow:
+ * ```
+ * value + Dripper ──drip()──> DripEffect<A> ──collapse()──> 実行
+ * ```
  * 
- * Dripperのstrategyに応じて実行タイミングが制御される:
- * - immediate: 即座に実行
- * - debounce: 連続入力の最後だけ実行
- * - throttle: 一定間隔で間引いて実行
- * - lock: 実行中の新しいdripを制御
- *   - ignore: 実行中は無視
- *   - queue: 実行後にキューを順次処理
- *   - restart: 実行中を中断して新しい値で再開
- * @param effect - drip()で生成したDripEffect
- * @returns 実行完了時のタイムスタンプを返すPromise
+ * @param value - 流し込む値
+ * @returns Dripperを受け取りDripEffect<A>を返す関数
  */
-const collapse = async <A>(effect:DripEffect<A>) => new Promise<number>((resolve, reject) => {
-    const dripper = effect.dripper;
-    const strategy = dripper.dripStrategy;
-    const now = performance.now();
-    
-    switch (strategy.type) {
-
-        case 'immediate':
-            tick({ now, effect, resolve, reject });
-            break;
-
-        case 'throttle':
-            let lastRecord: { time: number, resolvers: ((n:number)=>void)[] }
-            if(!ThrottleRecord.has(dripper)) {
-                // 新しいスロット開始
-                lastRecord = { time: now, resolvers: [resolve] };
-                ThrottleRecord.set(dripper, lastRecord);
-            } else {
-                lastRecord = ThrottleRecord.get(dripper)!;
-                lastRecord.resolvers.push(resolve);
-                // クールタイム中なら実行待ちに溜めるだけでbreak
-                if((now - lastRecord.time) < strategy.interval)  break;
-                // でなければ前回がintervalより前なので継続
-                lastRecord.time = now;
-            }
-            tick({
-                now,
-                effect,
-                reject,
-                resolve: (t:number) => {
-                    lastRecord.resolvers.forEach((r)=>r(t));
-                    lastRecord.resolvers.length = 0;
-                }
-            });
-            break;
-
-        case 'debounce':
-            let pending: { pid: ReturnType<typeof setTimeout>, resolvers: ((t:number)=>void)[] };
-            if(PendingEffect.has(dripper)) {
-                pending = PendingEffect.get(dripper)!;
-                pending.resolvers.push(resolve);
-                clearTimeout(pending.pid);
-            } else {
-                pending = { pid: 0 as any, resolvers: [resolve] }
-                PendingEffect.set(dripper, pending);
-            }
-            pending.pid = setTimeout(()=>{
-                PendingEffect.delete(dripper);
-                // timeout後のnowに切り替える
-                tick({ now: performance.now(), effect, reject, resolve: (t:number) => pending.resolvers.forEach((r)=>r(t)) });
-            }, strategy.delay);
-            break;
-
-        case 'lock':
-            let record = LockRecord.get(dripper);
-            if (!record) {
-                record = { locked: false, queue: [], resolvers: [] };
-                LockRecord.set(dripper, record);
-            }
-
-            if (record.locked) {
-                switch (strategy.mode) {
-                case 'ignore':
-                    return;
-                case 'queue':
-                    record.queue.push((t:number) =>
-                    tick({ now: t, effect, resolve, reject })
-                    );
-                    return;
-                case 'restart':
-                    // resolve/reject が複数呼ばれないよう、前の完了を伝達
-                    record.resolvers.push(resolve);
-                    break;
-                }
-            }
-
-            record.locked = true;
-
-            const releaseLock = (v: any) => {
-                // resolve待ちをすべて通知
-                record!.resolvers.forEach((f) => f(v));
-                record!.resolvers.length = 0;
-                record!.locked = false;
-
-                // 次のキュー処理をスケジュール
-                const next = record!.queue.shift();
-                if (next) next(performance.now());
-            };
-
-            const wrappedResolve = (v: any) => {
-                resolve(v);
-                releaseLock(v);
-            };
-
-            const wrappedReject = (e: any) => {
-                reject(e);
-                releaseLock(e);
-            };
-
-            tick({ now, effect, resolve: wrappedResolve, reject: wrappedReject });
-            break;
-            
-    }
+const drip = <A>(value:A) => (dripper:DripperStream<A>) : DripEffect<A> => ({
+    dripper,
+    value,
+    effects: new Map(flowLazy(value, false)(dripper)[0])
 });
 
-
-// Effect処理のミドルウェア
-const tickHandlers: { [key in CollapseObservationType]: Set<PropObserver> } = {
-    immediate: new Set(),
-    visual: new Set(),
-    quantum: new Set(),
-    sequential: new Set(),
-    thrown: new Set()
+const collapse = (effect: DripEffect<any>) => {
+    effect.effects.forEach((v,k) => PROP_UPDATE.get(k)!(v));
 }
 
-/**
- * collapse実行時のオブザーバーを登録する。
- * 
- * オブザーバーの種類:
- * - immediate: 同期実行
- * - quantum: queueMicrotask
- * - visual: requestAnimationFrame
- * - sequential: setTimeout
- * - thrown: エラー時のみ
- * @param type - オブザーバーの種類
- * @param observer - 実行されるハンドラ（DripEffect<any>を受け取る）
- * @returns 登録解除用の関数
-*/
-function registerCollapseObserver(type: CollapseObservationType, observer: PropObserverArg) {
-  if(observer.props) {
-    const props = observer.props;
-    return registerCollapseObserver(type, {
-        handler: observer.handler,
-        filter: typeof observer.filter !== "function"
-            ? props.has.bind(props)
-            : (p:Prop<any>) => props.has(p) && observer.filter(p)
-    });
-  }
-  tickHandlers[type].add(observer);
-  return () => tickHandlers[type].delete(observer);
-}
-// 予約されたEffectを処理する（内部実装）
-function tick(reservation: CollapseReservation) {
-    const now = reservation.now;
-    if(now > clock() && reservation.effect.dripper !== beat$) {
-        tick({ now, effect: drip(now)(beat$), resolve: ()=>{}, reject: ()=>{} });
-    }
-    
-    const errors: BlookyError<keyof BlookyErrorCauseMap>[] = [];
-    
-    const observers: { [key in Exclude<CollapseObservationType,"thrown">]: (f:()=>void)=>void } = {
-        "immediate": (f)=>f(),
-        "visual": globalThis.requestAnimationFrame || (globalThis as any).nextTick || (globalThis as any).setImmediate,
-        "sequential": setTimeout,  
-        "quantum": queueMicrotask
-    };
-
-    const changedProps = [...reservation.effect.effects.keys()];
-    const effects = reservation.effect.effects;
-    
-    const promises: Promise<unknown>[] =
-        Object.entries(observers).flatMap(([key,ticker])=> {
-            const handlers = tickHandlers[key as CollapseObservationType];
-            return !handlers.size
-                ? []
-                : new Promise((resolve) => ticker(()=>{
-                    handlers.forEach((observer) => {
-                        try {
-                            const relevantEffects = observer.filter
-                                ? new Map([...effects].filter(([p])=>observer.filter(p)))
-                                : effects;
-                            if(relevantEffects.size) observer.handler(relevantEffects);
-                        } catch(err) {
-                            errors.push(err instanceof Error && 'category' in err 
-                                ? err as BlookyError<any>
-                                : blooky.error("user", {
-                                    code: "TICK_HANDLER_ERROR",
-                                    message: "Tick handler threw error",
-                                    originalError: err,
-                                    recoverable: true
-                                }));
-                        }
-                    });
-                    resolve(void 0);
-                }));
-        });
-    
-    Promise.allSettled(promises).then(()=>{
-        if (errors.length && tickHandlers.thrown.size) {
-            const errorEffects = errors.map((error) => drip(error)(blooky.errorStream[error.category]));
-            tickHandlers.thrown.forEach((observer) => {
-                try {
-                    observer.handler(errorEffects[0].effects);
-                } catch (thrownError) {
-                    console.error('Error in thrown handler:', thrownError);
-                }
-            });
-        }
-        reservation.effect.effects.forEach((v,p)=>PROP_UPDATE.get(p)!(v));
-        if(errors.length)
-            reservation.reject(errors);
-        else
-            reservation.resolve(now);
-    });
-}
 
 /**
  * blooky全体で共有されるユーティリティとエラーストリーム。
@@ -725,10 +478,8 @@ export {
     proxy, pipe, clear, vertex,
     // Type guards
     isStream, isDripperStream as isDripper, isDripperStream, isChainedProp, isVertex,
-    // Observers
-    registerCollapseObserver,
     // Shared
-    clock, blooky,
+    blooky,
     // Symbol
     NotThen
 };

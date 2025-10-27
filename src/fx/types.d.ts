@@ -217,7 +217,7 @@ type FxFactoryArgs = {
   collapse: [
     value: FxRef<any>,
     dripper: FxRef<DripperStream<any>>,
-    options?: { catcher?: FxRef<(e: Error) => unknown>, mode?: FxRef<any>, promise?: FxRef<any> }
+    options?: { catcher?: FxRef<(e: Error) => unknown>, mode?: FxRef<any> }
   ],
   dispatch: [name: FxRef<string>, settings: FxDispatchSettings<FxRef<any>>, child?: FxNode],
   yield: [options: { for: FxRef<string>, value: FxRef<any>, id?: string }],

@@ -6,7 +6,7 @@ import {
   fx, 
   ref,
 } from "./blooky-fx";
-import { CollapseObserver, Dripper } from "./blooky-types";
+import { CollapseObservationType, Dripper } from "./blooky-types";
 import { FxNode, ExecContext, PreparedFx, ExecutionHandle, AppContext, FxRef } from "./fx/types";
 
 // ---- 抽象基底クラス ----
@@ -610,7 +610,7 @@ class FxEffectElement extends FxContextElement {
    * `ignite` 属性に基づいてフローの実行を開始する。
    * @param type 実行タイミング ("none", "quantum", "visual", "sequential", "immediate")
    */
-  protected igniteFx(type: CollapseObserver | "none") {
+  protected igniteFx(type: CollapseObservationType | "none") {
     this.prepare();
     switch(type) {
       case "none":
@@ -650,7 +650,7 @@ class FxEffectElement extends FxContextElement {
   }
 
   connectedCallback() {
-    this.igniteFx(!this.hasAttribute("ignite") ? "none" : this.getAttribute("ignite") as CollapseObserver | "none");
+    this.igniteFx(!this.hasAttribute("ignite") ? "none" : this.getAttribute("ignite") as CollapseObservationType | "none");
   }
 
   disconnectedCallback() {
@@ -660,7 +660,7 @@ class FxEffectElement extends FxContextElement {
   attributeChangedCallback(name: string, oldValue: string, newValue: string) {
     if(newValue === oldValue || name !== "ignite" || !this.isConnected) return;
     this._handle?.cancel();
-    if(newValue && newValue !== "none") this.igniteFx(newValue as CollapseObserver);
+    if(newValue && newValue !== "none") this.igniteFx(newValue as CollapseObservationType);
   }
 
 }

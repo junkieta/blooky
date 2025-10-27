@@ -1,7 +1,8 @@
 import type { FxNode, FxRef, FxExecutionContext} from '../types';
-import { collapse, drip } from '../../blooky-fp';
+import { drip } from '../../blooky-fp';
 import { NodeDefinition } from '../NodeDefinition';
 import { Dripper } from '../../blooky-types';
+import { collapse } from '../../blooky-ft';
 type ThisNode = Extract<FxNode, { type: 'collapse' }>;
 
 export class CollapseNodeDefinition extends NodeDefinition<'collapse'> {
@@ -17,8 +18,6 @@ export class CollapseNodeDefinition extends NodeDefinition<'collapse'> {
   public async handle({ node,context }: FxExecutionContext & { node: ThisNode }) {
     const value = context.resolve(node.value);
     const dripper = context.resolve(node.dripper);
-    const acceptPromise = node.promise ? context.resolve(node.promise)() : 'deny';
-    const result = await drip(value(), { acceptPromise })(dripper());
-    await collapse(result);
+    await collapse(drip(value())(dripper()));
   }
 }

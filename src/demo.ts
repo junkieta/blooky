@@ -21,9 +21,9 @@ const statusMessageStream$ = stream<string>();
 const changeCountStream = merge([map(() => 1)(increment$), map(() => -1)(decrement$)],((a,b)=>a+b));
 const $count = accum((current: number, val: number) => current + val, 0)(changeCountStream);
 const $statusMessage = hold('Ready.')(statusMessageStream$);
-const $finalMessage = remap<string,number>((v) => `Saved Count:${v}`)($count);
+const $finalMessage = remap<number,string>((v) => `Saved Count:${v}`)($count);
 
-const $colorOfCount = remap<string,number>((count)=>count % 3 ? "blue" : "red")($count);
+const $colorOfCount = remap<number,string>((count)=>count % 3 ? "blue" : "red")($count);
 
 
 // confirmの呼び出しを別ツリーのフローとして宣言

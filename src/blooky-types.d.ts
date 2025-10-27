@@ -13,23 +13,8 @@ type StreamBase<A,T> = {
     lazyNext: Set<MergedStream<A>>
 } & T;
 
-type DripStrategy =
-  | { type: 'immediate' }
-  | { type: 'debounce', delay: number }
-  | { type: 'throttle', interval: number }
-  | { type: 'lock', mode: 'ignore' | 'queue' | 'restart' }
-;
-
-// DripStrategyのシンタックスシュガー
-type ShortDripStrategy =
-  | { immediate: true }
-  | { debounce: number }
-  | { throttle: number }
-  | { lock: 'ignore' | 'queue' | 'restart' }
-;
-
 type DripperStream<A> = StreamBase<A, {
-    dripStrategy: DripStrategy
+  isDripper: true
 }>
 type MergedStream<A> = StreamBase<A,{
     reduceFn: (a:A,b:A)=>A
@@ -80,6 +65,26 @@ type DripEffect<A> = {
   dripper: DripperStream<A>
   effects: Map<Prop<any>,any>;
 }
+
+type DripStrategy =
+  | { type: 'immediate' }
+  | { type: 'debounce', delay: number }
+  | { type: 'throttle', interval: number }
+  | { type: 'lock', mode: 'ignore' | 'queue' | 'restart' }
+;
+
+// DripStrategyのシンタックスシュガー
+type ShortDripStrategy =
+  | { immediate: true }
+  | { debounce: number }
+  | { throttle: number }
+  | { lock: 'ignore' | 'queue' | 'restart' }
+;
+
+type StrategicDripper<A> = DripperStream<A> & {
+    dripStrategy: DripStrategy
+}
+
 // 各Propとその値を示す、最小のEffect。
 type PropEffect<A> = [Prop<A>,A]
 
@@ -170,7 +175,7 @@ type BlookyError<T extends keyof BlookyErrorCauseMap> = Error & {
 
 export {
   Dripper,Stream,Prop,DripperStream,FilterStream,MappedStream,MergedStream,Vertex, 
-  DripStrategy,ShortDripStrategy,DripEffect,PropEffect,
+  DripEffect,PropEffect,DripStrategy,ShortDripStrategy,StrategicDripper,
   FlowingState,StreamBase,
   CollapseObservationType,PropObserver,PropObserverArg,
   CollapseReservation,
