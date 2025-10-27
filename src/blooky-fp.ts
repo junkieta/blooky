@@ -253,7 +253,7 @@ const vertex = (s:Stream<any>): Vertex => {
             configurable: true
         },
         props: {
-            get: () => STREAM_PROP_RELATIONS.get(s),
+            get: () => STREAM_PROP_RELATIONS.get(s) || [],
             configurable: true
         }
     });
@@ -422,11 +422,11 @@ const flowLazy = <A>(v:A, allowPromise = false) => (s:Stream<A>) : FlowingState 
  * @param value - 流し込む値
  * @returns Dripperを受け取りDripEffect<A>を返す関数
  */
-const drip = <A>(value:A) => (dripper:DripperStream<A>) : DripEffect<A> => ({
-    dripper,
-    value,
-    effects: new Map(flowLazy(value, false)(dripper)[0])
-});
+const drip = <A>(value:A) => (dripper:DripperStream<A>) : DripEffect<A> => {
+    const effects = new Map(flowLazy(value, false)(dripper)[0]);
+    effects.forEach((v,k)=>{if(k() === v) effects.delete(k)});
+    return { dripper, value, effects };
+};
 
 const collapse = (effect: DripEffect<any>) => {
     effect.effects.forEach((v,k) => PROP_UPDATE.get(k)!(v));
