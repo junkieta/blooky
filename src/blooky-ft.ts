@@ -1,53 +1,7 @@
 // blooky-ft.ts
-import { stream as coreStream, collapse as coreCollapse, blooky, drip, DripEffect, hold, Prop, Stream, vertex, clear, when } from './blooky-fp';
-import { ShortDripStrategy, DripStrategy, StrategicDripper, DripperStream, CollapseObservationType, PropObserver, PropObserverArg, CollapseReservation, BlookyError, BlookyErrorCauseMap } from './blooky-types';
+import { stream as coreStream, collapse as coreCollapse, blooky, drip, DripEffect, hold, Prop, Stream, vertex, clear, when, filter, PromisedProp } from './blooky-fp';
+import { ShortDripStrategy, DripStrategy, StrategicDripper, DripperStream, CollapseObservationType, PropObserver, PropObserverArg, CollapseReservation, BlookyError, BlookyErrorCauseMap, FilterStream } from './blooky-types';
 
-// --- 時間の源泉 ---
-const beat$ = coreStream<number>();
-
-/**
- * アプリケーション全体で共有される現在時刻を表すProp。
- * collapse()実行時に自動的に更新される。
- */
-const clock = hold(performance.now())(beat$) as Prop<number> & {
-    resume: (p?: Prop<boolean>) => void
-    pause: () => void
-};
-{
-    let pid : number = 0;
-    let ticker = globalThis.requestAnimationFrame || ((f:(t:number)=>void) => setTimeout(f, Math.ceil(1000/60)));
-    let canceler = ticker === globalThis.requestAnimationFrame ? cancelAnimationFrame : clearTimeout;
-    
-    clock.resume = (p?: Prop<boolean>) => {
-        clock.pause();
-        pid = ticker(function recursion() {
-            if(pid) {
-                const t = performance.now();
-                console.log(t - clock());
-                collapse(drip(t)(beat$)).finally(()=> pid = ticker(recursion));
-            }
-        })
-
-        return p
-            ? registerCollapseObserver("immediate", {
-                props: new Set([p]),
-                handler: (v) => {
-                    if(v.get(p)) {
-                        clock.resume();
-                    } else {
-                        clock.pause();
-                    }
-                }
-            })
-            : ()=>{};
-    }
-
-    clock.pause = () => {
-        canceler(pid)
-        pid = 0;
-    }
-
-}
 
 const stream = <A>(strategy: ShortDripStrategy|DripStrategy = { type: "immediate" }) : StrategicDripper<A> => {
     if(!("type" in strategy))
@@ -105,11 +59,9 @@ const LockRecord = new WeakMap<DripperStream<any>, {
  * @returns 実行完了時のタイムスタンプを返すPromise
  */
 const collapse = async <A>(effect:DripEffect<A> | (DripEffect<A> & { dripper: StrategicDripper<A> })) => new Promise<number>((resolve, reject) => {
-    
     const dripper = effect.dripper;
     const strategy = "dripStrategy" in dripper ? dripper.dripStrategy : null;
     const now = performance.now();
-
     if(!strategy) 
         tick({ now, effect, resolve, reject });
 
@@ -245,13 +197,11 @@ function registerCollapseObserver(type: CollapseObservationType, observer: PropO
   tickHandlers[type].add(observer);
   return () => tickHandlers[type].delete(observer);
 }
+
 // 予約されたEffectを処理する（内部実装）
 function tick(reservation: CollapseReservation) {
-    const now = reservation.now;
-    if(now > clock() && reservation.effect.dripper !== beat$) {
-        tick({ now, effect: drip(now)(beat$), resolve: ()=>{}, reject: ()=>{} });
-    }
     
+    const now = reservation.now;
     const effects = reservation.effect.effects;
     if(!effects.size) return;
 
@@ -309,6 +259,41 @@ function tick(reservation: CollapseReservation) {
             reservation.resolve(now);
     });
 }
+
+// --- 時間の源泉 ---
+const beat$ = coreStream<number>();
+
+/**
+ * アプリケーション全体で共有される現在時刻を表すProp。
+ * collapse()実行時に自動的に更新される。
+ */
+const clock = hold(performance.now())(beat$) as Prop<number> & {
+    resume: () => void
+    pause: () => void
+};
+{
+    let pid : number = 0;
+    let ticker = globalThis.requestAnimationFrame || ((f:(t:number)=>void) => setTimeout(f, Math.ceil(1000/60)));
+    let canceler = ticker === globalThis.requestAnimationFrame ? cancelAnimationFrame : clearTimeout;
+
+    clock.resume = () => {
+        clock.pause();
+        coreCollapse(drip(performance.now())(beat$));
+        pid = ticker(function recursion() {
+            if(pid) {
+                pid = ticker(recursion);
+                collapse(drip(performance.now())(beat$));
+            }
+        })
+    }
+
+    clock.pause = () => {
+        canceler(pid)
+        pid = 0;
+    }
+
+}
+
 
 export {
     stream,debounce,throttle,lock,collapse,
