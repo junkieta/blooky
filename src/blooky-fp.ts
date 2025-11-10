@@ -241,24 +241,14 @@ const VERTEX_MAP = new WeakMap<Stream<any>,Vertex>();
  */
 const vertex = (s:Stream<any>): Vertex => {
     if(VERTEX_MAP.has(s)) return VERTEX_MAP.get(s)!;
-    const vert: Vertex = Object.defineProperties({
-        sourceStream: s
-    },{
-        next: {
-            get: () => [...s.next].map(vertex),
-            configurable: true
-        },
-        lazyNext: {
-            get: () => [...s.lazyNext].map(vertex),
-            configurable: true
-        },
-        props: {
-            get: () => STREAM_PROP_RELATIONS.get(s) || [],
-            configurable: true
-        }
-    });
-    VERTEX_MAP.set(s, vert);
-    return vert;
+    const v: Vertex = {
+        sourceStream: s,
+        get next() { return [...s.next].map(vertex) },
+        get lazyNext() { return [...s.lazyNext].map(vertex) },
+        get props() { return STREAM_PROP_RELATIONS.get(s) || [] }
+    };
+    VERTEX_MAP.set(s, v);
+    return v;
 }
 
 

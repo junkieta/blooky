@@ -43,9 +43,9 @@ type Dripper<A> = DripperStream<A>;
 type Vertex = {
     sourceStream: Stream<any>
     from?: Vertex
-    next?: Vertex[]
-    lazyNext?: Vertex[]
-    props?: Prop<any>[]
+    next: Vertex[]
+    lazyNext: Vertex[]
+    props: Prop<any>[]
 };
 
 /**
