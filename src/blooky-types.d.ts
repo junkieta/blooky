@@ -118,6 +118,8 @@ type CollapseReservation = {
   reject: (v:BlookyError<keyof BlookyErrorCauseMap>[])=>void
 }
 
+type ClockEffect = DripEffect<number> & { unbind: (p:Prop<unknown>)=>void }
+
 // エラー詳細の型定義
 type DevConfigErrorCause = {
   missingKeys?: string[];
@@ -175,7 +177,7 @@ type BlookyError<T extends keyof BlookyErrorCauseMap> = Error & {
 
 export {
   Dripper,Stream,Prop,DripperStream,FilterStream,MappedStream,MergedStream,Vertex, 
-  DripEffect,PropEffect,DripStrategy,ShortDripStrategy,StrategicDripper,
+  DripEffect,PropEffect,DripStrategy,ShortDripStrategy,StrategicDripper,ClockEffect,
   FlowingState,StreamBase,
   CollapseObservationType,PropObserver,PropObserverArg,
   CollapseReservation,

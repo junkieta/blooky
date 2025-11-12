@@ -1,6 +1,6 @@
 // blooky-ft.ts
-import { stream as coreStream, collapse as coreCollapse, blooky, drip, DripEffect, hold, Prop, Stream, vertex, clear, when, filter, PromisedProp } from './blooky-fp';
-import { ShortDripStrategy, DripStrategy, StrategicDripper, DripperStream, CollapseObservationType, PropObserver, PropObserverArg, CollapseReservation, BlookyError, BlookyErrorCauseMap, FilterStream } from './blooky-types';
+import { stream as coreStream, collapse as coreCollapse, blooky, drip, DripEffect, hold, Prop, Stream, vertex, clear, when, filter, PromisedProp, remap, disconnect } from './blooky-fp';
+import { ShortDripStrategy, DripStrategy, StrategicDripper, DripperStream, CollapseObservationType, PropObserver, PropObserverArg, CollapseReservation, BlookyError, BlookyErrorCauseMap, FilterStream, ClockEffect } from './blooky-types';
 
 
 const stream = <A>(strategy: ShortDripStrategy|DripStrategy = { type: "immediate" }) : StrategicDripper<A> => {
@@ -63,7 +63,7 @@ const collapse = async <A>(effect:DripEffect<A> | (DripEffect<A> & { dripper: St
     const strategy = "dripStrategy" in dripper ? dripper.dripStrategy : null;
     const now = performance.now();
     if(!strategy) 
-        tick({ now, effect, resolve, reject });
+        executeCollapse({ now, effect, resolve, reject });
 
     else switch (strategy.type) {
 
@@ -81,7 +81,7 @@ const collapse = async <A>(effect:DripEffect<A> | (DripEffect<A> & { dripper: St
                 // でなければ前回がintervalより前なので継続
                 lastRecord.time = now;
             }
-            tick({
+            executeCollapse({
                 now,
                 effect,
                 reject,
@@ -105,7 +105,7 @@ const collapse = async <A>(effect:DripEffect<A> | (DripEffect<A> & { dripper: St
             pending.pid = setTimeout(()=>{
                 PendingEffect.delete(dripper);
                 // timeout後のnowに切り替える
-                tick({ now: performance.now(), effect, reject, resolve: (t:number) => pending.resolvers.forEach((r)=>r(t)) });
+                executeCollapse({ now: performance.now(), effect, reject, resolve: (t:number) => pending.resolvers.forEach((r)=>r(t)) });
             }, strategy.delay);
             break;
 
@@ -122,7 +122,7 @@ const collapse = async <A>(effect:DripEffect<A> | (DripEffect<A> & { dripper: St
                     return;
                 case 'queue':
                     record.queue.push((t:number) =>
-                    tick({ now: t, effect, resolve, reject })
+                    executeCollapse({ now: t, effect, resolve, reject })
                     );
                     return;
                 case 'restart':
@@ -155,7 +155,7 @@ const collapse = async <A>(effect:DripEffect<A> | (DripEffect<A> & { dripper: St
                 releaseLock(e);
             };
 
-            tick({ now, effect, resolve: wrappedResolve, reject: wrappedReject });
+            executeCollapse({ now, effect, resolve: wrappedResolve, reject: wrappedReject });
             break;
             
     }
@@ -199,7 +199,7 @@ function registerCollapseObserver(type: CollapseObservationType, observer: PropO
 }
 
 // 予約されたEffectを処理する（内部実装）
-function tick(reservation: CollapseReservation) {
+function executeCollapse(reservation: CollapseReservation) {
     
     const now = reservation.now;
     const effects = reservation.effect.effects;
@@ -263,40 +263,74 @@ function tick(reservation: CollapseReservation) {
 // --- 時間の源泉 ---
 const beat$ = coreStream<number>();
 
-/**
- * アプリケーション全体で共有される現在時刻を表すProp。
- * collapse()実行時に自動的に更新される。
- */
-const clock = hold(performance.now())(beat$) as Prop<number> & {
-    resume: () => void
-    pause: () => void
-};
-{
-    let pid : number = 0;
-    let ticker = globalThis.requestAnimationFrame || ((f:(t:number)=>void) => setTimeout(f, Math.ceil(1000/60)));
-    let canceler = ticker === globalThis.requestAnimationFrame ? cancelAnimationFrame : clearTimeout;
+const scheduler = globalThis.requestAnimationFrame || ((f:(t:number)=>void) => setTimeout(()=>f(performance.now()), Math.ceil(1000/60)));
 
-    clock.resume = () => {
-        clock.pause();
-        coreCollapse(drip(performance.now())(beat$));
-        pid = ticker(function recursion() {
-            if(pid) {
-                pid = ticker(recursion);
-                collapse(drip(performance.now())(beat$));
-            }
-        })
-    }
-
-    clock.pause = () => {
-        canceler(pid)
-        pid = 0;
-    }
-
+type Reservation = {
+  effect: DripEffect<any>
+  resolve: (v:DripEffect<number>)=>void
+  reject: (v:BlookyError<keyof BlookyErrorCauseMap>[])=>void
 }
+const tickQueue: Reservation[] = [];
 
+let clockRunning: number | NodeJS.Timeout = 0;
+const advanceClock = () => {
+    if(!clockRunning) clockRunning = scheduler((t:number) => {
+        if(!tickQueue.length && !clockObservers.size) return;
+        
+        const clockEffect = drip(t)(beat$);
+        const propEffects = clockEffect.effects;
+        const reservations = tickQueue.splice(0);
+        reservations.reverse().forEach((r) => {
+            r.effect.effects.forEach((v,p) => {
+                if(!propEffects.has(p))
+                    propEffects.set(p,v);
+            });
+        });
+
+        clockRunning = 0;
+        clockObservers.forEach((props,f) => {
+            const m = new Map(propEffects.entries().filter(([p])=>props.has(p)));
+            if(m.size)
+                f(Object.assign({}, clockEffect, { effects: m, unbind: unobserve(f) }));
+        });
+        coreCollapse(clockEffect);
+        reservations.forEach((r) => r.resolve(clockEffect));
+        
+        advanceClock();
+    });
+}
+const tick = (effect:DripEffect<any>) => 
+    new Promise((resolve,reject) => {
+        tickQueue.push({ effect, resolve, reject });
+        advanceClock();
+    });
+
+const clock = hold(0)(beat$);
+
+const clockObservers = new Map<(effect: ClockEffect) => void, Set<Prop<unknown>>>();
+
+const observe = (f:(effect:ClockEffect)=>void) => (p: Prop<unknown>) => {
+    if(!clockObservers.has(f)) 
+        clockObservers.set(f, new Set([p]));
+    else
+        clockObservers.get(f)!.add(p);
+    return unobserve(f).bind(null, p);
+};
+
+const unobserve = (f:(effect:ClockEffect)=>void) => (p?: Prop<unknown>) => {
+    if(!clockObservers.has(f)) return;
+    if(!p) {
+        clockObservers.delete(f)
+    } else {
+        const props = clockObservers.get(f)!;
+        props.delete(p);
+        if(!props.size)
+            clockObservers.delete(f);
+    }
+};
 
 export {
     stream,debounce,throttle,lock,collapse,
-    clock,
+    tick, clock, observe, unobserve,
     registerCollapseObserver
 }

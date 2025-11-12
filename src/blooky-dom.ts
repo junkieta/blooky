@@ -5,8 +5,8 @@
  */
 import type { V_DATASET, V_STYLE, V_CLASSLIST, V_EVENTLISTENER, V_STRING, WritableCSSProperty, JSHTMLElementSource, JSHTMLAttrSource, JSHTMLNodeSource, JSHTMLAttributeMapSource, JSHTMLAttrRuntime, JSHTMLNodeRuntime, JSHTMLNodeSourceType, JSHTMLExtractedElementSource, JSHTMLNodeFactory, JSHTMLNodeSourceAnalyzer, BlookyMutationEvent, JSHTMLAttrAnalyzer, JSHTMLAttrBuilder } from "./blooky-dom-types";
 import { isDripper, drip, isChainedProp, blooky } from "./blooky-fp";
-import { stream, collapse, registerCollapseObserver } from "./blooky-ft";
-import { Prop, Dripper, Stream, BlookyError, DripStrategy } from "./blooky-types";
+import { stream, collapse, registerCollapseObserver, observe, tick } from "./blooky-ft";
+import { Prop, Dripper, Stream, BlookyError, DripStrategy, DripEffect, ClockEffect } from "./blooky-types";
 
 
 /**
@@ -36,10 +36,41 @@ type PropBridgeInterface<A> = {
  */
 type PropBridge = (RangePropBridge | AttrPropBridge | StylePropBridge | DatasetPropBridge);
 
+const update = (e: ClockEffect) => {
+
+    const effectMap = e.effects;
+    // DOMに関係するPropを残してガベージコレクト
+    const update_target = [...effectMap.keys()].flatMap((p)=>PROP_BRIDGE_RECORD.get(p)||[]);
+
+    const isGCTarget = (a:PropBridge) => !a.isConnected() || update_target.some((b)=>b.contains(a)&&a!==b);
+    // ツリーから外れたものと、他のPropに包含されているPropはbindから外す
+    PROP_BRIDGE_RECORD.forEach((bridge,prop)=>{
+        const filtered = bridge.filter((b)=>!isGCTarget(b));
+        if(!filtered.length) 
+            PROP_BRIDGE_RECORD.delete(prop);
+        else if(filtered.length < bridge.length)
+            PROP_BRIDGE_RECORD.set(prop, filtered);
+    });
+
+    // メモリに残ったbridgeだけでアップデートする
+    effectMap.forEach((v,p)=>{
+        if(!PROP_BRIDGE_RECORD.has(p))
+            return e.unbind(p);
+        const prev = p() as any;
+        if(prev !== v)
+            PROP_BRIDGE_RECORD.get(p)!.forEach((b)=>b.update(v,prev));
+    });
+}
+
 /**
  * 更新時に参照するため、PropとDOMのバインドを保管するMap
  */
-const PROP_BRIDGE_RECORD = new Map<Prop<any>, PropBridge|PropBridge[]>();// 最適化用に共用型
+const PROP_BRIDGE_RECORD = new Map<Prop<any>, PropBridge[]>();// 最適化用に共用型
+/**
+ * 生成されたBridgeを更新時に参照するためのObserver
+ */
+const PROP_BRIDGE_OBSERVER = observe(update);
+
 
 /**
  * PropBridgeを内部レコードに記録する。
@@ -48,63 +79,12 @@ const PROP_BRIDGE_RECORD = new Map<Prop<any>, PropBridge|PropBridge[]>();// 最�
 const bindPropBridge = (b:PropBridge) => {
     const p = b.prop;
     if(!PROP_BRIDGE_RECORD.has(p)) {
-        PROP_BRIDGE_RECORD.set(p, b);
+        PROP_BRIDGE_RECORD.set(p, [b]);
     } else {
-        const value = PROP_BRIDGE_RECORD.get(p)!;
-        if(Array.isArray(value)) {
-            value.push(b);
-        } else {
-            PROP_BRIDGE_RECORD.set(p, [value, b]);
-        }
+        PROP_BRIDGE_RECORD.get(p)!.push(b);
     }
+    PROP_BRIDGE_OBSERVER(p);
 }
-
-/**
- * 判定関数がtrueを返すBridgeをメモリから解放する
- * @param isGCTarget - メモリ解放対象の判定関数
- */
-const garbageCollectForBridgeRecords = (isGCTarget: (a:PropBridge) => boolean) => {
-    PROP_BRIDGE_RECORD.forEach((bridge,prop)=>{
-        if(!Array.isArray(bridge)) {
-            if(isGCTarget(bridge))
-                PROP_BRIDGE_RECORD.delete(prop);
-        } else {
-            const filtered = bridge.filter((b)=>!isGCTarget(b));
-            if(!filtered.length) 
-                PROP_BRIDGE_RECORD.delete(prop);
-            else if(filtered.length < bridge.length)
-                PROP_BRIDGE_RECORD.set(prop, filtered);
-        }
-    });
-}
-
-/**
- * Propの変更をDOMに反映させるためのオブザーバーを登録。
- */
-registerCollapseObserver("visual", {
-    props: PROP_BRIDGE_RECORD,
-    handler(effectMap) {
-        // DOMに関係するPropを残してガベージコレクト
-        const update_target = [...effectMap.keys()].flatMap((p)=>PROP_BRIDGE_RECORD.get(p)||[]);
-        // ツリーから外れたものと、他のPropに包含されているPropはbindから外す
-        const isGCTarget = (a:PropBridge) => !a.isConnected() || update_target.some((b)=>b.contains(a)&&a!==b);
-        garbageCollectForBridgeRecords(isGCTarget);
-        // メモリに残ったbridgeだけでアップデートする
-        effectMap.forEach((v,p)=>{
-            if(!PROP_BRIDGE_RECORD.has(p)) return;
-            const prev = p() as any;
-            if(prev === v) return;
-            const bridge = PROP_BRIDGE_RECORD.get(p)!;
-            if(!Array.isArray(bridge)) {
-                bridge.update(v,prev);
-            } else {
-                bridge.forEach((b)=>b.update(v,prev));
-            }
-        });
-    }
-
-});
-
 
 // aにbが含まれているならtrue
 const containsRange = (a: Range) => (b: Range) => {
@@ -330,7 +310,7 @@ const listenerForCollapse = <A extends Event>(d: Dripper<A>) => (v: A) => {
         bubbles: true,
         detail: dripEffect
     }))) {
-        collapse(dripEffect)
+        tick(dripEffect)
             .then((resolved)=>{
                 target.dispatchEvent(new CustomEvent("blooky-collapse-completed", {
                     bubbles: true,

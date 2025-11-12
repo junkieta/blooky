@@ -53,6 +53,18 @@ const clear = <A>(s: Stream<A>, recursive = true, visited = new WeakSet<Stream<a
     }
 };
 
+const disconnect = (p: Prop<any>) => {
+    PROP_UPDATE.delete(p);
+    const s = PROP_FROM.get(p);
+    if(!s) return;
+    PROP_FROM.delete(p);
+    if(!STREAM_PROP_RELATIONS.has(s)) return;
+    const arr = STREAM_PROP_RELATIONS.get(s)!;
+    arr.splice(arr.indexOf(p), 1);
+    if(!arr.length) STREAM_PROP_RELATIONS.delete(s);
+}
+
+
 // GCにあわせて参照を解除する
 const cleanupRegistry = 
     typeof FinalizationRegistry !== "undefined"
@@ -465,7 +477,7 @@ export {
     // Prop creators
     hold, accum, lift, remap, when,
     // Utilities
-    proxy, pipe, clear, vertex,
+    proxy, pipe, clear, disconnect, vertex,
     // Type guards
     isStream, isDripperStream as isDripper, isDripperStream, isChainedProp, isVertex,
     // Shared
