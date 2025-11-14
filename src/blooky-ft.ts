@@ -268,7 +268,7 @@ const scheduler = globalThis.requestAnimationFrame || ((f:(t:number)=>void) => s
 type Reservation = {
   effect: DripEffect<any>
   resolve: (v:DripEffect<number>)=>void
-  reject: (v:BlookyError<keyof BlookyErrorCauseMap>[])=>void
+  reject: (v:Error[])=>void
 }
 const tickQueue: Reservation[] = [];
 
@@ -276,26 +276,16 @@ let clockRunning: number | NodeJS.Timeout = 0;
 const advanceClock = () => {
     if(!clockRunning) clockRunning = scheduler((t:number) => {
         if(!tickQueue.length && !clockObservers.size) return;
-        
-        const clockEffect = drip(t)(beat$);
-        const propEffects = clockEffect.effects;
-        const reservations = tickQueue.splice(0);
-        reservations.reverse().forEach((r) => {
-            r.effect.effects.forEach((v,p) => {
-                if(!propEffects.has(p))
-                    propEffects.set(p,v);
-            });
-        });
-
         clockRunning = 0;
-        clockObservers.forEach((props,f) => {
-            const m = new Map(propEffects.entries().filter(([p])=>props.has(p)));
-            if(m.size)
-                f(Object.assign({}, clockEffect, { effects: m, unbind: unobserve(f) }));
-        });
+        const reservations = tickQueue.splice(0).reverse();
+        const clockEffect = drip(t)(beat$);
+        const errors = notifyClockObservers(clockEffect)(reservations);
         coreCollapse(clockEffect);
-        reservations.forEach((r) => r.resolve(clockEffect));
-        
+        if(errors.length) {
+            reservations.forEach((r) => r.resolve(clockEffect));
+        } else {
+            reservations.forEach((r) => r.reject(errors));
+        }
         advanceClock();
     });
 }
@@ -305,32 +295,66 @@ const tick = (effect:DripEffect<any>) =>
         advanceClock();
     });
 
-const clock = hold(0)(beat$);
-
 const clockObservers = new Map<(effect: ClockEffect) => void, Set<Prop<unknown>>>();
 
-const observe = (f:(effect:ClockEffect)=>void) => (p: Prop<unknown>) => {
-    if(!clockObservers.has(f)) 
-        clockObservers.set(f, new Set([p]));
-    else
-        clockObservers.get(f)!.add(p);
-    return unobserve(f).bind(null, p);
+type Clock = Prop<number> & {
+    observe: (f:(effect:ClockEffect)=>void) => (p: Prop<unknown>) => ()=>void
+    unobserve: (f:(effect:ClockEffect)=>void) => (p?: Prop<unknown>) => void
 };
 
-const unobserve = (f:(effect:ClockEffect)=>void) => (p?: Prop<unknown>) => {
-    if(!clockObservers.has(f)) return;
-    if(!p) {
-        clockObservers.delete(f)
-    } else {
-        const props = clockObservers.get(f)!;
-        props.delete(p);
-        if(!props.size)
-            clockObservers.delete(f);
+const clock = Object.assign(hold(0)(beat$), {
+
+    observe: (f:(effect:ClockEffect)=>void) => (p: Prop<unknown>) => {
+        if(!clockObservers.has(f)) 
+            clockObservers.set(f, new Set([p]));
+        else
+            clockObservers.get(f)!.add(p);
+        return clock.unobserve(f).bind(null, p);
+    },
+
+    unobserve: (f:(effect:ClockEffect)=>void) => (p?: Prop<unknown>) => {
+        if(!clockObservers.has(f)) return;
+        if(!p) {
+            clockObservers.delete(f)
+        } else {
+            const props = clockObservers.get(f)!;
+            props.delete(p);
+            if(!props.size)
+                clockObservers.delete(f);
+        }
     }
-};
+
+}) as Clock;
+
+const notifyClockObservers = (effect: DripEffect<any>) => (reservations: Reservation[]) : Error[] => {
+    const propEffects = effect.effects;
+    reservations.forEach((r) => {
+        r.effect.effects.forEach((v,p) => {
+            if(!propEffects.has(p))
+                propEffects.set(p,v);
+        });
+    });
+
+    const errors: Error[] = [];
+    clockObservers.forEach((props,f) => {
+        const m = new Map(propEffects.entries().filter(([p])=>props.has(p)));
+        if(m.size) {
+            try {
+                f(Object.assign({}, effect, {
+                    effects: m,
+                    unbind: clock.unobserve(f)
+                }));
+            } catch(err) {
+                errors.push(err);
+            }
+        }
+    });
+    return errors;
+}
+
 
 export {
     stream,debounce,throttle,lock,collapse,
-    tick, clock, observe, unobserve,
+    tick, clock, 
     registerCollapseObserver
 }
