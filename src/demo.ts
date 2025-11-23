@@ -1,10 +1,10 @@
 // -- 0. 事前ロード ---
 import { stream, accum, merge, hold, map, remap, when, pipe, PromisedProp } from "./blooky-fp";
-import { jshtml, prime } from "./blooky-dom";
+import { jshtml, prime } from "./blooky-fv";
 import { fxdom,EffectElementTagNameMap, dumpGraphDOT } from "./blooky-devtools";
 // dot視覚化用にviz
 import { instance as viz_instance } from "@viz-js/viz";
-import { JSHTMLNodeSource } from "./blooky-dom-types";
+import { JSHTMLNodeSource } from "./blooky-fv-types";
 import { DripperStream, Prop } from "./blooky-types";
 
 // debuggerとしてdefine
@@ -155,3 +155,4 @@ document.body.append(
     EffectRenderer(context),
     jshtml([renderDot(dot)/* jshtmlはPromiseを透過的に処理する */, { pre: dot }])
 );
+    

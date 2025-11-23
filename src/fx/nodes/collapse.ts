@@ -2,7 +2,7 @@ import type { FxNode, FxRef, FxExecutionContext} from '../types';
 import { drip } from '../../blooky-fp';
 import { NodeDefinition } from '../NodeDefinition';
 import { Dripper } from '../../blooky-types';
-import { collapse } from '../../blooky-ft';
+import { tick } from '../../blooky-ft';
 type ThisNode = Extract<FxNode, { type: 'collapse' }>;
 
 export class CollapseNodeDefinition extends NodeDefinition<'collapse'> {
@@ -18,6 +18,6 @@ export class CollapseNodeDefinition extends NodeDefinition<'collapse'> {
   public async handle({ node,context }: FxExecutionContext & { node: ThisNode }) {
     const value = context.resolve(node.value);
     const dripper = context.resolve(node.dripper);
-    await collapse(drip(value())(dripper()));
+    await tick(drip(value())(dripper()));
   }
 }

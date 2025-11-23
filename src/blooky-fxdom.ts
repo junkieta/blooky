@@ -1,4 +1,4 @@
-import { jshtml, JSHTML_ATTR_HANDLER, JSHTML_ELEMENT_HANDLER, JSHTMLAttrRuntime } from "./blooky-dom";
+import { jshtml, JSHTML_ATTR_HANDLER, JSHTML_ELEMENT_HANDLER, JSHTMLAttrRuntime } from "./blooky-fv";
 import { blooky } from "./blooky-fp";
 import { 
   prepare, 

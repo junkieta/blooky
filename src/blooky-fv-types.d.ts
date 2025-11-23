@@ -1,6 +1,6 @@
 // blooky-dom-types.d.ts
 
-import type { EmptyElementAttributeMapSource } from "./blooky-dom"; // この行を追加
+import type { EmptyElementAttributeMapSource } from "./blooky-fv"; // この行を追加
 import { Prop, DripperStream, DripEffect, BlookyError } from "./blooky-types";
 
 // --- HTML属性名一覧
@@ -164,7 +164,7 @@ export type JSHTMLAttrBuilder = {
   "string": (runtime: JSHTMLAttrRuntime<string>) => void
 }
 
-export type BlookyCollapseEvent<T extends "start"|"completed"|"failed"|"canceled"> = CustomEvent<DripEffect & {
+export type BlookyCollapseEvent<T extends "start"|"completed"|"failed"|"canceled"> = CustomEvent<DripEffect<any> & {
   result: T extends "completed"
     ? number
     : T extends "failed"

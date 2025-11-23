@@ -3,10 +3,10 @@
  * blookyを用いてリアクティブなDOMを構築するライブラリ。
  * blooky-fpのStream/Propの概念をDOMにバインドし、宣言的なHTML記述（JSHTML）を可能にする。
  */
-import type { V_DATASET, V_STYLE, V_CLASSLIST, V_EVENTLISTENER, V_STRING, WritableCSSProperty, JSHTMLElementSource, JSHTMLAttrSource, JSHTMLNodeSource, JSHTMLAttributeMapSource, JSHTMLAttrRuntime, JSHTMLNodeRuntime, JSHTMLNodeSourceType, JSHTMLExtractedElementSource, JSHTMLNodeFactory, JSHTMLNodeSourceAnalyzer, BlookyMutationEvent, JSHTMLAttrAnalyzer, JSHTMLAttrBuilder } from "./blooky-dom-types";
-import { isDripper, drip, isChainedProp, blooky } from "./blooky-fp";
-import { stream, collapse, registerCollapseObserver, observe, tick } from "./blooky-ft";
-import { Prop, Dripper, Stream, BlookyError, DripStrategy, DripEffect, ClockEffect } from "./blooky-types";
+import type { V_DATASET, V_STYLE, V_CLASSLIST, V_EVENTLISTENER, V_STRING, WritableCSSProperty, JSHTMLElementSource, JSHTMLAttrSource, JSHTMLNodeSource, JSHTMLAttributeMapSource, JSHTMLAttrRuntime, JSHTMLNodeRuntime, JSHTMLNodeSourceType, JSHTMLExtractedElementSource, JSHTMLNodeFactory, JSHTMLNodeSourceAnalyzer, BlookyMutationEvent, JSHTMLAttrAnalyzer, JSHTMLAttrBuilder } from "./blooky-fv-types";
+import { isDripper, drip, isChainedProp, blooky, stream } from "./blooky-fp";
+import { clock, tick } from "./blooky-ft";
+import { Prop, Dripper, Stream, BlookyError, ClockEffect } from "./blooky-types";
 
 
 /**
@@ -69,7 +69,7 @@ const PROP_BRIDGE_RECORD = new Map<Prop<any>, PropBridge[]>();// 最適化用に
 /**
  * 生成されたBridgeを更新時に参照するためのObserver
  */
-const PROP_BRIDGE_OBSERVER = observe(update);
+const PROP_BRIDGE_OBSERVER = clock.observe(update);
 
 
 /**
@@ -330,32 +330,6 @@ const listenerForCollapse = <A extends Event>(d: Dripper<A>) => (v: A) => {
             detail: dripEffect
         }));
     }
-}
-
-// DOMイベントの同期的処理のオプション。dripStrategy拡張
-type InterceptOptions = Partial<{
-    preventDefault: boolean
-    stopPropagation: boolean
-    stopImmediatePropagation: boolean
-}>;
-
-/**
- * DOMイベントを処理するための`Dripper`を生成する。
- * dripStrategyを拡張した引数を受け取り、`preventDefault`などの呼び出しを可能にした上で、
- * EventListenerとして使用可能なDripperを生成する。
- * @param strategy - blookyの実行戦略とイベント伝播制御オプション
- * @returns イベントリスナーとして使用可能なDripper
- */
-const eventDripper = <E extends Event>(strategy?: DripStrategy & InterceptOptions): Dripper<E> & EventListenerObject => {
-    const dripper = stream<E>(strategy);
-    return Object.assign(dripper, {
-        handleEvent(e: E) {
-            if(strategy.preventDefault) e.preventDefault();
-            if(strategy.stopImmediatePropagation) e.stopImmediatePropagation();
-            else if(strategy.stopPropagation) e.stopPropagation();
-            listenerForCollapse(dripper)(e);
-        }
-    })
 }
 
 /**
@@ -708,7 +682,7 @@ const prime = <T extends object>(fn:(v:T)=>JSHTMLNodeSource) => (ctx:T) => jshtm
 
 export {
     defineAttrUpdateHandlers,
-    listenerForCollapse, eventDripper,
+    listenerForCollapse,
     promised, jshtml,mutations, prime,
     JSHTMLNodeRuntime,JSHTMLAttrRuntime,
     JSHTML_ELEMENT_HANDLER,

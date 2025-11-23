@@ -1,5 +1,5 @@
-import { jshtml, prime as defaultPrime } from "./blooky-dom";
-import { collapse, drip, isChainedProp, isDripperStream, isStream, isVertex, stream, vertex } from "./blooky-fp";
+import { jshtml } from "./blooky-fv";
+import { isChainedProp, isDripperStream, isStream, isVertex, vertex } from "./blooky-fp";
 import { EffectElementTagNameMap as DefaultEffectElementTagNameMap, EffectElement, FxEffectElement as ConcreteEffectElementConstructor, fxdom } from "./blooky-fxdom";
 import { FxNode, FxMiddleware, ExecContext } from "./fx/types";
 
@@ -202,7 +202,7 @@ export {fxdom,EffectElementTagNameMap,debugMiddleware};
 // svg用のスタイル
 import "./blooky-devtools.css";
 import { DripperStream, DripEffect, MergedStream, Prop, Stream, Vertex } from "./blooky-types";
-import { JSHTMLNodeSource } from "./blooky-dom-types";
+import { JSHTMLNodeSource } from "./blooky-fv-types";
 
 // グラフ描画
 function dumpGraphDOT(entries: Record<string, Stream<any> | Prop<any> | unknown>, graphAttrs: Record<string,string> = { rankdir: "LR" }): string {
@@ -293,7 +293,7 @@ function dumpGraphDOT(entries: Record<string, Stream<any> | Prop<any> | unknown>
 }
 
 // dripと同様の処理を、全ての関連フローを記録してグラフ生成する
-const dripGraph = <A>(value: A) => (dripper: DripperStream<A>) : DripEffect & { streams: Map<Stream<any>,any> } => {
+const dripGraph = <A>(value: A) => (dripper: DripperStream<A>) : DripEffect<A> & { streams: Map<Stream<any>,any> } => {
     const lazy = new Map<Vertex,any[]>();
     const streams = new Map<Stream<any>, any>();
     const effects = new Map<Prop<any>,any>();
@@ -319,7 +319,7 @@ const dripGraph = <A>(value: A) => (dripper: DripperStream<A>) : DripEffect & { 
         entries.forEach(([s,v])=>walk(v.reduce((s.sourceStream as MergedStream<any>).reduceFn))(s));
     }
 
-    return { dripper, streams, effects };
+    return { dripper, value, streams, effects };
 }
 
 const COMPONENT_MAP = new Map<Node,object>();
