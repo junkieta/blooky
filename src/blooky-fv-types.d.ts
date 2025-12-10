@@ -1,4 +1,4 @@
-// blooky-dom-types.d.ts
+// blooky-fv-types.d.ts
 
 import type { EmptyElementAttributeMapSource } from "./blooky-fv"; // この行を追加
 import { Prop, DripperStream, DripEffect, BlookyError } from "./blooky-types";

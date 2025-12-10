@@ -89,7 +89,7 @@ MDNが最高のドキュメント。Web標準の知識がそのまま活きま�
 
 ```
 blooky-fp       # Stream/Propによるリアクティブコア
-blooky-dom      # 宣言的DOM構築
+blooky-fv       # 宣言的DOM構築
 blooky-fx       # 副作用オーケストレーション
 blooky-fxdom    # HTMLでの副作用記述
 blooky-devtools # 開発ツール
@@ -105,7 +105,7 @@ npm install blooky
 
 ```typescript
 import { stream, hold, map } from 'blooky-fp';
-import { jshtml, prime } from 'blooky-dom';
+import { jshtml, prime } from 'blooky-fv';
 
 // 最小のカウンター
 const click$ = stream();

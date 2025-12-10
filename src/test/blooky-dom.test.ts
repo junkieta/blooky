@@ -1,11 +1,11 @@
     /**
      * @jest-environment jsdom
      */
-    // blooky-dom.test.ts
+    // blooky-fv.test.ts
 
     // --- 型定義とテスト対象のインポート ---
     // 実際のプロジェクトのパスに合わせて修正してください
-    import type { JSHTMLNodeSource } from '../blooky-dom-types';
+    import type { JSHTMLNodeSource } from '../blooky-fv-types';
     import {
         jshtml,
         promised,
@@ -13,11 +13,11 @@
         listenerForCollapse,
         mutations,
         prime,
-    } from '../blooky-dom';
+    } from '../blooky-fv';
     import { stream, hold, drip, collapse } from '../blooky-fp';
     import { DripperStream, Prop } from '../blooky-types';
 
-    describe('blooky-dom.ts', () => {
+    describe('blooky-fv.ts', () => {
 
         // 各テストの前にDOMをクリーンアップする
         beforeEach(() => {

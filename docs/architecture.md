@@ -77,7 +77,7 @@ const $count = hold(0)(map(() => $count() + 1)(click$));
 
 ---
 
-### 4.2. 宣言的UI (`blooky-dom`)
+### 4.2. 宣言的UI (`blooky-fv`)
 
 `jshtml` は DOM 構造を宣言的に記述する関数です。
 内部的には仮想DOMを持たず、標準の `DocumentFragment` と `CustomElement` を直接利用します。

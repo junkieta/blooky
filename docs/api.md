@@ -2,7 +2,7 @@
 
 ## 目次
 1. [`blooky-fp` - リアクティブコア](#blooky-fp)
-2. [`blooky-dom` - DOM構築](#blooky-dom)
+2. [`blooky-fv` - DOM構築](#blooky-fv)
 3. [`blooky-fx` - 副作用管理](#blooky-fx)
 4. [`blooky-fxdom` - 宣言的副作用](#blooky-fxdom)
 5. [`blooky-devtools` - 開発ツール](#blooky-devtools)
@@ -119,11 +119,11 @@ type CollapseObserver =
 
 ---
 
-## <a id="blooky-dom"></a>`blooky-dom` - DOM構築
+## <a id="blooky-fv"></a>`blooky-fv` - DOM構築
 
 ### モジュールの役割
 
-`blooky-dom`は、JavaScriptオブジェクトリテラルからDOMを構築し、Propと自動的にバインディングする宣言的UIライブラリです。仮想DOMを使わず、実DOMを直接操作することで、Web標準に準拠した軽量な実装を実現します。
+`blooky-fv`は、JavaScriptオブジェクトリテラルからDOMを構築し、Propと自動的にバインディングする宣言的UIライブラリです。仮想DOMを使わず、実DOMを直接操作することで、Web標準に準拠した軽量な実装を実現します。
 
 ### 中心となる概念
 

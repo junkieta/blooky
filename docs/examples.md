@@ -34,7 +34,7 @@
 
 ```typescript
 import { stream, merge, accum, map } from 'blooky-fp';
-import { jshtml, prime } from 'blooky-dom';
+import { jshtml, prime } from 'blooky-fv';
 
 // ストリーム定義
 const increment$ = stream();
@@ -80,7 +80,7 @@ document.body.append(Counter({ $count, increment$, decrement$, reset$ }));
 
 ```typescript
 import { stream, hold, map, filter, merge, remap } from 'blooky-fp';
-import { jshtml, prime } from 'blooky-dom';
+import { jshtml, prime } from 'blooky-fv';
 import { fx, execute, prepare } from 'blooky-fx';
 
 // debounce付きの検索ストリーム
@@ -151,7 +151,7 @@ const SearchBox = prime(({ $searchTerm, searchInput$, $searchStatus, $searchAPII
 
 ```typescript
 import { stream, hold } from 'blooky-fp';
-import { jshtml, prime } from 'blooky-dom';
+import { jshtml, prime } from 'blooky-fv';
 
 type TabId = 'overview' | 'details' | 'reviews';
 
@@ -198,7 +198,7 @@ const TabUI = prime(({ $activeTab, tabClick$ }) => ({
 
 ```typescript
 import { stream, hold, lift, remap } from 'blooky-fp';
-import { jshtml, prime } from 'blooky-dom';
+import { jshtml, prime } from 'blooky-fv';
 
 // フィールドごとのストリーム
 const email$ = stream();
@@ -301,7 +301,7 @@ const ValidationForm = prime((context) => ({
 
 ```typescript
 import { stream, hold, accum } from 'blooky-fp';
-import { jshtml, prime, mutations } from 'blooky-dom';
+import { jshtml, prime, mutations } from 'blooky-fv';
 import { fxdom } from 'blooky-fxdom';
 
 // 状態管理
@@ -385,7 +385,7 @@ const InfiniteScroll = prime(({ $items, $isLoading, $hasMore, loadMore$ }) => ({
 
 ```typescript
 import { stream, hold, accum, remap, lift } from 'blooky-fp';
-import { jshtml, prime } from 'blooky-dom';
+import { jshtml, prime } from 'blooky-fv';
 
 // Todo型定義
 interface Todo {
@@ -540,7 +540,7 @@ const TodoApp = prime((context) => ({
 
 ```typescript
 import { stream, hold, accum } from 'blooky-fp';
-import { jshtml, prime } from 'blooky-dom';
+import { jshtml, prime } from 'blooky-fv';
 import { fx, execute, prepare } from 'blooky-fx';
 
 interface Message {
@@ -666,7 +666,7 @@ const ChatUI = prime(({ $messages, $isTyping, $onlineUsers, messageSend$ }) => (
 
 ```typescript
 import { stream, hold, remap } from 'blooky-fp';
-import { jshtml, prime } from 'blooky-dom';
+import { jshtml, prime } from 'blooky-fv';
 
 interface DragItem {
   id: string;
@@ -792,7 +792,7 @@ const DropZone = prime(({ $isDragging, $currentPos }) => ({
 
 ```typescript
 import { stream, hold, lift } from 'blooky-fp';
-import { jshtml, prime } from 'blooky-dom';
+import { jshtml, prime } from 'blooky-fv';
 import { fxdom } from 'blooky-fxdom';
 
 // メトリクスの定義
@@ -935,7 +935,7 @@ const MetricCard = prime(({ title, $value, unit, threshold }) => ({
 
 ```typescript
 import { stream, hold, accum, remap, lift } from 'blooky-fp';
-import { jshtml, prime } from 'blooky-dom';
+import { jshtml, prime } from 'blooky-fv';
 import { fx, execute, prepare } from 'blooky-fx';
 
 // ステップ定義
@@ -1163,7 +1163,7 @@ const WizardField = prime(({ field, $value, onChange }) => ({
 
 ```typescript
 import { stream, hold, remap } from 'blooky-fp';
-import { jshtml, prime } from 'blooky-dom';
+import { jshtml, prime } from 'blooky-fv';
 
 interface Image {
   id: string;
@@ -1295,7 +1295,7 @@ const Modal = prime(({ image, onClose, onNext, onPrev }) => ({
 
 ```typescript
 import { stream, hold, accum, when } from 'blooky-fp';
-import { jshtml, prime } from 'blooky-dom';
+import { jshtml, prime } from 'blooky-fv';
 import { fx, execute, prepare } from 'blooky-fx';
 
 // エディタ状態
@@ -1441,7 +1441,7 @@ const StatusIndicator = prime(({ $status }) => ({
 
 ```typescript
 import { stream, hold, accum } from 'blooky-fp';
-import { jshtml, prime } from 'blooky-dom';
+import { jshtml, prime } from 'blooky-fv';
 
 type NotificationType = 'info' | 'success' | 'warning' | 'error';
 
@@ -1568,7 +1568,7 @@ const notificationHelpers = {
 
 ```typescript
 import { stream, hold, accum, remap, lift } from 'blooky-fp';
-import { jshtml, prime } from 'blooky-dom';
+import { jshtml, prime } from 'blooky-fv';
 
 interface Product {
   id: string;
@@ -1767,7 +1767,7 @@ const CartItem = prime(({ item, onRemove, onUpdateQuantity }) => ({
 
 ```typescript
 import { stream, hold, accum, clock } from 'blooky-fp';
-import { jshtml, prime } from 'blooky-dom';
+import { jshtml, prime } from 'blooky-fv';
 import { fx, execute, prepare } from 'blooky-fx';
 
 interface DataPoint {

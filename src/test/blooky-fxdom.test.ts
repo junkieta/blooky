@@ -3,7 +3,7 @@
  */
 // blooky-fxdom.test.ts
 
-import { jshtml } from '../blooky-dom';
+import { jshtml } from '../blooky-fv';
 import { fxdom, EffectElementTagNameMap, FxEffectElement } from '../blooky-fxdom'; // テスト対象
 import { prepare, execute, fx, ref } from '../blooky-fx'; // 依存モジュール
 import { FxCollapseElement } from '../blooky-fxdom';

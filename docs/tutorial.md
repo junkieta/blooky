@@ -5,7 +5,7 @@
 ## 📚 目次
 
 1. [Level 1: blooky-fp のみ - リアクティブな値の管理](#level-1)
-2. [Level 2: blooky-fp + blooky-dom - リアクティブUI](#level-2)
+2. [Level 2: blooky-fp + blooky-fv - リアクティブUI](#level-2)
 3. [Level 3: + blooky-fx - 副作用の管理](#level-3)
 4. [Level 4: + blooky-fxdom - 宣言的な副作用](#level-4)
 5. [Level 5: + blooky-devtools - デバッグと可視化](#level-5)
@@ -117,14 +117,14 @@ for (let i = 0; i < 5; i++) {
 
 ---
 
-## <a id="level-2"></a>Level 2: blooky-fp + blooky-dom - リアクティブUI
+## <a id="level-2"></a>Level 2: blooky-fp + blooky-fv - リアクティブUI
 
-次に`blooky-dom`を追加して、リアクティブなUIを構築します。
+次に`blooky-fv`を追加して、リアクティブなUIを構築します。
 
 ### 2.1 静的なDOM構築
 
 ```typescript
-import { jshtml } from 'blooky-dom';
+import { jshtml } from 'blooky-fv';
 
 // シンプルな要素
 const heading = jshtml({ h1: "Hello Blooky!" });
@@ -151,7 +151,7 @@ document.body.append(heading, link, list);
 
 ```typescript
 import { stream, hold, map, drip, collapse } from 'blooky-fp';
-import { jshtml } from 'blooky-dom';
+import { jshtml } from 'blooky-fv';
 
 // リアクティブな状態
 const input$ = stream<string>();
@@ -180,7 +180,7 @@ document.body.append(ui);
 
 ```typescript
 import { stream, hold, map } from 'blooky-fp';
-import { prime } from 'blooky-dom';
+import { prime } from 'blooky-fv';
 
 // カウンターコンポーネント
 interface CounterContext {
@@ -220,7 +220,7 @@ document.body.append(Counter({ $count, increment$, decrement$ }));
 
 ```typescript
 import { stream, hold, map } from 'blooky-fp';
-import { jshtml, prime } from 'blooky-dom';
+import { jshtml, prime } from 'blooky-fv';
 
 const toggle$ = stream();
 const $isVisible = accum((visible)=>!visible, false)(toggle$);
@@ -388,7 +388,7 @@ console.log("Results:", results); // 約1000ms後に全結果
 
 ```typescript
 import { fxdom } from 'blooky-fxdom';
-import { jshtml, prime } from 'blooky-dom';
+import { jshtml, prime } from 'blooky-fv';
 import { stream } from 'blooky-fp';
 
 // fx要素を登録
@@ -448,7 +448,7 @@ const DataFetcher = prime(({ fetch$, $data, $fetchStart, $loading }) => ({
 ### 4.3 コンテキストの継承
 
 ```typescript
-import { jshtml, prime } from 'blooky-dom';
+import { jshtml, prime } from 'blooky-fv';
 
 const NestedEffects = prime((context) => ({
   "fx-effect": [
@@ -599,7 +599,7 @@ execute(prepared);
 
 ```typescript
 import { stream, accum } from 'blooky-fp';
-import { jshtml, prime } from 'blooky-dom';
+import { jshtml, prime } from 'blooky-fv';
 import { dumpGraphDOT } from 'blooky-devtools';
 
 const DebugDashboard = prime((context) => ({
@@ -662,7 +662,7 @@ document.body.append(DebugDashboard(debugContext));
 | Level | モジュール | 学んだこと |
 |-------|----------|----------|
 | 1 | blooky-fp | Stream/Propによるリアクティブプログラミング |
-| 2 | + blooky-dom | リアクティブUIの構築 |
+| 2 | + blooky-fv | リアクティブUIの構築 |
 | 3 | + blooky-fx | プログラマティックな副作用管理 |
 | 4 | + blooky-fxdom | 宣言的な副作用の記述 |
 | 5 | + blooky-devtools | デバッグと開発支援 |

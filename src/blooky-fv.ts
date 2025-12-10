@@ -1,5 +1,5 @@
 /**
- * blooky-dom.ts
+ * blooky-fv.ts
  * blookyを用いてリアクティブなDOMを構築するライブラリ。
  * blooky-fpのStream/Propの概念をDOMにバインドし、宣言的なHTML記述（JSHTML）を可能にする。
  */

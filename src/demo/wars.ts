@@ -14,7 +14,7 @@
 */
 
 import { stream, pipe, filter, map, hold, DripperStream, Prop, junction, lift } from "../blooky-fp";
-import { prime } from "../blooky-dom"
+import { prime } from "../blooky-fv"
 
 type Point = { x:number, y:number }
 type GameState = 'unit-selection' | 'move-selection' | 'action-selection' | 'enemy-turn';
