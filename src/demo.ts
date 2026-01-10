@@ -1,14 +1,152 @@
 // -- 0. 事前ロード ---
-import { stream, accum, merge, hold, map, remap, when, pipe, PromisedProp } from "./blooky-fp";
-import { jshtml, prime } from "./blooky-fv";
+import { stream, accum, merge, hold, map, remap, when, pipe, PromisedProp, filter } from "./blooky-fp";
+import { jshtml, mutations, prime } from "./blooky-fv";
 import { fxdom,EffectElementTagNameMap, dumpGraphDOT } from "./blooky-devtools";
 // dot視覚化用にviz
 import { instance as viz_instance } from "@viz-js/viz";
-import { JSHTMLNodeSource } from "./blooky-fv-types";
+import { BlookyMutationEvent, JSHTMLNodeSource } from "./blooky-fv-types";
 import { DripperStream, Prop } from "./blooky-types";
+
+
+// New: import DebugController and debugMiddleware
+import DebugController from "./fx/debugger";
+import { debugMiddleware } from "./blooky-devtools";
 
 // debuggerとしてdefine
 fxdom.defineEffectElements(EffectElementTagNameMap);
+
+// create a global debug controller for the demo
+const debugCtrl = new DebugController();
+
+// function to attach debugController to every fx-effect element in the page and expose controls
+function attachDevtoolsToEffects() {
+
+    const hasEffectClosest = (n: Node) => {
+        if(n.nodeType !== 1) return n.parentElement ? hasEffectClosest(n.parentElement) : false;
+        return (n as Element).closest("fx-effect") !== null || (n as Element).querySelector("fx-effect") !== null;
+    };
+
+    const effectMutations = filter((evt: BlookyMutationEvent)=>
+        evt.detail.records.some((record)=> Array.from(record.addedNodes).some(hasEffectClosest) || Array.from(record.removedNodes).some(hasEffectClosest))
+    )(mutations({ childList: true, subtree: true })(document.body));
+
+    const $effectElements = hold([])(
+        map((evt:BlookyMutationEvent)=>{
+            const effects = (evt.currentTarget as HTMLElement).getElementsByTagName('fx-effect');
+            return Array.from(effects).map((el, idx)=>{
+                const fxEl = el as any;
+
+                
+                // inject _execContext.debugController so prepare/execute will see it
+                fxEl._execContext = { ...(fxEl._execContext || {}), debugController: debugCtrl, middlewares: [debugMiddleware] };
+
+                try {
+
+                    const hasDebugMiddleware = fxEl._preparedFx?.execContext?.middlewares?.includes?.(debugMiddleware);
+                    if (!hasDebugMiddleware) {
+                        // re-prepare with force to recreate execContext containing debugMiddleware
+                        fxEl.prepare(true);
+                        // If there is a running handle and you want to debug the running flow, restart it:
+                        // const prevHandle = fxEl._handle;
+                        // if(prevHandle) {
+                        //   prevHandle.cancel(); // cancel previous run
+                        //   fxEl.execute();      // restart (will use new execContext with debugMiddleware)
+                        // }
+                    }
+
+                    const prepared = fxEl._preparedFx || fxEl.prepare();
+                    const execId = prepared.execContext.executionId;
+                    return {
+                        div: [
+                            { div: [
+                                `fx-effect #${idx} `,
+                                { code: execId, $: { style: { color: '#9AE6B4' } } }
+                                ],
+                                $: {
+                                    id: `blooky-debug-fx-effect-${idx}`,
+                                    style: { fontSize: '12px' }
+                                }
+                            },
+                            { div: [
+                                { button: "Pause", $: { type: "button", dataset: { exec: execId, action: "pause" } } },
+                                { button: "Resume", $: { type: "button", dataset: { exec: execId, action: "resume" } } },
+                                { button: "Step Into", $: { type: "button", dataset: { exec: execId, action: "step-into" } } },
+                                { button: "Step Over", $: { type: "button", dataset: { exec: execId, action: "step-over" } } }
+                                ],
+                                $: { 
+                                    id: `blooky-debug-fx-effect-${idx}-controls`,
+                                    style: { marginTop: '4px' },
+                                    onclick: clickToDebugAction
+                                }
+                            }
+                        ],
+                        $: {
+                            style: { marginTop: '6px' }
+                        }
+                    };
+                } catch(e) {
+                // prepare may fail if context missing; ignore
+                }
+            })
+        })(effectMutations)
+    );
+
+    const panel = prime(()=>({
+      div: [
+        { strong: "Blooky Debug" },
+        { div: $effectElements, $: { id: "blooky-debug-list" } }
+      ],
+      $: {
+        id: 'blooky-debug-panel',
+        style: {
+          position: 'fixed',
+          right: '12px',
+          bottom: '12px',
+          background: 'rgba(0,0,0,0.8)',
+          color: '#fff',
+          padding: '8px',
+          borderRadius: '6px',
+          zIndex: '99999'
+        }
+      }
+    }))(undefined) as HTMLElement;
+
+    function clickToDebugAction (ev: MouseEvent) {
+        const actionable = (ev.target as HTMLElement)?.closest('[data-action]') as HTMLElement | null;
+        if(!actionable) return;
+        const action = actionable.dataset.action!;
+        const shownExec = actionable.dataset.exec!;
+        // find the corresponding fx-effect element (we stored one in the row earlier)
+        const row = actionable.closest('[id^="blooky-debug-fx-effect-"]')!;
+        const fxEl = (row as any).__fxEffectElement as any;
+
+        // Ensure prepared exists and uses debug middleware
+        if(!fxEl._preparedFx || !fxEl._preparedFx.execContext?.middlewares?.includes(debugMiddleware)) {
+            // re-prepare to attach debug middleware
+            fxEl._execContext = { ...(fxEl._execContext||{}), debugController: debugCtrl, middlewares: [debugMiddleware] };
+            try {
+            fxEl.prepare(true);
+            } catch(e) {
+            console.warn('prepare failed (context may be missing)', e);
+            }
+        }
+
+        const actualExecId = fxEl._preparedFx?.execContext?.executionId;
+        if(!actualExecId) {
+            console.warn('Effect not prepared. Click Prepare/Start first.');
+            return;
+        }
+
+        if(action === 'pause') debugCtrl.pauseExecution(actualExecId);
+        if(action === 'resume') debugCtrl.resumeExecution(actualExecId);
+        if(action === 'step-into') debugCtrl.stepExecution(actualExecId, 'into');
+        if(action === 'step-over') debugCtrl.stepExecution(actualExecId, 'over');
+    }
+    return panel;
+
+}
+
+const debug_panel = attachDevtoolsToEffects();
 
 // --- 1. アプリケーションの状態定義 (Props and Streams) ---
 // 見分けのため、DripperStreamは名称+"$", Propは"$"+名称として命名している。
@@ -151,8 +289,9 @@ const renderDot = async (dot: string) => {
 
 // UIをDOMにマウントする
 document.body.append(
+    debug_panel,
     AppUIRenderer(context),
     EffectRenderer(context),
-    jshtml([renderDot(dot)/* jshtmlはPromiseを透過的に処理する */, { pre: dot }])
+    jshtml([renderDot(dot)/* jshtmlはPromiseを透過的に処理する */, { pre: dot }]),
 );
     

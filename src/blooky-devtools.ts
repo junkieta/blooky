@@ -2,6 +2,7 @@ import { jshtml } from "./blooky-fv";
 import { isChainedProp, isDripperStream, isStream, isVertex, vertex } from "./blooky-fp";
 import { EffectElementTagNameMap as DefaultEffectElementTagNameMap, EffectElement, FxEffectElement as ConcreteEffectElementConstructor, fxdom } from "./blooky-fxdom";
 import { FxNode, FxMiddleware, ExecContext } from "./fx/types";
+import DebugController from "./fx/debugger"; // 追加
 
 const FxNodeMap = new WeakMap<FxNode, EffectElement>();
 const FxElementStates = new WeakMap<EffectElement, CustomStateSet>();
@@ -17,15 +18,25 @@ const DevEffectElementStyleSheets = Promise.all(devtoolsCSSPath.map(async(path)=
   return sheet;
 }));
 
+
 const debugMiddleware: FxMiddleware = async (ctx, next) => {
   const { node } = ctx;
   const element = getFxElement(node);
   if(!element) return await next();
   const states = FxElementStates.get(element)!;
 
+  // ExecContext から debugController と executionId を取得
+  const execCtx = (ctx as any).context as any;
+  const debugCtrl: DebugController | undefined = execCtx?.debugController;
+  const executionId: string | undefined = execCtx?.executionId;
+
   let result: any = null;
   try {
-    // --- 内側の処理（次のMiddlewareまたはコア）を呼び出す ---
+    // --- Debugger にノード開始を通知（await して止める） ---
+    if(debugCtrl && executionId) {
+      await debugCtrl.beforeNode(node, executionId);
+    }
+
     if(node.type === "wait" || node.type === "yield") {
       states.add("paused");
       result = await next();
@@ -46,13 +57,17 @@ const debugMiddleware: FxMiddleware = async (ctx, next) => {
           ctx
         }
       }))) {
-        // ... dispatchEventによるエラー通知がキャンセルされなければ、停止 ...
         console.error(`[fx-effect] Unhandled error: Catch handler not found in context.`, err);
-        throw err; // 回復不能なエラー。is-failedは残ったままフローが停止する
+        throw err;
     }
     // 回復された場合は、catchブロックから抜けて正常系の処理に戻る
     states.delete("failed");
     states.add("recovered");
+  } finally {
+    // --- ノード終了を通知（UI更新や stepOver 判定に利用） ---
+    if(debugCtrl && executionId) {
+      try { debugCtrl.afterNode(node, executionId); } catch(_) {}
+    }
   }
   return result;
 };

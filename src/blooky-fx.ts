@@ -95,14 +95,15 @@ function prepare(
     // FxRefを解決し、Prop（ゲッター関数）として正規化する
     resolve: (v:FxRef<any>) => resolveValue(v)(appContext),
     ...parentExecContext,
+    // executionId: 親から継承されなければ新規生成（簡易カウンタ or timestamp）
+    executionId: parentExecContext?.executionId ?? `exec-${Date.now()}-${Math.floor(Math.random()*1000)}`,
     cancelToken
   };
   return {
     rootNode: flow,
     execContext,
     appContext,
-  };
-}
+  };}
 
 /**
  * 準備された副作用フローの実行を開始し、ExecutionHandleを同期的に返す。
