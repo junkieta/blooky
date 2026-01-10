@@ -137,10 +137,6 @@ interface ExecContext {
 
   // 追加: executionId はこの ExecContext に紐づく実行単位のID（optional）
   executionId?: string;
-
-  // 追加: debugController はこの実行に紐づくデバッガ（optional）
-  // concrete 型参照を避けるため any にしておく（実装側で import して型チェック）
-  debugController?: any;
 }
 
 // ミドルウェアに渡される、各ステップの情報

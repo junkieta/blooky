@@ -1,12 +1,15 @@
-import { jshtml } from "./blooky-fv";
-import { isChainedProp, isDripperStream, isStream, isVertex, vertex } from "./blooky-fp";
+import { jshtml, mutations, prime } from "./blooky-fv";
+import { filter, hold, isChainedProp, isDripperStream, isStream, isVertex, map, vertex } from "./blooky-fp";
 import { EffectElementTagNameMap as DefaultEffectElementTagNameMap, EffectElement, FxEffectElement as ConcreteEffectElementConstructor, fxdom } from "./blooky-fxdom";
 import { FxNode, FxMiddleware, ExecContext } from "./fx/types";
 import DebugController from "./fx/debugger"; // 追加
 
+// create a global debug controller
+const debugCtrl = new DebugController();
+
 const FxNodeMap = new WeakMap<FxNode, EffectElement>();
 const FxElementStates = new WeakMap<EffectElement, CustomStateSet>();
-const getFxElement = (n: FxNode) : EffectElement | undefined => FxNodeMap.get(n);
+  const getFxElement = (n: FxNode) : EffectElement | undefined => FxNodeMap.get(n);
 
 // fx要素の可視化用スタイルシート
 const devtoolsCSSPath = ["./blooky-devtools-nested.css","./blooky-devtools-theme.css"];
@@ -27,13 +30,12 @@ const debugMiddleware: FxMiddleware = async (ctx, next) => {
 
   // ExecContext から debugController と executionId を取得
   const execCtx = (ctx as any).context as any;
-  const debugCtrl: DebugController | undefined = execCtx?.debugController;
   const executionId: string | undefined = execCtx?.executionId;
 
   let result: any = null;
   try {
     // --- Debugger にノード開始を通知（await して止める） ---
-    if(debugCtrl && executionId) {
+    if(executionId) {
       await debugCtrl.beforeNode(node, executionId);
     }
 
@@ -65,7 +67,7 @@ const debugMiddleware: FxMiddleware = async (ctx, next) => {
     states.add("recovered");
   } finally {
     // --- ノード終了を通知（UI更新や stepOver 判定に利用） ---
-    if(debugCtrl && executionId) {
+    if(executionId) {
       try { debugCtrl.afterNode(node, executionId); } catch(_) {}
     }
   }
@@ -214,10 +216,104 @@ EffectElementTagNameMap["fx-effect"] = class extends (EffectElementTagNameMap["f
 export {fxdom,EffectElementTagNameMap,debugMiddleware};
 
 
+
+// function to attach debugController to every fx-effect element in the page and expose controls
+function attachDevtoolsToEffects() {
+
+    const hasEffectClosest = (n: Node) => {
+        if(n.nodeType !== 1) return n.parentElement ? hasEffectClosest(n.parentElement) : false;
+        return (n as Element).closest("fx-effect") !== null || (n as Element).querySelector("fx-effect") !== null;
+    };
+
+    const effectMutations = filter((evt: BlookyMutationEvent)=>
+        evt.detail.records.some((record)=> Array.from(record.addedNodes).some(hasEffectClosest) || Array.from(record.removedNodes).some(hasEffectClosest))
+    )(mutations({ childList: true, subtree: true })(document.body));
+
+    const $effectElements = hold([])(
+        map((evt:BlookyMutationEvent)=>{
+            const effects = (evt.currentTarget as HTMLElement).getElementsByTagName('fx-effect');
+            return Array.from(effects).map((el, idx)=>{
+                const fxEl = el as any;
+
+                try {
+                    const prepared = fxEl._preparedFx || fxEl.prepare();
+                    const execId = prepared.execContext.executionId;
+                    return {
+                        div: [
+                            { div: [
+                                `fx-effect #${idx} `,
+                                { code: execId, $: { style: { color: '#9AE6B4' } } }
+                                ],
+                                $: {
+                                    id: `blooky-debug-fx-effect-${idx}`,
+                                    style: { fontSize: '12px' }
+                                }
+                            },
+                            { div: [
+                                { button: "Pause", $: { type: "button", dataset: { exec: execId, action: "pause" } } },
+                                { button: "Resume", $: { type: "button", dataset: { exec: execId, action: "resume" } } },
+                                { button: "Step Into", $: { type: "button", dataset: { exec: execId, action: "step-into" } } },
+                                { button: "Step Over", $: { type: "button", dataset: { exec: execId, action: "step-over" } } }
+                                ],
+                                $: { 
+                                    id: `blooky-debug-fx-effect-${idx}-controls`,
+                                    style: { marginTop: '4px' },
+                                    onclick: clickToDebugAction
+                                }
+                            }
+                        ],
+                        $: {
+                            style: { marginTop: '6px' }
+                        }
+                    };
+                } catch(e) {
+                // prepare may fail if context missing; ignore
+                }
+            })
+        })(effectMutations)
+    );
+
+    const panel = prime(()=>({
+      div: [
+        { strong: "Blooky Debug" },
+        { div: $effectElements, $: { id: "blooky-debug-list" } }
+      ],
+      $: {
+        id: 'blooky-debug-panel',
+        style: {
+          position: 'fixed',
+          right: '12px',
+          bottom: '12px',
+          background: 'rgba(0,0,0,0.8)',
+          color: '#fff',
+          padding: '8px',
+          borderRadius: '6px',
+          zIndex: '99999'
+        }
+      }
+    }))(undefined) as HTMLElement;
+
+    function clickToDebugAction (ev: MouseEvent) {
+        const actionable = (ev.target as HTMLElement)?.closest('[data-action]') as HTMLElement | null;
+        if(!actionable) return;
+        const action = actionable.dataset.action!;
+        const actualExecId = actionable.dataset.exec!;
+
+        if(action === 'pause') debugCtrl.pauseExecution(actualExecId);
+        if(action === 'resume') debugCtrl.resumeExecution(actualExecId);
+        if(action === 'step-into') debugCtrl.stepExecution(actualExecId, 'into');
+        if(action === 'step-over') debugCtrl.stepExecution(actualExecId, 'over');
+    }
+    return panel;
+
+}
+
+export const debugPanel = attachDevtoolsToEffects();
+
 // svg用のスタイル
 import "./blooky-devtools.css";
 import { DripperStream, DripEffect, MergedStream, Prop, Stream, Vertex } from "./blooky-types";
-import { JSHTMLNodeSource } from "./blooky-fv-types";
+import { BlookyMutationEvent, JSHTMLNodeSource } from "./blooky-fv-types";
 
 // グラフ描画
 function dumpGraphDOT(entries: Record<string, Stream<any> | Prop<any> | unknown>, graphAttrs: Record<string,string> = { rankdir: "LR" }): string {
@@ -335,13 +431,6 @@ const dripGraph = <A>(value: A) => (dripper: DripperStream<A>) : DripEffect<A> &
     }
 
     return { dripper, value, streams, effects };
-}
-
-const COMPONENT_MAP = new Map<Node,object>();
-const prime = <T extends object>(fn:(v:T)=>JSHTMLNodeSource) => (ctx:T) => {
-  const node = jshtml(fn(ctx),ctx);
-  COMPONENT_MAP.set(node, ctx);
-  return node;
 }
 
 export {dumpGraphDOT,dripGraph};
