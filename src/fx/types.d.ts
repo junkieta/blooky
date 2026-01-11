@@ -1,54 +1,146 @@
-// 型定義
+// src/fx/types.d.ts
 
-import { PromisedProp } from "../blooky-fp";
 import { Prop, DripperStream } from "../blooky-types";
+import { PromisedProp } from "../blooky-fp";
 
-// --- 汎用的な型定義 ---
-
+// ─── 実行ステップの定義 ───
 /**
- * 全てのFxNodeの基底となる型
+ * ExecutionStep: ノード実行の各段階を表現
  */
+export type ExecutionStep = {
+  phase: string;           // 'init' | 'running' | 'waiting' | 'completed' など
+  node: FxNode;           // 現在のノード
+  data?: any;             // フェーズ固有のデータ
+  
+  // devtools 向け情報（オプショナル）
+  visual?: {
+    label?: string;       // UI に表示するラベル
+    description?: string; // 詳細説明
+    color?: string;       // 色（CSS color値）
+    icon?: string;        // アイコン
+    progress?: number;    // 0-1 の進捗
+  };
+};
+
+// ─── FxRef: 実行時解決される値への参照 ───
+export type FxRef<T> = 
+  | ({ [key in symbol]: true; } & { key: string; })
+  | Prop<T> 
+  | T;
+
+// ─── AppContext: アプリケーションコンテキスト ───
+export type AppContext = Record<string | symbol, any>;
+
+// ─── CancelToken ───
+export type CancelToken = {
+  parent?: CancelToken;
+  cancel: () => void;
+  cancelled: () => boolean;
+};
+
+// ─── ExecutionContext: ノード実行時のコンテキスト ───
+export interface ExecutionContext {
+  node: FxNode;
+  appContext: AppContext;
+  executionId: string;
+  
+  // ユーティリティ
+  resolve: <T>(ref: FxRef<T>) => Prop<T>;
+  
+  // 子ノードの実行
+  executeChild: (child: FxNode) => AsyncGenerator<ExecutionStep, any, any>;
+  
+  // デバッグ・制御
+  debugController?: any; // DebugController（循環参照回避のため any）
+  cancelToken: CancelToken;
+  
+  // ミドルウェア・フック
+  middlewares?: FxMiddleware[];
+  onStep?: (step: ExecutionStep) => void;
+}
+
+// ─── Middleware ───
+export type FxMiddleware = (
+  ctx: { step: ExecutionStep; node: FxNode; executionId: string },
+  next: () => Promise<void>
+) => Promise<void>;
+
+// ─── NodeDefinition Interface ───
+export interface INodeDefinition<T extends FxNode['type']> {
+  readonly type: T;
+  
+  /**
+   * ノードを実行し、各段階を yield する
+   */
+  execute(
+    ctx: ExecutionContext & { node: Extract<FxNode, { type: T }> }
+  ): AsyncGenerator<ExecutionStep, any, any>;
+  
+  /**
+   * ノードが持つ子ノードを返す（グラフ可視化用）
+   */
+  getChildNodes?(node: Extract<FxNode, { type: T }>): FxNode[] | null;
+  
+  /**
+   * ファクトリ関数（fx.call(...) のような API）
+   */
+  factory(...args: any[]): Extract<FxNode, { type: T }>;
+}
+
+// ─── FxNode 定義 ───
 type FxNodeBase<T extends string, P = {}> = P & {
   type: T;
   id?: string;
+  catcher?: FxRef<(error: Error) => unknown>;
 };
 
-/**
- * 実行時にコンテキストから値を解決するための参照オブジェクト、または値そのもの
- */
-type FxRef<T> = { [key: symbol]: true; key: string; } | Prop<T> | T;
+export type FxNoneNode = FxNodeBase<"none">;
+export type FxSequenceNode = FxNodeBase<"sequence", { steps: FxNode[] }>;
+export type FxParallelNode = FxNodeBase<"parallel", { steps: FxNode[] }>;
+export type FxRaceNode = FxNodeBase<"race", { steps: FxNode[] }>;
+export type FxWaitNode = FxNodeBase<"wait", { 
+  ms?: FxRef<number>; 
+  until?: FxRef<Prop<boolean> | PromisedProp<any>>; 
+}>;
+export type FxLoopNode = FxNodeBase<"loop", { 
+  cond: FxRef<boolean>; 
+  body: FxNode; 
+  maxIterations?: number; 
+  maxDuration?: number; 
+}>;
+export type FxConditionNode = FxNodeBase<"condition", { 
+  if: FxRef<boolean>; 
+  then: FxNode; 
+  else?: FxNode; 
+}>;
+export type FxSwitchNode = FxNodeBase<"switch", { 
+  by: FxRef<string | number | symbol>; 
+  cases: Map<string | number | symbol, FxNode>; 
+  default?: FxNode; 
+}>;
+export type FxCallNode = FxNodeBase<"call", { 
+  action: FxRef<(v: any) => unknown>; 
+  arg?: FxRef<any>; 
+  context?: FxRef<any>; 
+}>;
+export type FxCollapseNode = FxNodeBase<"collapse", { 
+  dripper: FxRef<DripperStream<any>>; 
+  value: FxRef<any>; 
+  promise?: FxRef<"deny" | "allow" | "await">; 
+}>;
+export type FxYieldNode = FxNodeBase<"yield", { 
+  for: FxRef<FxContextNode>; 
+  value: FxRef<any>; 
+}>;
+export type FxContextNode = FxNodeBase<"context", { 
+  context: AppContext; 
+  child: FxNode; 
+}>;
+export type FxReturnNode = FxNodeBase<"return", { 
+  value: FxRef<any>; 
+}>;
 
-/**
- * dispatchノードが受け取る設定オブジェクトの型
- */
-type FxDispatchSettings<A> = CustomEventInit<A> & {
-  target: string | EventTarget;
-};
-
-// --- FxNodeの定義 ---
-
-// 各ノードの型を個別に定義
-type FxNoneNode = FxNodeBase<"none">;
-type FxSequenceNode = FxNodeBase<"sequence", { steps: FxNode[] }>;
-type FxParallelNode = FxNodeBase<"parallel", { steps: FxNode[] }>;
-type FxRaceNode = FxNodeBase<"race", { steps: FxNode[] }>;
-type FxWaitNode = FxNodeBase<"wait", { ms?: FxRef<number>, until?: FxRef<Prop<boolean>|PromisedProp<any>> }>; // waitの拡張を反映
-type FxLoopNode = FxNodeBase<"loop", { cond: FxRef<boolean>, body: FxNode, maxIterations?: number, maxDuration?: number }>;
-type FxConditionNode = FxNodeBase<"condition", { if: FxRef<boolean>, then: FxNode, else?: FxNode }>;
-type FxSwitchNode = FxNodeBase<"switch", { by: FxRef<string | number | symbol>, cases: Map<string | number | symbol, FxNode>, default?: FxNode }>;
-type FxCallNode = FxNodeBase<"call", { action: FxRef<(v: any) => unknown>, arg?: FxRef<any>, context?: FxRef<any>, catcher?: FxRef<(error: Error) => unknown> }>;
-type FxCollapseNode = FxNodeBase<"collapse", { dripper: FxRef<DripperStream<any>>, value: FxRef<any>, catcher?: FxRef<(error: Error) => unknown>, promise?: FxRef<"deny" | "allow" | "await"> }>;
-type FxDispatchNode = FxNodeBase<"dispatch", { name: FxRef<string>, settings: FxDispatchSettings<FxRef<any>>, child?: FxNode }>;
-type FxYieldNode = FxNodeBase<"yield", { for: FxRef<FxContextNode>, value: FxRef<any>, id?: string }>; // yieldの拡張を反映
-type FxContextNode = FxNodeBase<"context",  { context: AppContext, child: FxNode }>;
-type FxReturnNode = FxNodeBase<"return",  { value: FxRef<any> }>;
-
-type FxNodeType = FxNode["type"];
-
-/**
- * 副作用フローのノードを表す合併型
- */
-type FxNode =
+export type FxNode =
   | FxNoneNode
   | FxSequenceNode
   | FxParallelNode
@@ -59,211 +151,36 @@ type FxNode =
   | FxSwitchNode
   | FxCallNode
   | FxCollapseNode
-  | FxDispatchNode
   | FxYieldNode
   | FxContextNode
-  | FxReturnNode
-  ;
+  | FxReturnNode;
 
-/**
- * 全てのFxNode定義が実装すべき規約
- */
-interface INodeDefinition<T extends FxNodeType> {
-  /**
-   * ノードの種類を示す一意な文字列
-   */
-  readonly type: T;
+export type FxNodeType = FxNode["type"];
 
-  /**
-   * ユーザーがフローを構築するためのファクトリ関数 (例: fx.call)
-   * @param args ファクトリ関数が受け取る引数
-   */
-  factory(...args: any[]): Extract<FxNode, { type: T }>;
-
-  /**
-   * runジェネレータに、次に実行すべきノードを案内する。
-   * @param context 実行コンテキスト (ifの条件評価などに使用)
-   */
-  step(
-    context: FxExecutionContext & { node: Extract<FxNode, { type: T }> }
-  ): Generator<FxNode, any, any>;
-
-  /**
-   * nodeが直接所有する別のFxNodeの配列、なければnullを返す
-   * @param node 
-   */
-  getChildNodes(node: Extract<FxNode, { type: T }>) : null|FxNode[]
-  
-  /**
-   * ノードを実行するハンドラ
-   * @param context 実行コンテキスト
-   */
-  handle(
-    context: FxExecutionContext & { node: Extract<FxNode, { type: T }> }
-  ): Promise<any>;
-
-}
-
-
-/**
- * エフェクト実行エンジンが要求するコンテキストの機能。
- */
-type AppContext = Record<string|symbol, any>;
-
-type CancelToken = {
-  parent?: CancelToken
-  cancel: () => void;
-  cancelled: () => boolean
-};
-
-type FxHandlerMap = {
-  [K in FxNodeType]?: (
-    ctx: FxExecutionContext & { node: Extract<FxNode, { type: K }> }
-  ) => Promise<any>
-};
-
-type FxFactoryMap = {
-  [K in FxNodeType]: (...args: any[]) => Extract<FxNode, { type: K }>
-};
-
-
-// 実行全体の設定
-interface ExecContext {
-  resolve: <A>(v:FxRef<A>)=>Prop<A>;
+// ─── ExecContext: prepare で生成される実行設定 ───
+export interface ExecContext {
+  resolve: <T>(ref: FxRef<T>) => Prop<T>;
   cancelToken: CancelToken;
   middlewares?: FxMiddleware[];
-  onNodeEnter?: (node: FxNode) => void;
-  onNodeExit?: (node: FxNode, result?:any, error?: Error) => void;
-
-  // 追加: executionId はこの ExecContext に紐づく実行単位のID（optional）
+  debugController?: any;
   executionId?: string;
+  onStep?: (step: ExecutionStep) => void;
 }
 
-// ミドルウェアに渡される、各ステップの情報
-interface FxExecutionContext {
-  node: FxNode;
-  context: ExecContext
-  appContext: AppContext
-  run: (n:FxNode, ctx?: ExecContext)=>Generator<FxNode, void, any>
-  execute: (n:FxNode, ctx?: ExecContext)=>Promise<AppContext>
+// ─── PreparedFx ───
+export interface PreparedFx {
+  readonly rootNode: FxNode;
+  readonly execContext: ExecContext;
+  readonly appContext: AppContext;
 }
 
-// Middlewareの関数型
-type FxMiddleware = (
-  ctx: FxExecutionContext,
-  next: () => Promise<any> // 次のMiddlewareを呼び出すための関数
-) => Promise<any>;
-
-
-/**
- * 実行準備が完了した副作用フローを表すオブジェクト。
- * prepare関数によって生成され、execute関数に渡される。
- */
-interface PreparedFx {
-  readonly rootNode: FxNode
-  readonly execContext: ExecContext
-  readonly appContext: AppContext // プロキシされたコンテキスト
-}
-
-/**
- * 実行中の副作用フローを制御し、結果を消費するためのハンドル。
- */
-interface ExecutionHandle {
-  /**
-   * フローの実行をキャンセルする。
-   */
+// ─── ExecutionHandle ───
+export interface ExecutionHandle {
   cancel: () => void;
-  
-  /**
-   * 実行の完了を知らせるPromise
-   */
-  done: Promise<AppContext>
-
+  done: Promise<AppContext>;
 }
 
-
-
-/**
- * 副作用フローの実行結果を表す、idと値のペア。
- */
-type FxResult = {
-  id: string; // 結果を生成したFxNodeのid
-  value: any; // 結果の値
-};
-
-// yieldからdispatchされる型
-type YieldRequest = {
-  id?: string; // 結果を生成したFxNodeのid
-  for?: string;
-  value: any; // 結果の値
-  resolve: (response: any) => void;
-}
-
-
-/**
- * 各ファクトリ関数 (fx.call, fx.sequenceなど) の引数の型を定義するスキーマ
- * [必須引数1, 必須引数2, オプション引数?, ...] のようにタプルで記述する
- */
-type FxFactoryArgs = {
-  none: [],
-  sequence: [steps: FxNode[]],
-  parallel: [steps: FxNode[]],
-  race: [steps: FxNode[]],
-  wait: [options: { ms?: FxRef<number>, until?: FxRef<boolean> }],
-  loop: [cond: FxRef<boolean>, body: FxNode],
-  condition: [ifCond: FxRef<boolean>, thenBranch: FxNode, elseBranch?: FxNode],
-  switch: [by: FxRef<any>, cases: Map<any, FxNode>, defaultNode?: FxNode],
-  call: [
-    action: FxRef<(v: any) => unknown>,
-    options?: { arg?: FxRef<any>, context?: FxRef<any>, catcher?: FxRef<(e: Error) => unknown>, id?: string }
-  ],
-  collapse: [
-    value: FxRef<any>,
-    dripper: FxRef<DripperStream<any>>,
-    options?: { catcher?: FxRef<(e: Error) => unknown>, mode?: FxRef<any> }
-  ],
-  dispatch: [name: FxRef<string>, settings: FxDispatchSettings<FxRef<any>>, child?: FxNode],
-  yield: [options: { for: FxRef<string>, value: FxRef<any>, id?: string }],
-};
-
-/**
- * FxFactoryArgsスキーマを元に、fxオブジェクトの完全な型を生成する
- */
-type FxFactory = {
-  // FxFactoryArgs の各キー (none, sequence, call...) をループ処理する
-  [K in keyof FxFactoryArgs]: (
-    // 各キーに対応する引数タプルを展開して、関数の引数リストにする
-    ...args: FxFactoryArgs[K]
-  ) =>
-    // 戻り値の型は、FxNodeの中からtypeがKであるものを抜き出して設定する
-    Extract<FxNode, { type: K }>
-};
-
-export {
-    FxFactoryArgs,
-    FxFactory,
-    FxNodeBase,
-    FxNode,
-    FxNoneNode,
-    FxSequenceNode,
-    FxParallelNode,
-    FxRaceNode,
-    FxWaitNode,
-    FxLoopNode,
-    FxConditionNode,
-    FxSwitchNode,
-    FxCallNode,
-    FxCollapseNode,
-    FxDispatchNode,
-    FxYieldNode,
-    FxContextNode,
-
-    FxNodeType,
-    FxRef,
-    INodeDefinition,
-    FxDispatchSettings,
-    FxHandlerMap,FxMiddleware,FxFactoryMap,
-    PreparedFx,ExecutionHandle,
-    FxResult,YieldRequest,
-    AppContext,CancelToken,ExecContext,FxExecutionContext,
+// ─── FxFactoryMap ───
+export type FxFactoryMap = {
+  [K in FxNodeType]: (...args: any[]) => Extract<FxNode, { type: K }>;
 };

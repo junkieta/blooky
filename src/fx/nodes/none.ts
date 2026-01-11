@@ -1,5 +1,7 @@
-import type { FxExecutionContext, FxNode } from '../types';
+// src/fx/nodes/none.ts
+import type { ExecutionContext, FxNode, ExecutionStep } from '../types';
 import { NodeDefinition } from '../NodeDefinition';
+
 type ThisNode = Extract<FxNode, { type: 'none' }>;
 
 export class NoneNodeDefinition extends NodeDefinition<'none'> {
@@ -9,8 +11,11 @@ export class NoneNodeDefinition extends NodeDefinition<'none'> {
     return { type: 'none' };
   }
 
-  public handle(context: FxExecutionContext & { node: { type: 'none'; id?: string; }; }) {
-    
+  public async *execute({ node }: ExecutionContext & { node: ThisNode }): AsyncGenerator<ExecutionStep> {
+    yield {
+      phase: 'completed',
+      node,
+      visual: { label: 'No operation', color: 'gray' }
+    };
   }
-
 }

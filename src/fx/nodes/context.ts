@@ -1,26 +1,51 @@
-import type { AppContext, FxContextNode, FxExecutionContext, FxNode, FxRef } from '../types';
+// src/fx/nodes/context.ts
+import type { AppContext, FxContextNode, ExecutionContext, FxNode, ExecutionStep } from '../types';
 import { NodeDefinition } from '../NodeDefinition';
-type ThisNode = Extract<FxNode, { type: 'context' }>;
 
 export class ContextNodeDefinition extends NodeDefinition<'context'> {
   public readonly type = 'context';
-  public factory(context: AppContext, child: FxNode, id:string): FxContextNode {
+  
+  public factory(context: AppContext, child: FxNode, id: string): FxContextNode {
     return { type: 'context', context, child, id };    
   }
-  public getChildNodes(node: FxContextNode): null | FxNode[] {
-    return node.child ? [node.child] : null;
+  
+  public getChildNodes(node: FxContextNode): FxNode[] {
+    return node.child ? [node.child] : [];
   }
-  public *step({ run,node }: FxExecutionContext & { node: FxContextNode; }): Generator<FxNode, void, any> {
-    const child = node.child;
-    if(child.type === "sequence") {
-      for(let step of child.steps)
-        if(step.type !== "context")
-          yield * run(step);
+  
+  public async *execute({ node, executeChild }: ExecutionContext & { node: FxContextNode }): AsyncGenerator<ExecutionStep, any> {
+    yield {
+      phase: 'init',
+      node,
+      data: { contextKeys: Object.keys(node.context) },
+      visual: { 
+        label: 'Setting up context',
+        color: '#3B82F6'
+      }
+    };
+    
+    if (node.child) {
+      const childGen = executeChild(node.child);
+      let result;
+      for await (const childStep of childGen) {
+        yield childStep;
+        result = childStep;
+      }
+      
+      yield {
+        phase: 'completed',
+        node,
+        data: { result },
+        visual: { label: 'Context completed', color: '#10B981' }
+      };
+      
+      return result;
     }
-    else {
-      yield * run(child);
-    }
+    
+    yield {
+      phase: 'completed',
+      node,
+      visual: { label: 'Empty context', color: '#6B7280' }
+    };
   }
 }
-
-

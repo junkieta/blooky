@@ -1,8 +1,10 @@
-import type { FxNode, FxRef, FxExecutionContext} from '../types';
+// src/fx/nodes/collapse.ts
+import type { FxNode, FxRef, ExecutionContext, ExecutionStep } from '../types';
 import { drip } from '../../blooky-fp';
 import { NodeDefinition } from '../NodeDefinition';
 import { Dripper } from '../../blooky-types';
-import { tick } from '../../blooky-ft';
+import { time } from '../../blooky-fx';
+
 type ThisNode = Extract<FxNode, { type: 'collapse' }>;
 
 export class CollapseNodeDefinition extends NodeDefinition<'collapse'> {
@@ -15,9 +17,34 @@ export class CollapseNodeDefinition extends NodeDefinition<'collapse'> {
     return { ...options, type: 'collapse', dripper, value };
   }
 
-  public async handle({ node,context }: FxExecutionContext & { node: ThisNode }) {
+  public async *execute(context: ExecutionContext & { node: ThisNode }): AsyncGenerator<ExecutionStep> {
+    const node = context.node;
+    yield {
+      phase: 'prepare',
+      node,
+      visual: { label: 'Preparing collapse', color: '#3B82F6' }
+    };
+    
     const value = context.resolve(node.value);
     const dripper = context.resolve(node.dripper);
-    await tick(drip(value())(dripper()));
+    
+    yield {
+      phase: 'collapsing',
+      node,
+      data: { value: value(), dripper: dripper() },
+      visual: { 
+        label: 'Collapsing into stream',
+        color: '#F59E0B',
+        icon: '💧'
+      }
+    };
+    
+    await time.tick(drip(value())(dripper()));
+    
+    yield {
+      phase: 'completed',
+      node,
+      visual: { label: 'Collapse completed', color: '#10B981' }
+    };
   }
 }

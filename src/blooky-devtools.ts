@@ -22,58 +22,53 @@ const DevEffectElementStyleSheets = Promise.all(devtoolsCSSPath.map(async(path)=
 }));
 
 
-const debugMiddleware: FxMiddleware = async (ctx, next) => {
-  const { node } = ctx;
+
+// 🆕 Global DebugController
+const globalDebugController = new DebugController();
+
+// 🆕 debugMiddleware の更新（ExecutionStep ベース）
+const debugMiddleware: FxMiddleware = async ({ step, node, executionId }, next) => {
   const element = getFxElement(node);
-  if(!element) return await next();
-  const states = FxElementStates.get(element)!;
-
-  // ExecContext から debugController と executionId を取得
-  const execCtx = (ctx as any).context as any;
-  const executionId: string | undefined = execCtx?.executionId;
-
-  let result: any = null;
-  try {
-    // --- Debugger にノード開始を通知（await して止める） ---
-    if(executionId) {
-      await debugCtrl.beforeNode(node, executionId);
+  
+  if (element) {
+    // DOM に状態を反映
+    element.setAttribute('data-phase', step.phase);
+    element.setAttribute('data-execution-id', executionId);
+    
+    if (step.visual?.label) {
+      element.setAttribute('aria-label', step.visual.label);
     }
-
-    if(node.type === "wait" || node.type === "yield") {
-      states.add("paused");
-      result = await next();
-      states.delete("paused");
-    } else {
-      result = await next();
-    }
-  } catch (err) {
-    // --- 後処理（エラー時） ---
-    states.add("failed");
-    if(!element || element.dispatchEvent(new CustomEvent("throw", {
-        cancelable: true,
-        bubbles: true,
-        composed: true,
-        detail: {
-          error: err,
-          failedNode: node,
-          ctx
-        }
-      }))) {
-        console.error(`[fx-effect] Unhandled error: Catch handler not found in context.`, err);
-        throw err;
-    }
-    // 回復された場合は、catchブロックから抜けて正常系の処理に戻る
-    states.delete("failed");
-    states.add("recovered");
-  } finally {
-    // --- ノード終了を通知（UI更新や stepOver 判定に利用） ---
-    if(executionId) {
-      try { debugCtrl.afterNode(node, executionId); } catch(_) {}
+    
+    // CustomStateSet に反映
+    const states = FxElementStates.get(element);
+    if (states) {
+      states.add(step.phase);
+      
+      // 色の反映
+      if (step.visual?.color) {
+        element.style.setProperty('--phase-color', step.visual.color);
+      }
     }
   }
-  return result;
+  
+  await next();
+  
+  // cleanup
+  if (element) {
+    const states = FxElementStates.get(element);
+    if (states) {
+      states.delete(step.phase);
+    }
+  }
 };
 
+// ExecContextForDebug の更新
+const ExecContextForDebug: Partial<ExecContext> = {
+  middlewares: [debugMiddleware],
+  debugController: globalDebugController,
+};
+
+export { globalDebugController as DebugController };
 // EffectElementを全て動的にデバッグ用途にextendsさせる
 const EffectElementTagNameMap = Object.fromEntries(new Map(Object.entries(DefaultEffectElementTagNameMap)));
 Object.entries(EffectElementTagNameMap).forEach(([tag,fxClass])=>{
@@ -150,36 +145,6 @@ EffectElementTagNameMap["fx-collapse"] = class extends (EffectElementTagNameMap[
       // アニメーションが終わったらclassを削除
       setTimeout(() => nodeElement.classList.remove('is-emitting'), 1500);
     });
-  }
-}
-
-
-const ExecContextForDebug : Partial<ExecContext> = {
-  middlewares: [debugMiddleware],
-  onNodeEnter(node: FxNode): void {
-    const element = getFxElement(node);
-    if(!element) return;
-    if(FxElementStates.has(element))
-      FxElementStates.get(element)!.add('running');
-    element.dispatchEvent(new CustomEvent("changestate", {
-      bubbles: true,
-      detail: "running"
-    }))
-  },
-  onNodeExit(node: FxNode, reason?: any, error?: any): void {
-    const element = getFxElement(node);
-    if(!element) return;
-    const states = FxElementStates.get(element)!;
-    states.delete('running');
-    if (error) {
-      states.add('failed');
-    }
-    else if(reason) {
-      states.add(reason);
-    }
-    else {
-      states.add("completed");
-    }
   }
 }
 

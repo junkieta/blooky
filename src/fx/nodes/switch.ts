@@ -1,5 +1,7 @@
-import type { FxExecutionContext, FxNode, FxRef, FxSwitchNode } from '../types';
+// src/fx/nodes/switch.ts
+import type { ExecutionContext, FxNode, FxRef, FxSwitchNode, ExecutionStep } from '../types';
 import { NodeDefinition } from '../NodeDefinition';
+
 type ThisNode = Extract<FxNode, { type: 'switch' }>;
 
 export class SwitchNodeDefinition extends NodeDefinition<'switch'> {
@@ -9,17 +11,66 @@ export class SwitchNodeDefinition extends NodeDefinition<'switch'> {
     return { type: 'switch', by, cases, default: defaultNode };
   }
 
-  public getChildNodes(node: FxSwitchNode): null | FxNode[] {
+  public getChildNodes(node: FxSwitchNode): FxNode[] {
     const cases = [...node.cases.values()];
     return node.default ? cases.concat(node.default) : cases;
   }
 
-  public *step({ node,run,context }: FxExecutionContext & { node: FxSwitchNode; }): Generator<FxNode, void, any> {
+  public async *execute(context: ExecutionContext & { node: ThisNode }): AsyncGenerator<ExecutionStep, any> {
+    const { node, executeChild } = context;
+    yield {
+      phase: 'evaluating',
+      node,
+      visual: { label: 'Evaluating switch value', color: '#3B82F6' }
+    };
+    
     const by = context.resolve(node.by)();
-    if(node.cases.has(by))
-      yield* run(node.cases.get(by)!);
-    else if(node.default)
-      yield* run(node.default);
+    
+    yield {
+      phase: 'selecting',
+      node,
+      data: { by, hasCase: node.cases.has(by) },
+      visual: { 
+        label: typeof by === 'string' ? `Switch: "${by}"` : `Switch: ${Symbol.keyFor(by as symbol)}`,
+        color: '#F59E0B'
+      }
+    };
+    
+    let targetNode: FxNode | undefined;
+    
+    if (node.cases.has(by)) {
+      targetNode = node.cases.get(by)!;
+    } else if (node.default) {
+      targetNode = node.default;
+      yield {
+        phase: 'default',
+        node,
+        visual: { label: 'Taking default branch', color: '#6B7280' }
+      };
+    }
+    
+    if (targetNode) {
+      const childGen = executeChild(targetNode);
+      let result;
+      for await (const childStep of childGen) {
+        yield childStep;
+        result = childStep;
+      }
+      
+      yield {
+        phase: 'completed',
+        node,
+        data: { result },
+        visual: { label: 'Switch completed', color: '#10B981' }
+      };
+      
+      return result;
+    }
+    
+    yield {
+      phase: 'completed',
+      node,
+      visual: { label: 'No case matched', color: '#6B7280' }
+    };
   }
-
 }
