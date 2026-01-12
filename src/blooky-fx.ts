@@ -137,12 +137,15 @@ function createCancelToken(parent?: CancelToken): CancelToken {
 }
 
 // ─── prepare: 実行準備 ───
+
 function prepare(
   flow: FxNode,
   initialAppContext: AppContext,
   parentExecContext?: Partial<ExecContext>
 ): PreparedFx {
+  // 🔥 appContext を Proxy でラップして、id 付きノードを保存可能に
   const appContext = { ...initialAppContext };
+  
   const cancelToken = createCancelToken();
   const executionId = `exec-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   
@@ -156,7 +159,7 @@ function prepare(
   return {
     rootNode: flow,
     execContext,
-    appContext,
+    appContext, // このappContextに #fxConfirm が保存される
   };
 }
 
@@ -254,16 +257,23 @@ function execute(preparedFx: PreparedFx): ExecutionHandle {
   console.log('[fx] execute: root generator created');  
   // 非同期で実行を進める
   const done = (async () => {
-    console.log('[fx] execute: starting iteration');  
+    console.log('[fx] execute: starting iteration');
     let lastStep;
     let stepCount = 0;
     for await (const step of rootGenerator) {
-
+      stepCount++;
       console.log(`[fx] execute: step ${stepCount}`, step.phase, step.visual?.label);
+      
+      // 🆕 appContext の変化を追跡
+      if (step.phase === 'defined') {
+        console.log('[fx] execute: appContext updated', Object.keys(appContext));
+      }
+      
       lastStep = step;
     }
     
-    // ノードの id があれば appContext に結果を保存
+    console.log('[fx] execute: completed', { stepCount, lastStep, appContext: Object.keys(appContext) });
+    
     if (rootNode.id && lastStep?.data?.result !== undefined) {
       appContext["#" + rootNode.id] = lastStep.data.result;
     }

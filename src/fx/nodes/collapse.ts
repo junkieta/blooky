@@ -38,7 +38,6 @@ export class CollapseNodeDefinition extends NodeDefinition<'collapse'> {
         icon: '💧'
       }
     };
-    
     await time.tick(drip(value())(dripper()));
     
     yield {
