@@ -1,5 +1,5 @@
 // src/fx/nodes/race.ts
-import type { CancelToken, ExecutionContext, FxNode, FxRaceNode, ExecutionStep } from '../types';
+import type { ExecutionContext, FxNode, FxRaceNode, ExecutionStep } from '../types';
 import { NodeDefinition } from '../NodeDefinition';
 import { createCancelToken } from '../../blooky-fx';
 
@@ -16,7 +16,7 @@ export class RaceNodeDefinition extends NodeDefinition<'race'> {
     return node.steps;
   }
 
-  public async *execute(context : ExecutionContext & { node: ThisNode }): AsyncGenerator<ExecutionStep, any> {
+  public async *execute(context: ExecutionContext & { node: ThisNode }): AsyncGenerator<ExecutionStep, any> {
     const { node, executeChild } = context;
     yield {
       phase: 'init',
@@ -31,8 +31,8 @@ export class RaceNodeDefinition extends NodeDefinition<'race'> {
     // 各枝用のキャンセルトークンを生成
     const raceTokens = node.steps.map(() => createCancelToken(context.cancelToken));
     
-    // 各枝を spawn
-    const branches = new Map<string, AsyncGenerator<ExecutionStep, any>>();
+    // 各枝の generator を生成
+    const branches = new Map<string, { gen: AsyncGenerator<ExecutionStep, any>, ctx: ExecutionContext }>();
     
     for (let i = 0; i < node.steps.length; i++) {
       yield {
@@ -47,11 +47,10 @@ export class RaceNodeDefinition extends NodeDefinition<'race'> {
       };
       
       const branchId = `competitor-${i}`;
-      const childCtx = {
-        ...context,
-        cancelToken: raceTokens[i]
-      };
-      branches.set(branchId, executeChild(node.steps[i]));
+      branches.set(branchId, {
+        gen: executeChild(node.steps[i]),
+        ctx: { ...context, cancelToken: raceTokens[i] }
+      });
     }
     
     yield {
@@ -64,35 +63,61 @@ export class RaceNodeDefinition extends NodeDefinition<'race'> {
       }
     };
     
-    // Promise.race で最初に完了したものを検出
+    // 協調的に各枝を実行（parallel と同じ方式）
+    const results = new Map<string, any>();
+    const pending = new Set(branches.keys());
     let winner: { id: string; result: any } | null = null;
     
     try {
-      const racePromises = Array.from(branches.entries()).map(async ([id, gen]) => {
-        let result;
-        for await (const step of gen) {
-          yield step; // 子の step を外に yield
-          result = step;
+      while (pending.size > 0 && !winner) {
+        for (const [branchId, { gen }] of branches) {
+          if (!pending.has(branchId)) continue;
+          
+          yield {
+            phase: 'step-branch',
+            node,
+            data: { branchId, remaining: pending.size },
+            visual: { 
+              label: `Stepping ${branchId}`,
+              color: '#F59E0B'
+            }
+          };
+          
+          const { value, done } = await gen.next();
+          
+          if (done) {
+            // 最初に完了したものが勝者
+            if (!winner) {
+              winner = { id: branchId, result: value };
+              
+              yield {
+                phase: 'winner',
+                node,
+                data: { winner: branchId, result: value },
+                visual: { 
+                  label: `${branchId} won the race!`,
+                  color: '#10B981',
+                  icon: '🏆'
+                }
+              };
+              
+              // 他の枝をキャンセル
+              raceTokens.forEach((token, i) => {
+                if (i !== parseInt(branchId.replace('competitor-', ''))) {
+                  token.cancel();
+                }
+              });
+            }
+            
+            results.set(branchId, value);
+            pending.delete(branchId);
+          } else if (value) {
+            // 子の step を外に yield
+            yield value;
+          }
         }
-        return { id, result };
-      });
-      
-      winner = await Promise.race(racePromises);
-      
-      yield {
-        phase: 'winner',
-        node,
-        data: { winner: winner.id, result: winner.result },
-        visual: { 
-          label: `${winner.id} won the race!`,
-          color: '#10B981',
-          icon: '🏆'
-        }
-      };
+      }
     } finally {
-      // 他の枝をキャンセル
-      raceTokens.forEach(token => token.cancel());
-      
       yield {
         phase: 'cleanup',
         node,

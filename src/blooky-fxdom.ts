@@ -565,79 +565,94 @@ class FxContextElement extends EffectElement {
  * フロー実行の起点 (prepare/execute) となるカスタム要素。
  * `ignite` 属性によって実行タイミングを制御する。
  */
+
 class FxEffectElement extends FxContextElement {
+  static observedAttributes = ["theme", "ignite"];
 
-  /** 監視対象の属性 */
-  static observedAttributes = ["ignite"];
+//  private themeCSS?: CSSStyleSheet;
+  protected _execContext?: Partial<ExecContext> | undefined;
+  protected _preparedFx?: PreparedFx;
+  protected _handle?: ExecutionHandle;
 
-  /** 実行コンテキストの追加設定 */
-  protected _execContext?: Partial<ExecContext>
-  /** 準備されたフロー */
-  protected _preparedFx?: PreparedFx
-  /** 実行ハンドル */
-  protected _handle?: ExecutionHandle
-
-  /**
-   * JSHTMLによってコンテキストが設定された際に呼び出されるハンドラ。
-   * @param context AppContext
-   */
   [JSHTML_ELEMENT_HANDLER](context?: AppContext) {
-    if(context) this.setContext(context);
+    console.log('[fxdom] FxEffectElement: JSHTML_ELEMENT_HANDLER', context);
+    if (context) this.setContext(context);
   }
 
-  /**
-   * FxNodeを準備し、PreparedFxオブジェクトを生成または取得する。
-   * @param force 強制的に再準備するかどうか
-   * @returns PreparedFx
-   */
   prepare(force = false) {
-    if (!force && this._preparedFx) return this._preparedFx;
-    return this._preparedFx = prepare(this.toFxNode(), this.context, this._execContext);
+    console.log('[fxdom] FxEffectElement: prepare', { force, hasContext: !!this.context });
+    
+    if (!force && this._preparedFx) {
+      console.log('[fxdom] FxEffectElement: using cached prepared');
+      return this._preparedFx;
+    }
+    
+    const node = this.toFxNode();
+    console.log('[fxdom] FxEffectElement: toFxNode', node);
+    
+    this._preparedFx = prepare(node, this.context, this._execContext);
+    console.log('[fxdom] FxEffectElement: prepared', this._preparedFx);
+    
+    return this._preparedFx;
   }
 
-  /**
-   * 準備されたFxNodeの実行を開始し、ExecutionHandleを返す。
-   * 既に実行中のフローがあればキャンセルする。
-   * @returns ExecutionHandle
-   */
   execute() {
-    if(this._handle) this._handle.cancel();
-    this._handle = execute(this._preparedFx || this.prepare());
+    console.log('[fxdom] FxEffectElement: execute');
+    
+    if (this._handle) {
+      console.log('[fxdom] FxEffectElement: cancelling previous handle');
+      this._handle.cancel();
+    }
+    
+    const prepared = this._preparedFx || this.prepare();
+    console.log('[fxdom] FxEffectElement: executing', prepared);
+    
+    this._handle = execute(prepared);
+    console.log('[fxdom] FxEffectElement: handle created', this._handle);
+    
     return this._handle;
   }
 
-  /**
-   * `ignite` 属性に基づいてフローの実行を開始する。
-   * @param type 実行タイミング ("none", "quantum", "visual", "sequential", "immediate")
-   */
   protected igniteFx(type: CollapseObservationType | "none") {
+    console.log('[fxdom] FxEffectElement: igniteFx', type);
+    
     this.prepare();
-    switch(type) {
+    
+    switch (type) {
       case "none":
+        console.log('[fxdom] FxEffectElement: ignite none - not executing');
         break;
 
       case "quantum":
-        // 次のマイクロタスクとして実行
-        queueMicrotask(this.execute.bind(this));
+        console.log('[fxdom] FxEffectElement: ignite quantum - queueMicrotask');
+        queueMicrotask(() => {
+          console.log('[fxdom] FxEffectElement: quantum execute');
+          this.execute();
+        });
         break;
 
       case "visual":
-        // 次の描画フレームで実行
-        requestAnimationFrame(this.execute.bind(this));
+        console.log('[fxdom] FxEffectElement: ignite visual - requestAnimationFrame');
+        requestAnimationFrame(() => {
+          console.log('[fxdom] FxEffectElement: visual execute');
+          this.execute();
+        });
         break;
 
       case "sequential":
-        // 次のタスクとして実行
-        setTimeout(this.execute.bind(this));
+        console.log('[fxdom] FxEffectElement: ignite sequential - setTimeout');
+        setTimeout(() => {
+          console.log('[fxdom] FxEffectElement: sequential execute');
+          this.execute();
+        });
         break;
 
       case "immediate":
-        // 同期的に実行
+        console.log('[fxdom] FxEffectElement: ignite immediate - execute now');
         this.execute();
         break;
 
       default:
-        // 不明なignite属性値は user エラーとして報告（警告ではなくエラーとする）
         throw blooky.error("user", {
           code: "UNKNOWN_IGNITE_VALUE",
           message: `Unknown 'ignite' attribute value: "${this.getAttribute("ignite")}"`,
@@ -650,19 +665,38 @@ class FxEffectElement extends FxContextElement {
   }
 
   connectedCallback() {
-    this.igniteFx(!this.hasAttribute("ignite") ? "none" : this.getAttribute("ignite") as CollapseObservationType | "none");
+    console.log('[fxdom] FxEffectElement: connectedCallback');
+    
+    const igniteValue = this.hasAttribute("ignite") 
+      ? this.getAttribute("ignite") as CollapseObservationType | "none"
+      : "none";
+    
+    console.log('[fxdom] FxEffectElement: ignite value', igniteValue);
+    
+    this.igniteFx(igniteValue);
   }
 
   disconnectedCallback() {
+    console.log('[fxdom] FxEffectElement: disconnectedCallback');
     this._handle?.cancel();
   }
 
   attributeChangedCallback(name: string, oldValue: string, newValue: string) {
-    if(newValue === oldValue || name !== "ignite" || !this.isConnected) return;
-    this._handle?.cancel();
-    if(newValue && newValue !== "none") this.igniteFx(newValue as CollapseObservationType);
+    console.log('[fxdom] FxEffectElement: attributeChangedCallback', { name, oldValue, newValue });
+    
+    if (newValue === oldValue || !this.isConnected) return;
+    
+    if (name === "ignite") {
+      this._handle?.cancel();
+      if (newValue && newValue !== "none") {
+        this.igniteFx(newValue as CollapseObservationType);
+      }
+    }
+    
+//    if (name === "theme") {
+//      this.loadTheme(newValue);
+//    }
   }
-
 }
 
 /**

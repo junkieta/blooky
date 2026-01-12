@@ -14,7 +14,7 @@ import type {
   ExecutionStep,
   FxRef
 } from "./fx/types";
-import type { Prop } from "./blooky-types";
+import type { ClockEffect, Prop } from "./blooky-types";
 
 // ─── 時間制御（旧 ft の内容）───
 import { stream, collapse as coreCollapse, drip, DripEffect, hold } from './blooky-fp';
@@ -37,8 +37,14 @@ const advanceClock = () => {
         clockRunning = 0;
         const reservations = tickQueue.splice(0).reverse();
         const clockEffect = drip(t)(beat$);
+        const errors = notifyClockObservers(clockEffect)(reservations);
         coreCollapse(clockEffect);
-        reservations.forEach((r) => r.resolve(clockEffect));
+        if(!errors.length) {
+            reservations.forEach((r) => r.resolve(clockEffect));
+        } else {
+            reservations.forEach((r) => r.reject(errors));
+        }
+//        reservations.forEach((r) => r.resolve(clockEffect));
         advanceClock();
     });
 }
@@ -49,7 +55,62 @@ const tick = (effect:DripEffect<any>) =>
         advanceClock();
     });
 
-const clock = hold(0)(beat$);
+const clockObservers = new Map<(effect: ClockEffect) => void, Set<Prop<unknown>>>();
+
+type Clock = Prop<number> & {
+    observe: (f:(effect:ClockEffect)=>void) => (p: Prop<unknown>) => ()=>void
+    unobserve: (f:(effect:ClockEffect)=>void) => (p?: Prop<unknown>) => void
+};
+
+const clock = Object.assign(hold(0)(beat$), {
+
+    observe: (f:(effect:ClockEffect)=>void) => (p: Prop<unknown>) => {
+        if(!clockObservers.has(f)) 
+            clockObservers.set(f, new Set([p]));
+        else
+            clockObservers.get(f)!.add(p);
+        return clock.unobserve(f).bind(null, p);
+    },
+
+    unobserve: (f:(effect:ClockEffect)=>void) => (p?: Prop<unknown>) => {
+        if(!clockObservers.has(f)) return;
+        if(!p) {
+            clockObservers.delete(f)
+        } else {
+            const props = clockObservers.get(f)!;
+            props.delete(p);
+            if(!props.size)
+                clockObservers.delete(f);
+        }
+    }
+
+}) as Clock;
+
+const notifyClockObservers = (effect: DripEffect<any>) => (reservations: Reservation[]) : Error[] => {
+    const propEffects = effect.effects;
+    reservations.forEach((r) => {
+        r.effect.effects.forEach((v,p) => {
+            if(!propEffects.has(p))
+                propEffects.set(p,v);
+        });
+    });
+
+    const errors: Error[] = [];
+    clockObservers.forEach((props,f) => {
+        const m = new Map(propEffects.entries().filter(([p])=>props.has(p)));
+        if(m.size) {
+            try {
+                f(Object.assign({}, effect, {
+                    effects: m,
+                    unbind: clock.unobserve(f)
+                }));
+            } catch(err) {
+                errors.push(err);
+            }
+        }
+    });
+    return errors;
+}
 
 export const time = { tick, clock };
 
@@ -102,6 +163,7 @@ function prepare(
 // ─── execute: 実行開始 ───
 function execute(preparedFx: PreparedFx): ExecutionHandle {
   const { rootNode, execContext, appContext } = preparedFx;
+  console.log('[fx] execute: starting', { rootNode, executionId: execContext.executionId });  
   
   // ExecutionContext 生成ヘルパー
   const createExecutionContext = (node: FxNode, parentId: string): ExecutionContext => {
@@ -123,7 +185,7 @@ function execute(preparedFx: PreparedFx): ExecutionHandle {
     };
   };
   
-  // ノードの実行（generator を駆動）
+    // ノードの実行（generator を駆動）
   const executeNode = async function*(
     ctx: ExecutionContext
   ): AsyncGenerator<ExecutionStep, any, any> {
@@ -137,13 +199,18 @@ function execute(preparedFx: PreparedFx): ExecutionHandle {
       });
     }
     
+    console.log('[fx] executeNode: start', ctx.node.type, ctx.executionId);
+    
     // ノード定義の execute を呼ぶ
     const generator = definition.execute(ctx as any);
     
     try {
       for await (const step of generator) {
+        console.log('[fx] executeNode: yielding step', ctx.node.type, step.phase);
+        
         // キャンセルチェック
         if (ctx.cancelToken.cancelled()) {
+          console.log('[fx] executeNode: cancelled');
           throw new Error('Execution cancelled');
         }
         
@@ -164,7 +231,7 @@ function execute(preparedFx: PreparedFx): ExecutionHandle {
           ctx.onStep(step);
         }
         
-        // 外側に yield（親ノードやデバッガが観測可能）
+        // 外側に yield
         yield step;
         
         // デバッガに通知
@@ -173,46 +240,26 @@ function execute(preparedFx: PreparedFx): ExecutionHandle {
         }
       }
     } catch (error) {
-      // エラーハンドリング
-      let catcher = ctx.node.catcher;
-      
-      if (catcher && typeof catcher !== "function") {
-        catcher = ctx.resolve(catcher);
-      }
-      
-      if (typeof catcher === "function") {
-        try {
-          const maybeResolved = await (catcher.length === 0 ? (catcher as ()=>any)() : catcher);
-          
-          if (typeof maybeResolved === "function") {
-            console.warn(`[fx] Action failed, but was handled by catcher.`);
-            return await maybeResolved(error);
-          } else {
-            console.warn(`[fx] Action failed, recovered with provided value.`);
-            return maybeResolved;
-          }
-        } catch (handlerErr) {
-          console.error(`[fx] Error while invoking catcher:`, handlerErr);
-          throw handlerErr;
-        }
-      } else {
-        throw error;
-      }
+      console.error('[fx] executeNode: error', ctx.node.type, error);
+      throw error;
     }
     
-    // generator の return 値を返す
-    const finalResult = await generator.next();
-    return finalResult.value;
+    console.log('[fx] executeNode: complete', ctx.node.type);
   };
-  
+
   // ルートノードの実行を開始
   const rootCtx = createExecutionContext(rootNode, execContext.executionId || 'root');
   const rootGenerator = executeNode(rootCtx);
-  
+
+  console.log('[fx] execute: root generator created');  
   // 非同期で実行を進める
   const done = (async () => {
+    console.log('[fx] execute: starting iteration');  
     let lastStep;
+    let stepCount = 0;
     for await (const step of rootGenerator) {
+
+      console.log(`[fx] execute: step ${stepCount}`, step.phase, step.visual?.label);
       lastStep = step;
     }
     
@@ -225,7 +272,10 @@ function execute(preparedFx: PreparedFx): ExecutionHandle {
   })();
   
   return {
-    cancel: () => execContext.cancelToken.cancel(),
+    cancel: () => {
+      console.log('[fx] execute: cancelled');
+      execContext.cancelToken.cancel()
+    },
     done
   };
 }

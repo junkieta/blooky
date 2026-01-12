@@ -5,9 +5,10 @@
  */
 import type { V_DATASET, V_STYLE, V_CLASSLIST, V_EVENTLISTENER, V_STRING, WritableCSSProperty, JSHTMLElementSource, JSHTMLAttrSource, JSHTMLNodeSource, JSHTMLAttributeMapSource, JSHTMLAttrRuntime, JSHTMLNodeRuntime, JSHTMLNodeSourceType, JSHTMLExtractedElementSource, JSHTMLNodeFactory, JSHTMLNodeSourceAnalyzer, BlookyMutationEvent, JSHTMLAttrAnalyzer, JSHTMLAttrBuilder } from "./blooky-fv-types";
 import { isDripper, drip, isChainedProp, blooky, stream } from "./blooky-fp";
-import { clock, tick } from "./blooky-ft";
+import { time } from "./blooky-fx";
 import { Prop, Dripper, Stream, BlookyError, ClockEffect } from "./blooky-types";
 
+const { tick, clock } = time;
 
 /**
  * PropとDOM要素（ノード、属性、スタイルなど）間の双方向バインディングを管理するインターフェース。
