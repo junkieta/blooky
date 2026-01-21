@@ -360,7 +360,7 @@ function execute(preparedFx: PreparedFx): ExecutionHandle {
       lastStep = step;
     }
     
-    console.log('[fx] execute: completed', { stepCount, lastStep, appContext: appContext });
+    console.log('[fx] execute: completed', { stepCount, lastStep, appContext: Object.keys(appContext) });
     
     if (rootNode.id && lastStep?.data?.result !== undefined) {
       console.log('[fx] executeNode: saving result to appContext', { key: rootNode.id, finalValue: lastStep.data.result });
