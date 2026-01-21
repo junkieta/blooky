@@ -31,7 +31,11 @@ export class SwitchNodeDefinition extends NodeDefinition<'switch'> {
       node,
       data: { by, hasCase: node.cases.has(by) },
       visual: { 
-        label: typeof by === 'string' ? `Switch: "${by}"` : `Switch: ${Symbol.keyFor(by as symbol)}`,
+        label: typeof by === 'string'
+          ? `Switch: "${by}"`
+          : typeof by === 'symbol'
+          ? `Switch: ${Symbol.keyFor(by as symbol)}`
+          : 'Switch: by is ' + typeof by,
         color: '#F59E0B'
       }
     };

@@ -31,11 +31,20 @@ export type FxRef<T> =
 // ─── AppContext: アプリケーションコンテキスト ───
 export type AppContext = Record<string | symbol, any>;
 
+
+export type CancelReason = 
+  | 'user'      // ユーザーによる手動キャンセル
+  | 'return'    // fx-return による正常終了
+  | 'timeout'   // タイムアウト
+  | 'error';    // エラーによる中断
+
 // ─── CancelToken ───
+
 export type CancelToken = {
   parent?: CancelToken;
-  cancel: () => void;
+  cancel: (reason?: CancelReason) => void;
   cancelled: () => boolean;
+  reason?: CancelReason; // 🆕 キャンセルの理由
 };
 
 // ─── ExecutionContext: ノード実行時のコンテキスト ───

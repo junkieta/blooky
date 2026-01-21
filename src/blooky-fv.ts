@@ -127,57 +127,33 @@ class RangePropBridge implements PropBridgeInterface<JSHTMLNodeSource> {
      * @param v - 新しいノードソース
      * @param prev - 古いノードソース
      */
-    update(v:JSHTMLNodeSource, prev: JSHTMLNodeSource){
-        // ガード: アンカーが DOM に未接続ならスキップ（安全性確保）
-        if (!this.isConnected()) {
-            // 必要ならここでブリッジを解除するか、次回再初期化のためのフラグを立てる
-            // console.debug("RangePropBridge.update: target not connected, skipping update", this.target);
-            return false;
-        }
-
-        // 生成したノードを境界のアンカー用ペアとして変数に保存
+     update(v:JSHTMLNodeSource, prev: JSHTMLNodeSource){
+        // 通知イベント用に確保
+        const previous : Node[] = this.target;
         const n = jshtml(v);
-
-        // ownerDocument が異なる場合は importNode して同一ドキュメントに揃える
-        const ownerDoc = this.target[0].ownerDocument || document;
-        let nodeToInsert: Node = n;
-        if ((n as Node).ownerDocument !== ownerDoc) {
-            nodeToInsert = ownerDoc.importNode(n as Node, true);
+        // 生成したノードを境界のアンカー用ペアとして変数に保存
+        let a: Node, b: Node;
+        if(n.nodeType !== Node.DOCUMENT_FRAGMENT_NODE)
+            a = b = n;
+        else if(!n.hasChildNodes())
+            a = b = n.appendChild(new Comment("[jshtml-placeholder]"));
+        else
+            a = n.firstChild!, b = n.lastChild!;
+        
+        if(this.isSingleNode()) {
+            previous[0].parentNode?.replaceChild(n, previous[0])
+        } else {
+            const r = this.toRange();
+            r.insertNode(n);
+            r.setStartAfter(b);
+            r.deleteContents();
+            r.detach();
         }
-
-        try {
-            let a: Node, b: Node;
-            if(nodeToInsert.nodeType !== Node.DOCUMENT_FRAGMENT_NODE)
-                a = b = nodeToInsert;
-            else if(!nodeToInsert.hasChildNodes())
-                a = b = nodeToInsert.appendChild(ownerDoc.createComment("[jshtml-placeholder]"));
-            else
-                a = nodeToInsert.firstChild!, b = nodeToInsert.lastChild!;
-
-            if(this.isSingleNode()) {
-                const parent = prev[0].parentNode;
-                if(parent) parent.replaceChild(nodeToInsert, prev[0]);
-                else {
-                    // 置換できない場合は安全に無視
-                    return false;
-                }
-            } else {
-                const r = this.toRange();
-                r.insertNode(nodeToInsert);
-                r.setStartAfter(b);
-                r.deleteContents();
-                // r.detach() は古い DOM API なので不要。もし残すなら try/catch 外して安全に。
-            }
-            this.target = [a,b];
-            const dispatcher = a === b ? a : a.parentNode!;
-            dispatcher.dispatchEvent(new CustomEvent("node-prop-update", { detail: { prop: this.prop, nextValue: this.target, prevValue: prev } }));
-            return true;
-        } catch (err) {
-            // DOMException 等はここでキャッチしてログ化し、例外を上げない
-            console.error("RangePropBridge.update failed:", err, { prop: this.prop, target: this.target });
-            // 必要なら blooky 内のエラーストリームへ流すが、notifyClockObservers の errors に入るのは避ける
-            return false;
-        }
+        this.target = [a,b];
+        
+        const dispather = a === b ? a : a.parentNode!;
+        dispather.dispatchEvent(new CustomEvent("node-prop-update", { detail: { prop: this.prop, nextValue: this.target, prevValue: previous } }));
+        return true;
     }
     /**
      * バインドされている全てのアンカーノードがDOMに接続されているか。
@@ -313,6 +289,16 @@ class DatasetPropBridge extends AbstractAttrPropBridge<V_STRING> {
         this.dispatchPropUpdateEvent("dataset-prop-update",v,prev);
     }
 }
+
+document.addEventListener("blooky-collapse-start", (e:CustomEvent<any>) => {
+    console.log(e.type, e.target, e.detail);
+})
+document.addEventListener("blooky-collapse-completed", (e:CustomEvent<any>) => {
+    console.log(e.type, e.target, e.detail);
+})
+document.addEventListener("blooky-collapse-failed", (e:CustomEvent<any>) => {
+    console.log(e.type, e.target, e.detail);
+})
 
 /**
  * `Dripper`を通常のDOMイベントリスナーに変換する。

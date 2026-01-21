@@ -43,14 +43,25 @@ export class SequenceNodeDefinition extends NodeDefinition<'sequence'> {
         }
       };
       
-      // 子ノードの実行を委譲（子の各 yield も外に伝播）
+      // 子ノードの実行を委譲
       const childGen = executeChild(step);
       let childResult;
+      
+      // 🆕 generator の最終的な return 値を取得
       for await (const childStep of childGen) {
-        // 子の step を外に yield（デバッガが観測可能）
         yield childStep;
-        childResult = childStep;
       }
+      
+      // 🆕 generator が完了した後、.next() で return 値を取得
+      const finalResult = await childGen.next();
+      childResult = finalResult.value;
+      
+      console.log('[sequence] Child completed', { 
+        childIndex: i, 
+        childId: step.id, 
+        childResult 
+      });
+      
       results.push(childResult);
     }
     
@@ -66,5 +77,6 @@ export class SequenceNodeDefinition extends NodeDefinition<'sequence'> {
     };
     
     return results;
+
   }
 }

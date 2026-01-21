@@ -21,37 +21,14 @@ export class YieldNodeDefinition extends NodeDefinition<'yield'> {
       node,
       visual: { label: 'Preparing yield', color: '#3B82F6' }
     };
-    
-    // 🔥 修正：context から FxContextNode を取得
-    let targetNode: FxContextNode;
-    
-    if (isFxRef(node.for)) {
-      // ref の場合、appContext から取得
-      const key = (node.for as FxRef<any>).key;
-      console.log('[yield] Resolving context from appContext', { key, appContext });
-      
-      targetNode = appContext[key];
-      
-      if (!targetNode) {
-        throw blooky.error("flow", {
-          code: "CONTEXT_NOT_FOUND",
-          message: `fx-yield: Context "${key}" not found in appContext`,
-          nodeType: "yield",
-          currentContext: Object.keys(appContext).join(', '),
-          requiredContext: key,
-          suggestions: ['Ensure fx-context with matching id is defined before fx-yield']
-        });
-      }
-    } else {
-      targetNode = context.resolve(node.for)();
-    }
-    
-    console.log('[yield] Target node resolved', { targetNode });
-    
-    if (targetNode.type !== 'context') {
+
+    const targetNode = context.resolve(node.for)();
+    if (!targetNode || targetNode.type !== 'context') {
       throw blooky.error("flow", {
         code: "NOT_FOUND_YIELD_TARGET",
-        message: `fx-yield: The target must be a 'context' node, got "${targetNode?.type}"`,
+        message: targetNode
+          ? `fx-yield: The target FxNode must be a 'context' node.`
+          : `fx-yield: The target FxNode is not found.`,
         nodeType: "yield",
         currentContext: JSON.stringify(appContext),
         requiredContext: isFxRef(node.for) ? (node.for as FxRef<any>).key : String(node.for)
@@ -63,7 +40,7 @@ export class YieldNodeDefinition extends NodeDefinition<'yield'> {
       node,
       data: { target: targetNode.id },
       visual: { 
-        label: `Yielding to context "${targetNode.id}"`,
+        label: 'Yielding to context',
         color: '#F59E0B',
         icon: '⤴️'
       }
@@ -71,8 +48,6 @@ export class YieldNodeDefinition extends NodeDefinition<'yield'> {
     
     const childNodeToRun = targetNode.child;
     const yieldedValue = node.value ? context.resolve(node.value)() : undefined;
-    
-    console.log('[yield] Executing context child', { childNodeToRun, yieldedValue });
     
     const result = await new Promise(async (resolve) => {
       appContext.$_ = yieldedValue;
@@ -82,6 +57,7 @@ export class YieldNodeDefinition extends NodeDefinition<'yield'> {
     }).then((value) => {
       appContext.$_ = Symbol.for("NotResolved");
       appContext[RETURN_VALUE] = Symbol.for("NotResolved");
+      appContext["#"+node.id!] = value;
       return value;
     });
     

@@ -14,8 +14,10 @@ export class ReturnNodeDefinition extends NodeDefinition<'return'> {
     return { type: 'return', value };
   }
 
+// src/fx/nodes/return.ts
+
   public async *execute(context: ExecutionContext & { node: ThisNode }): AsyncGenerator<ExecutionStep, any> {
-    const { appContext, node } = context;
+    const { node, appContext } = context;
     yield {
       phase: 'prepare',
       node,
@@ -45,7 +47,7 @@ export class ReturnNodeDefinition extends NodeDefinition<'return'> {
     };
     
     appContext[RETURN_VALUE](value);
-    context.cancelToken.cancel();
+    context.cancelToken.cancel('return'); // 🆕 理由を指定
     
     yield {
       phase: 'completed',

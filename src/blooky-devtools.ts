@@ -9,7 +9,7 @@ const debugCtrl = new DebugController();
 
 const FxNodeMap = new WeakMap<FxNode, EffectElement>();
 const FxElementStates = new WeakMap<EffectElement, CustomStateSet>();
-  const getFxElement = (n: FxNode) : EffectElement | undefined => FxNodeMap.get(n);
+const getFxElement = (n: FxNode) : EffectElement | undefined => FxNodeMap.get(n);
 
 // fx要素の可視化用スタイルシート
 const devtoolsCSSPath = ["./blooky-devtools-nested.css","./blooky-devtools-theme.css"];
