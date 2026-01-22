@@ -86,3 +86,34 @@
   content: "completed";
   background-color: var(--fx-completed-border-color, #28a745);
 }
+
+/* phase ごとの色分け */
+:host(:state(prepare)) {
+  border-left: 3px solid #3B82F6;
+}
+
+:host(:state(executing)),
+:host(:state(running)) {
+  border-left: 3px solid #F59E0B;
+  animation: pulse 2s infinite;
+}
+
+:host(:state(completed)) {
+  border-left: 3px solid #10B981;
+}
+
+:host(:state(waiting)),
+:host(:state(waiting-condition)) {
+  border-left: 3px solid #6B7280;
+  animation: blink 1s infinite;
+}
+
+/* カスタムカラー */
+fx-effect[data-phase] {
+  border-left-color: var(--phase-color, inherit);
+}
+
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0.5; }
+}

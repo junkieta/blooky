@@ -26,7 +26,7 @@ const DevEffectElementStyleSheets = Promise.all(devtoolsCSSPath.map(async(path)=
 // 🆕 Global DebugController
 const globalDebugController = new DebugController();
 
-// 🆕 debugMiddleware の更新（ExecutionStep ベース）
+// 🆕 ExecutionStep ベースの debugMiddleware
 const debugMiddleware: FxMiddleware = async ({ step, node, executionId }, next) => {
   const element = getFxElement(node);
   
@@ -69,6 +69,7 @@ const ExecContextForDebug: Partial<ExecContext> = {
 };
 
 export { globalDebugController as DebugController };
+
 // EffectElementを全て動的にデバッグ用途にextendsさせる
 const EffectElementTagNameMap = Object.fromEntries(new Map(Object.entries(DefaultEffectElementTagNameMap)));
 Object.entries(EffectElementTagNameMap).forEach(([tag,fxClass])=>{
@@ -85,35 +86,41 @@ Object.entries(EffectElementTagNameMap).forEach(([tag,fxClass])=>{
 
     connectedCallback() {
       super.connectedCallback?.();
-      // Shadow DOMがまだなければ、ここで生成する
       const shadow = this.shadowRoot || this.attachShadow({ mode: 'open' });
-      DevEffectElementStyleSheets.then((sheets)=>shadow.adoptedStyleSheets.push(...sheets));
+      
+      DevEffectElementStyleSheets.then((sheets) =>
+        shadow.adoptedStyleSheets.push(...sheets)
+      );
+      
+      // タグ名表示の追加
       const tag = { var: this.tagName.toLowerCase(), $: { class: "tag" } };
       shadow.insertBefore(
         jshtml({
           code: this.hasAttributes()
             ? [
-              tag,
-              Array.from(this.attributes).map(({name,value})=>[
-                { code: "[" },
-                { var: name, $: { class: "name" } },
-                { code: '="' },
-                { var: value, $: { class: "value" } },
-                { code: '"]' }
-              ]),
-            ]
+                tag,
+                Array.from(this.attributes).map(({ name, value }) => [
+                  { code: "[" },
+                  { var: name, $: { class: "name" } },
+                  { code: '="' },
+                  { var: value, $: { class: "value" } },
+                  { code: '"]' }
+                ]),
+              ]
             : tag,
           $: { class: "selector" }
         }),
         shadow.firstChild
       );
-      if(!shadow.querySelector("slot"))
+      
+      if (!shadow.querySelector("slot"))
         shadow.append(document.createElement("slot"));
     }
-    toFxNode() : FxNode {
-        const result = super.toFxNode() as FxNode;
-        FxNodeMap.set(result, this);
-        return result;
+
+    toFxNode(): FxNode {
+      const result = super.toFxNode() as FxNode;
+      FxNodeMap.set(result, this);
+      return result;
     }
   };
 });
@@ -148,129 +155,136 @@ EffectElementTagNameMap["fx-collapse"] = class extends (EffectElementTagNameMap[
   }
 }
 
-// effectはルートでテーマ変数をstyleに追加
-EffectElementTagNameMap["fx-effect"] = class extends (EffectElementTagNameMap["fx-effect"] as typeof ConcreteEffectElementConstructor) {
-  
+// effectはルートでテーマ変数とデバッグコントローラを設定
+EffectElementTagNameMap["fx-effect"] = class extends (
+  EffectElementTagNameMap["fx-effect"] as typeof ConcreteEffectElementConstructor
+) {
   static observedAttributes = ["theme"];
 
-  private themeCSS? : CSSStyleSheet;
-  protected _execContext?: Partial<ExecContext> | undefined = ExecContextForDebug
+  private themeCSS?: CSSStyleSheet;
+  protected _execContext?: Partial<ExecContext> | undefined = ExecContextForDebug;
 
   loadTheme(src: string) {
-    if(!src || !this.shadowRoot) return;
-    if(!this.themeCSS) {
+    if (!src || !this.shadowRoot) return;
+    if (!this.themeCSS) {
       this.themeCSS = new CSSStyleSheet();
       this.shadowRoot!.adoptedStyleSheets.push(this.themeCSS);
     }
-    fetch(src).then((res)=>res.text()).then((text)=>this.themeCSS!.replace(text));
+    fetch(src)
+      .then((res) => res.text())
+      .then((text) => this.themeCSS!.replace(text));
   }
 
   attributeChangedCallback(name: string, oldValue: string, newValue: string) {
-    if(name === "theme" && oldValue !== newValue)
-      this.loadTheme(newValue);
+    if (name === "theme" && oldValue !== newValue) this.loadTheme(newValue);
   }
 
   connectedCallback(): void {
     super.connectedCallback();
-    if(this.hasAttribute("theme")) this.loadTheme(this.getAttribute("theme")!);
-  }  
-
-}
+    if (this.hasAttribute("theme")) this.loadTheme(this.getAttribute("theme")!);
+  }
+};
 
 // 呼び出し元で fxdom.defineEffectElements(EffectElmentTagNameMap) すること。
 export {fxdom,EffectElementTagNameMap,debugMiddleware};
 
 
 
-// function to attach debugController to every fx-effect element in the page and expose controls
 function attachDevtoolsToEffects() {
+  const hasEffectClosest = (n: Node) => {
+    if (n.nodeType !== 1) return n.parentElement ? hasEffectClosest(n.parentElement) : false;
+    return (n as Element).closest("fx-effect") !== null || 
+           (n as Element).querySelector("fx-effect") !== null;
+  };
 
-    const hasEffectClosest = (n: Node) => {
-        if(n.nodeType !== 1) return n.parentElement ? hasEffectClosest(n.parentElement) : false;
-        return (n as Element).closest("fx-effect") !== null || (n as Element).querySelector("fx-effect") !== null;
-    };
+  const effectMutations = filter((evt: BlookyMutationEvent) =>
+    evt.detail.records.some((record) =>
+      Array.from(record.addedNodes).some(hasEffectClosest) ||
+      Array.from(record.removedNodes).some(hasEffectClosest)
+    )
+  )(mutations({ childList: true, subtree: true })(document.body));
 
-    const effectMutations = filter((evt: BlookyMutationEvent)=>
-        evt.detail.records.some((record)=> Array.from(record.addedNodes).some(hasEffectClosest) || Array.from(record.removedNodes).some(hasEffectClosest))
-    )(mutations({ childList: true, subtree: true })(document.body));
+  const $effectElements = hold([])(
+    map((evt: BlookyMutationEvent) => {
+      const effects = (evt.currentTarget as HTMLElement).getElementsByTagName('fx-effect');
+      return Array.from(effects).map((el, idx) => {
+        const fxEl = el as any;
 
-    const $effectElements = hold([])(
-        map((evt:BlookyMutationEvent)=>{
-            const effects = (evt.currentTarget as HTMLElement).getElementsByTagName('fx-effect');
-            return Array.from(effects).map((el, idx)=>{
-                const fxEl = el as any;
-
-                try {
-                    const prepared = fxEl._preparedFx || fxEl.prepare();
-                    const execId = prepared.execContext.executionId;
-                    return {
-                        div: [
-                            { div: [
-                                `fx-effect #${idx} `,
-                                { code: execId, $: { style: { color: '#9AE6B4' } } }
-                                ],
-                                $: {
-                                    id: `blooky-debug-fx-effect-${idx}`,
-                                    style: { fontSize: '12px' }
-                                }
-                            },
-                            { div: [
-                                { button: "Pause", $: { type: "button", dataset: { exec: execId, action: "pause" } } },
-                                { button: "Resume", $: { type: "button", dataset: { exec: execId, action: "resume" } } },
-                                { button: "Step Into", $: { type: "button", dataset: { exec: execId, action: "step-into" } } },
-                                { button: "Step Over", $: { type: "button", dataset: { exec: execId, action: "step-over" } } }
-                                ],
-                                $: { 
-                                    id: `blooky-debug-fx-effect-${idx}-controls`,
-                                    style: { marginTop: '4px' },
-                                    onclick: clickToDebugAction
-                                }
-                            }
-                        ],
-                        $: {
-                            style: { marginTop: '6px' }
-                        }
-                    };
-                } catch(e) {
-                // prepare may fail if context missing; ignore
+        try {
+          const prepared = fxEl._preparedFx || fxEl.prepare();
+          const execId = prepared.execContext.executionId;
+          
+          return {
+            div: [
+              {
+                div: [
+                  `fx-effect #${idx} `,
+                  { code: execId, $: { style: { color: '#9AE6B4' } } }
+                ],
+                $: {
+                  id: `blooky-debug-fx-effect-${idx}`,
+                  style: { fontSize: '12px' }
                 }
-            })
-        })(effectMutations)
-    );
-
-    const panel = prime(()=>({
-      div: [
-        { strong: "Blooky Debug" },
-        { div: $effectElements, $: { id: "blooky-debug-list" } }
-      ],
-      $: {
-        id: 'blooky-debug-panel',
-        style: {
-          position: 'fixed',
-          right: '12px',
-          bottom: '12px',
-          background: 'rgba(0,0,0,0.8)',
-          color: '#fff',
-          padding: '8px',
-          borderRadius: '6px',
-          zIndex: '99999'
+              },
+              {
+                div: [
+                  { button: "Pause", $: { type: "button", dataset: { exec: execId, action: "pause" } } },
+                  { button: "Resume", $: { type: "button", dataset: { exec: execId, action: "resume" } } },
+                  { button: "Step Into", $: { type: "button", dataset: { exec: execId, action: "step-into" } } },
+                  { button: "Step Over", $: { type: "button", dataset: { exec: execId, action: "step-over" } } }
+                ],
+                $: {
+                  id: `blooky-debug-fx-effect-${idx}-controls`,
+                  style: { marginTop: '4px' },
+                  onclick: clickToDebugAction
+                }
+              }
+            ],
+            $: {
+              style: { marginTop: '6px' }
+            }
+          };
+        } catch (e) {
+          // prepare may fail if context missing; ignore
         }
+      });
+    })(effectMutations)
+  );
+
+  const panel = prime(() => ({
+    div: [
+      { strong: "Blooky Debug" },
+      { div: $effectElements, $: { id: "blooky-debug-list" } }
+    ],
+    $: {
+      id: 'blooky-debug-panel',
+      style: {
+        position: 'fixed',
+        right: '12px',
+        bottom: '12px',
+        background: 'rgba(0,0,0,0.8)',
+        color: '#fff',
+        padding: '8px',
+        borderRadius: '6px',
+        zIndex: '99999'
       }
-    }))(undefined) as HTMLElement;
-
-    function clickToDebugAction (ev: MouseEvent) {
-        const actionable = (ev.target as HTMLElement)?.closest('[data-action]') as HTMLElement | null;
-        if(!actionable) return;
-        const action = actionable.dataset.action!;
-        const actualExecId = actionable.dataset.exec!;
-
-        if(action === 'pause') debugCtrl.pauseExecution(actualExecId);
-        if(action === 'resume') debugCtrl.resumeExecution(actualExecId);
-        if(action === 'step-into') debugCtrl.stepExecution(actualExecId, 'into');
-        if(action === 'step-over') debugCtrl.stepExecution(actualExecId, 'over');
     }
-    return panel;
+  }))(undefined) as HTMLElement;
 
+  function clickToDebugAction(ev: MouseEvent) {
+    const actionable = (ev.target as HTMLElement)?.closest('[data-action]') as HTMLElement | null;
+    if (!actionable) return;
+    
+    const action = actionable.dataset.action!;
+    const actualExecId = actionable.dataset.exec!;
+
+    if (action === 'pause') globalDebugController.pauseExecution(actualExecId);
+    if (action === 'resume') globalDebugController.resumeExecution(actualExecId);
+    if (action === 'step-into') globalDebugController.stepExecution(actualExecId, 'into');
+    if (action === 'step-over') globalDebugController.stepExecution(actualExecId, 'over');
+  }
+  
+  return panel;
 }
 
 export const debugPanel = attachDevtoolsToEffects();

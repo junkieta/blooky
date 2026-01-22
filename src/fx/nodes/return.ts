@@ -47,7 +47,7 @@ export class ReturnNodeDefinition extends NodeDefinition<'return'> {
     };
     
     appContext[RETURN_VALUE](value);
-    context.cancelToken.cancel('return'); // 🆕 理由を指定
+    context.cancelToken.cancel('return'); //  理由を指定
     
     yield {
       phase: 'completed',

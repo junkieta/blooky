@@ -7,7 +7,7 @@ import {
   ref,
 } from "./blooky-fx";
 import { CollapseObservationType, Dripper } from "./blooky-types";
-import { FxNode, ExecContext, PreparedFx, ExecutionHandle, AppContext, FxRef } from "./fx/types";
+import { FxNode, ExecContext, PreparedFx, ExecutionHandle, AppContext, FxRef, ExecutionStep } from "./fx/types";
 
 // ---- 抽象基底クラス ----
 
@@ -567,48 +567,90 @@ class FxContextElement extends EffectElement {
  */
 
 class FxEffectElement extends FxContextElement {
-  static observedAttributes = ["theme", "ignite"];
 
-//  private themeCSS?: CSSStyleSheet;
+  static observedAttributes = ["theme", "ignite"];
+  
   protected _execContext?: Partial<ExecContext> | undefined;
   protected _preparedFx?: PreparedFx;
   protected _handle?: ExecutionHandle;
+  
+  // 🆕 ステップハンドラの追加
+  protected _stepHandlers: Set<(step: ExecutionStep) => void> = new Set();
 
   [JSHTML_ELEMENT_HANDLER](context?: AppContext) {
-    console.log('[fxdom] FxEffectElement: JSHTML_ELEMENT_HANDLER', context);
     if (context) this.setContext(context);
   }
 
+  // 🆕 ステップイベントのリスナー登録
+  addStepListener(handler: (step: ExecutionStep) => void) {
+    this._stepHandlers.add(handler);
+  }
+
+  removeStepListener(handler: (step: ExecutionStep) => void) {
+    this._stepHandlers.delete(handler);
+  }
+
   prepare(force = false) {
-    console.log('[fxdom] FxEffectElement: prepare', { force, hasContext: !!this.context });
-    
     if (!force && this._preparedFx) {
-      console.log('[fxdom] FxEffectElement: using cached prepared');
       return this._preparedFx;
     }
     
     const node = this.toFxNode();
-    console.log('[fxdom] FxEffectElement: toFxNode', node);
     
-    this._preparedFx = prepare(node, this.context, this._execContext);
-    console.log('[fxdom] FxEffectElement: prepared', this._preparedFx);
+    // 🆕 onStep コールバックを ExecContext に追加
+    const execContext: Partial<ExecContext> = {
+      ...this._execContext,
+      onStep: (step: ExecutionStep) => {
+        // カスタムイベントを発火
+        this.dispatchEvent(new CustomEvent('fx-step', {
+          detail: step,
+          bubbles: true
+        }));
+        
+        // 登録されたハンドラを呼び出し
+        this._stepHandlers.forEach(handler => handler(step));
+      }
+    };
     
+    this._preparedFx = prepare(node, this.context, execContext);
     return this._preparedFx;
   }
 
   execute() {
-    console.log('[fxdom] FxEffectElement: execute');
-    
     if (this._handle) {
-      console.log('[fxdom] FxEffectElement: cancelling previous handle');
       this._handle.cancel();
     }
     
     const prepared = this._preparedFx || this.prepare();
-    console.log('[fxdom] FxEffectElement: executing', prepared);
+    
+    // 🆕 実行開始イベント
+    this.dispatchEvent(new CustomEvent('fx-execution-start', {
+      detail: { executionId: prepared.execContext.executionId },
+      bubbles: true
+    }));
     
     this._handle = execute(prepared);
-    console.log('[fxdom] FxEffectElement: handle created', this._handle);
+    
+    // 🆕 実行完了時の処理
+    this._handle.done
+      .then((finalContext) => {
+        this.dispatchEvent(new CustomEvent('fx-execution-complete', {
+          detail: { 
+            executionId: prepared.execContext.executionId,
+            context: finalContext 
+          },
+          bubbles: true
+        }));
+      })
+      .catch((error) => {
+        this.dispatchEvent(new CustomEvent('fx-execution-error', {
+          detail: { 
+            executionId: prepared.execContext.executionId,
+            error 
+          },
+          bubbles: true
+        }));
+      });
     
     return this._handle;
   }

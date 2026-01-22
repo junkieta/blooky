@@ -1,7 +1,7 @@
 // src/demo.ts
 import { stream, accum, merge, hold, map, remap, when, pipe, PromisedProp } from "./blooky-fp";
 import { jshtml, prime } from "./blooky-fv";
-import { fxdom, EffectElementTagNameMap, dumpGraphDOT } from "./blooky-devtools";
+import { fxdom, EffectElementTagNameMap, dumpGraphDOT, debugPanel } from "./blooky-devtools";
 import { instance as viz_instance } from "@viz-js/viz";
 import { JSHTMLNodeSource } from "./blooky-fv-types";
 import { DripperStream, Prop } from "./blooky-types";
@@ -138,6 +138,8 @@ const renderDot = async (dot: string) => {
 
 // --- 5. マウント ---
 document.body.append(
+  debugPanel,
+  new Text("aaa"),
   AppUIRenderer(context),
   EffectRenderer(context),
   jshtml([renderDot(dot), { pre: dot }])

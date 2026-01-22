@@ -243,7 +243,7 @@ function execute(preparedFx: PreparedFx): ExecutionHandle {
           const reason = ctx.cancelToken.reason;
           console.log('[fx] executeNode: cancelled', { reason, nodeType: ctx.node.type });
           
-          // 🆕 fx-return によるキャンセルは正常終了として扱う
+          // fx-return によるキャンセルは正常終了として扱う
           if (reason === 'return') {
             console.log('[fx] executeNode: normal completion via fx-return');
             return; // エラーを throw しない
@@ -292,7 +292,7 @@ function execute(preparedFx: PreparedFx): ExecutionHandle {
         cancelReason: ctx.cancelToken.reason
       });
       
-      // 🆕 キャンセルエラーで、理由が 'return' なら再throw しない
+      // キャンセルエラーで、理由が 'return' なら再throw しない
       if (error?.message?.includes('Execution cancelled') && ctx.cancelToken.reason === 'return') {
         console.log('[fx] executeNode: suppressing cancel error (return)');
         return; // 正常終了

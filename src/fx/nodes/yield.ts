@@ -57,7 +57,8 @@ export class YieldNodeDefinition extends NodeDefinition<'yield'> {
     }).then((value) => {
       appContext.$_ = Symbol.for("NotResolved");
       appContext[RETURN_VALUE] = Symbol.for("NotResolved");
-      appContext["#"+node.id!] = value;
+      if(node.id)
+        appContext["#"+node.id] = value;
       return value;
     });
     

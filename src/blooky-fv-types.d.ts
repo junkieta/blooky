@@ -2,6 +2,7 @@
 
 import type { EmptyElementAttributeMapSource } from "./blooky-fv"; // この行を追加
 import { Prop, DripperStream, DripEffect, BlookyError } from "./blooky-types";
+import { AppContext, ExecutionStep } from "./fx/types";
 
 // --- HTML属性名一覧
 export type HTMLAttrName =
@@ -201,3 +202,9 @@ export type JSHTMLEffectElementSource = {
   [K in FxTag]?: JSHTMLEffectElementSource | JSHTMLAttributeMapSource | JSHTMLNodeSource | null;
 } & { $?: JSHTMLAttributeMapSource };
 
+export type FxExecutionEventMap = {
+  "fx-step": CustomEvent<ExecutionStep>
+  "fx-execution-start": CustomEvent<{ executionId: string }>
+  "fx-execution-complete": CustomEvent<{ executionId: string, context: AppContext }>
+  "fx-execution-error": CustomEvent<{ executionId: string, error: Error }>
+}
