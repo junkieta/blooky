@@ -139,7 +139,6 @@ const renderDot = async (dot: string) => {
 // --- 5. マウント ---
 document.body.append(
   debugPanel,
-  new Text("aaa"),
   AppUIRenderer(context),
   EffectRenderer(context),
   jshtml([renderDot(dot), { pre: dot }])

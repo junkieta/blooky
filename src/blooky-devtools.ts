@@ -2,10 +2,7 @@ import { jshtml, mutations, prime } from "./blooky-fv";
 import { filter, hold, isChainedProp, isDripperStream, isStream, isVertex, map, vertex } from "./blooky-fp";
 import { EffectElementTagNameMap as DefaultEffectElementTagNameMap, EffectElement, FxEffectElement as ConcreteEffectElementConstructor, fxdom } from "./blooky-fxdom";
 import { FxNode, FxMiddleware, ExecContext } from "./fx/types";
-import DebugController from "./fx/debugger"; // 追加
-
-// create a global debug controller
-const debugCtrl = new DebugController();
+import { DebugController } from "./fx/debugger";
 
 const FxNodeMap = new WeakMap<FxNode, EffectElement>();
 const FxElementStates = new WeakMap<EffectElement, CustomStateSet>();
@@ -21,16 +18,21 @@ const DevEffectElementStyleSheets = Promise.all(devtoolsCSSPath.map(async(path)=
   return sheet;
 }));
 
-
-
-// 🆕 Global DebugController
+// Global DebugController
 const globalDebugController = new DebugController();
 
-// 🆕 ExecutionStep ベースの debugMiddleware
+// ExecutionStep ベースの debugMiddleware
 const debugMiddleware: FxMiddleware = async ({ step, node, executionId }, next) => {
   const element = getFxElement(node);
-  
+
   if (element) {
+    console.log('[debugMiddleware]', {
+      phase: step.phase,
+      element: element.tagName,
+      executionId,
+      hasStates: FxElementStates.has(element)
+    });
+    
     // DOM に状態を反映
     element.setAttribute('data-phase', step.phase);
     element.setAttribute('data-execution-id', executionId);
@@ -42,21 +44,32 @@ const debugMiddleware: FxMiddleware = async ({ step, node, executionId }, next) 
     // CustomStateSet に反映
     const states = FxElementStates.get(element);
     if (states) {
+      console.log('[debugMiddleware] Adding state:', step.phase, 'to', element.tagName);
       states.add(step.phase);
+      
+      // 確認用ログ
+      console.log('[debugMiddleware] Current states:', Array.from(states));
       
       // 色の反映
       if (step.visual?.color) {
         element.style.setProperty('--phase-color', step.visual.color);
       }
+    } else {
+      console.warn('[debugMiddleware] No CustomStateSet found for', element.tagName);
     }
   }
   
+  // ステップ実行前に DebugController を通す
+  await globalDebugController.beforeStep(node, step, executionId);
   await next();
-  
+  // ステップ実行後の処理
+  globalDebugController.afterStep(node, step, executionId);
+    
   // cleanup
   if (element) {
     const states = FxElementStates.get(element);
     if (states) {
+      console.log('[debugMiddleware] Removing state:', step.phase);
       states.delete(step.phase);
     }
   }
@@ -73,32 +86,39 @@ export { globalDebugController as DebugController };
 // EffectElementを全て動的にデバッグ用途にextendsさせる
 const EffectElementTagNameMap = Object.fromEntries(new Map(Object.entries(DefaultEffectElementTagNameMap)));
 Object.entries(EffectElementTagNameMap).forEach(([tag,fxClass])=>{
-  // fxClassはコンストラクタの共用型なので、`extends`句のエラーを回避するために
-  // 具体的なクラス型にキャストする。これにより、super.toFxNode()の呼び出しが
-  // 型安全に解決され、かつ基底クラスのabstract制約も維持される。    
   EffectElementTagNameMap[tag] = class extends (fxClass as typeof ConcreteEffectElementConstructor) {
 
     // CustomStateSetを利用する
     constructor() {
       super();
-      FxElementStates.set(this, this.attachInternals().states);
+      const internals = this.attachInternals();
+      FxElementStates.set(this, internals.states);
+      
+      // デバッグ用：CustomStateSetが正しく設定されたか確認
+      console.log('[EffectElement constructor]', tag, 'CustomStateSet attached');
     }
 
     connectedCallback() {
       super.connectedCallback?.();
       const shadow = this.shadowRoot || this.attachShadow({ mode: 'open' });
       
-      DevEffectElementStyleSheets.then((sheets) =>
-        shadow.adoptedStyleSheets.push(...sheets)
-      );
+      DevEffectElementStyleSheets.then((sheets) => {
+        shadow.adoptedStyleSheets.push(...sheets);
+        console.log('[EffectElement]', tag, 'StyleSheets loaded, count:', sheets.length);
+        
+        // CSSの内容を確認（デバッグ用）
+        sheets.forEach((sheet, i) => {
+          console.log(`[StyleSheet ${i}] rules:`, sheet.cssRules.length);
+        });
+      });
       
       // タグ名表示の追加
-      const tag = { var: this.tagName.toLowerCase(), $: { class: "tag" } };
+      const tagLabel = { var: this.tagName.toLowerCase(), $: { class: "tag" } };
       shadow.insertBefore(
         jshtml({
           code: this.hasAttributes()
             ? [
-                tag,
+                tagLabel,
                 Array.from(this.attributes).map(({ name, value }) => [
                   { code: "[" },
                   { var: name, $: { class: "name" } },
@@ -107,7 +127,7 @@ Object.entries(EffectElementTagNameMap).forEach(([tag,fxClass])=>{
                   { code: '"]' }
                 ]),
               ]
-            : tag,
+            : tagLabel,
           $: { class: "selector" }
         }),
         shadow.firstChild
@@ -120,6 +140,7 @@ Object.entries(EffectElementTagNameMap).forEach(([tag,fxClass])=>{
     toFxNode(): FxNode {
       const result = super.toFxNode() as FxNode;
       FxNodeMap.set(result, this);
+      console.log('[toFxNode]', this.tagName, '→ FxNode mapped');
       return result;
     }
   };
@@ -146,10 +167,11 @@ EffectElementTagNameMap["fx-collapse"] = class extends (EffectElementTagNameMap[
     this.addEventListener("changestate", (e) => {
       const state = (e as CustomEvent<string>).detail;
       if(state !== "running") return;
-      const streamKey = (e.currentTarget as HTMLElement).getAttribute("dripper")!; if(!streamKey) return;
-      const nodeElement = document.getElementById(`node-${streamKey}`); if(!nodeElement) return;
+      const streamKey = (e.currentTarget as HTMLElement).getAttribute("dripper")!; 
+      if(!streamKey) return;
+      const nodeElement = document.getElementById(`node-${streamKey}`); 
+      if(!nodeElement) return;
       nodeElement.classList.add('is-emitting');
-      // アニメーションが終わったらclassを削除
       setTimeout(() => nodeElement.classList.remove('is-emitting'), 1500);
     });
   }
@@ -185,10 +207,7 @@ EffectElementTagNameMap["fx-effect"] = class extends (
   }
 };
 
-// 呼び出し元で fxdom.defineEffectElements(EffectElmentTagNameMap) すること。
 export {fxdom,EffectElementTagNameMap,debugMiddleware};
-
-
 
 function attachDevtoolsToEffects() {
   const hasEffectClosest = (n: Node) => {
@@ -299,7 +318,7 @@ function dumpGraphDOT(entries: Record<string, Stream<any> | Prop<any> | unknown>
   const vertex_map: [string, Vertex|Prop<any>|unknown][] = Object.entries(entries).map(([k,v])=> [k, isStream(v) ? vertex(v) : v]);
 
   const names = new WeakMap(vertex_map.map(([k,v])=>[Object(v),k]));
-  const visited = new WeakMap<any, string>(); // obj → nodeId
+  const visited = new WeakMap<any, string>();
   const edges: string[] = [];
   const nodes: string[] = [];
   let counter = 0;
@@ -377,12 +396,10 @@ function dumpGraphDOT(entries: Record<string, Stream<any> | Prop<any> | unknown>
     visit(streamOrProp as Vertex|Prop<any>, name);
   })
 
-
   const digraph_attrs = Object.entries(graphAttrs).map((v)=>v.join("=")).join(";\n");
   return `digraph BlookyGraph {\ngraph [\n${digraph_attrs}\n];\n${nodes.join("\n")}\n${edges.join("\n")}\n}`;
 }
 
-// dripと同様の処理を、全ての関連フローを記録してグラフ生成する
 const dripGraph = <A>(value: A) => (dripper: DripperStream<A>) : DripEffect<A> & { streams: Map<Stream<any>,any> } => {
     const lazy = new Map<Vertex,any[]>();
     const streams = new Map<Stream<any>, any>();
@@ -413,4 +430,3 @@ const dripGraph = <A>(value: A) => (dripper: DripperStream<A>) : DripEffect<A> &
 }
 
 export {dumpGraphDOT,dripGraph};
-

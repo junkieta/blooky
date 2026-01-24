@@ -19,6 +19,9 @@ export class DebugController extends EventTarget {
   private pendingResolvers = new Map<string, (() => void)[]>();
   private executionDepth = new Map<string, number>();
 
+  // 🔥 ステップモード管理
+  private stepMode = new Map<string, StepMode | null>();
+
   // ──── Node ID ────
   getNodeId(node: object) {
     let id = this.nodeIdMap.get(node);
@@ -55,54 +58,110 @@ export class DebugController extends EventTarget {
 
   // ──── Execution Control ────
   pauseExecution(executionId: string) {
+    console.log('[DebugController] pauseExecution called:', executionId);
     this.pausedExecutions.add(executionId);
+    this.stepMode.delete(executionId); // ステップモードをクリア
     this.dispatchEvent(new CustomEvent('paused', { detail: { executionId } }));
+    console.log('[DebugController] Paused executions:', Array.from(this.pausedExecutions));
   }
 
   resumeExecution(executionId: string) {
+    console.log('[DebugController] resumeExecution called:', executionId);
     this.pausedExecutions.delete(executionId);
+    this.stepMode.delete(executionId);
+    
     const resolvers = this.pendingResolvers.get(executionId) ?? [];
+    console.log('[DebugController] Resolving', resolvers.length, 'pending promises');
     this.pendingResolvers.delete(executionId);
+    
     for (const r of resolvers) r();
+    
     this.dispatchEvent(new CustomEvent('resumed', { detail: { executionId } }));
   }
 
   stepExecution(executionId: string, mode: StepMode = 'into') {
-    // 簡易実装：次のステップで再度一時停止
-    this.resumeExecution(executionId);
-    // 次の beforeStep で自動的に pause する
+    console.log('[DebugController] stepExecution called:', executionId, mode);
+    
+    // 修正: ステップモードを設定してから resume
+    this.stepMode.set(executionId, mode);
+    
+    // 現在のステップを解放
+    const resolvers = this.pendingResolvers.get(executionId) ?? [];
+    console.log('[DebugController] Stepping: resolving', resolvers.length, 'promises');
+    this.pendingResolvers.delete(executionId);
+    
+    for (const r of resolvers) r();
+    
+    // 次のステップで再度停止するためにpausedに追加
+    // ただし、すぐには停止せず、1ステップ実行してから停止
     this.pausedExecutions.add(executionId);
+    
+    this.dispatchEvent(new CustomEvent('step-requested', { detail: { executionId, mode } }));
   }
 
   // ──── Hooks (called by middleware) ────
   async beforeStep(node: FxNode, step: ExecutionStep, executionId: string) {
+
+    const rootExecutionId = executionId.slice(0, executionId.indexOf(":"));
+
+    console.log('[DebugController] beforeStep:', {
+      executionId: rootExecutionId,
+      phase: step.phase,
+      nodeType: node.type,
+      isPaused: this.pausedExecutions.has(rootExecutionId),
+      stepMode: this.stepMode.get(rootExecutionId)
+    });
+
     // depth 管理
     if (step.phase === 'init' || step.phase === 'prepare') {
-      const depth = this.executionDepth.get(executionId) ?? 0;
-      this.executionDepth.set(executionId, depth + 1);
+      const depth = this.executionDepth.get(rootExecutionId) ?? 0;
+      this.executionDepth.set(rootExecutionId, depth + 1);
     }
 
     // ブレークポイントチェック
     if (this.hasBreakpoint(node)) {
-      this.pauseExecution(executionId);
+      console.log('[DebugController] Breakpoint hit!');
+      this.pauseExecution(rootExecutionId);
     }
 
-    // paused なら待機
-    if (this.pausedExecutions.has(executionId)) {
+    // 🔥 ステップモードの処理
+    const currentStepMode = this.stepMode.get(rootExecutionId);
+    if (currentStepMode) {
+      console.log('[DebugController] Step mode active:', currentStepMode);
+      // ステップモードをクリア（1回だけ実行）
+      this.stepMode.delete(rootExecutionId);
+      // 次のステップで停止するためにpausedに追加
+      this.pausedExecutions.add(rootExecutionId);
+    }
+
+
+    // 🔥 paused なら待機
+    if (this.pausedExecutions.has(rootExecutionId)) {
+      console.log('[DebugController] Execution is paused, waiting...');
+      
       await new Promise<void>((resolve) => {
-        const arr = this.pendingResolvers.get(executionId) ?? [];
+        const arr = this.pendingResolvers.get(rootExecutionId) ?? [];
         arr.push(resolve);
-        this.pendingResolvers.set(executionId, arr);
+        this.pendingResolvers.set(rootExecutionId, arr);
+        console.log('[DebugController] Promise added, total pending:', arr.length);
       });
+      
+      console.log('[DebugController] Promise resolved, continuing execution');
     }
 
     // イベント発火
     this.dispatchEvent(new CustomEvent('step', {
-      detail: { node, step, executionId }
+      detail: { node, step, executionId: rootExecutionId }
     }));
   }
 
   afterStep(node: FxNode, step: ExecutionStep, executionId: string) {
+    console.log('[DebugController] afterStep:', {
+      executionId,
+      phase: step.phase,
+      nodeType: node.type
+    });
+
     // depth 管理
     if (step.phase === 'completed') {
       const depth = Math.max(0, (this.executionDepth.get(executionId) ?? 1) - 1);
@@ -118,6 +177,16 @@ export class DebugController extends EventTarget {
   // ──── Utilities ────
   isPaused(executionId: string): boolean {
     return this.pausedExecutions.has(executionId);
+  }
+
+  // 🔥 デバッグ用: 現在の状態を表示
+  getDebugState(executionId: string) {
+    return {
+      isPaused: this.isPaused(executionId),
+      pendingResolvers: this.pendingResolvers.get(executionId)?.length ?? 0,
+      stepMode: this.stepMode.get(executionId),
+      depth: this.executionDepth.get(executionId)
+    };
   }
 }
 

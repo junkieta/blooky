@@ -9,3 +9,91 @@
   --fx-paused-border-color: #9a760bff;
   --fx-canceled-border-color: #bbbbbbff;
 }
+/* blooky-devtools-theme.css */
+/* Shadow DOM内で使用するため :host を使用 */
+
+/* phase ごとの色分け - Shadow DOM用 */
+:host:state(prepare),
+:host:state(init) {
+  border-left-color: #3B82F6 !important;
+  background-color: rgba(59, 130, 246, 0.1);
+}
+
+:host:state(executing),
+:host:state(running) {
+  border-left-color: #F59E0B !important;
+  background-color: rgba(245, 158, 11, 0.1);
+  animation: pulse 2s infinite;
+}
+
+:host:state(completed) {
+  border-left-color: #10B981 !important;
+  background-color: rgba(16, 185, 129, 0.1);
+}
+
+:host:state(waiting),
+:host:state(waiting-condition) {
+  border-left-color: #6B7280 !important;
+  background-color: rgba(107, 114, 128, 0.1);
+  animation: blink 1s infinite;
+}
+
+:host:state(evaluating),
+:host:state(branching) {
+  border-left-color: #8B5CF6 !important;
+  background-color: rgba(139, 92, 246, 0.1);
+}
+
+:host:state(yielding),
+:host:state(returning) {
+  border-left-color: #EC4899 !important;
+  background-color: rgba(236, 72, 153, 0.1);
+}
+
+:host:state(collapsing) {
+  border-left-color: #14B8A6 !important;
+  background-color: rgba(20, 184, 166, 0.1);
+}
+
+/* カスタムカラー対応 */
+:host([data-phase]) {
+  border-left-color: var(--phase-color, inherit) !important;
+}
+
+/* アニメーション */
+@keyframes pulse {
+  0%, 100% { 
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% { 
+    opacity: 0.8;
+    transform: scale(0.98);
+  }
+}
+
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0.6; }
+}
+
+/* タグ表示のスタイル */
+.selector {
+  font-family: 'Courier New', monospace;
+  font-size: 0.85em;
+  color: #666;
+  margin-bottom: 0.25em;
+}
+
+.tag {
+  color: #0066cc;
+  font-weight: bold;
+}
+
+.name {
+  color: #cc0066;
+}
+
+.value {
+  color: #006600;
+}
