@@ -9,74 +9,7 @@ import { DripperStream, Prop } from "./blooky-types";
 // debuggerとしてdefine（自動的にデバッグパネルが表示される）
 fxdom.defineEffectElements(EffectElementTagNameMap);
 
-// --- 1. アプリケーションの状態定義 ---
-const increment$ = stream();
-const decrement$ = stream();
-const save$ = stream();
-const $triggerSave = hold(false)(map(() => true)(save$));
-
-const statusMessageStream$ = stream<string>();
-const changeCountStream = merge([map(() => 1)(increment$), map(() => -1)(decrement$)], ((a, b) => a + b));
-const $count = accum((current: number, val: number) => current + val, 0)(changeCountStream);
-const $statusMessage = hold('Ready.')(statusMessageStream$);
-const $finalMessage = remap<number, string>((v) => `Saved Count:${v}`)($count);
-const $colorOfCount = remap<number, string>((count) => count % 3 ? "blue" : "red")($count);
-
-// confirm dialog
-const confirmQuestionActivated$ = stream<string>();
-const confirmButtonClicked$ = stream<MouseEvent>();
-const $selectedConfirmAnswer = pipe(
-  confirmButtonClicked$,
-  map((evt) => (evt.target as HTMLButtonElement).value),
-  hold("yet")
-);
-const $confirmAnswerResolved = when<string>((answer) => answer !== "yet")($selectedConfirmAnswer);
-const $confirmQuestionDialogbox = hold<JSHTMLNodeSource>(null)(map<JSHTMLNodeSource, string>((text) => [
-  { p: text },
-  { button: "OK", $: { onclick: confirmButtonClicked$, value: "yes" } },
-  { button: "Cancel", $: { onclick: confirmButtonClicked$, value: "no" } },
-])(confirmQuestionActivated$));
-
-const context = {
-  increment$,
-  decrement$,
-  save$,
-  $triggerSave,
-  statusMessageStream$,
-  changeCountStream,
-  $count,
-  $colorOfCount,
-  $statusMessage,
-  $finalMessage,
-  confirmQuestionActivated$,
-  $selectedConfirmAnswer,
-  $confirmAnswerResolved,
-  $confirmQuestionDialogbox,
-  log: (s: unknown) => console.log(s),
-};
-
-// --- 2. UIの定義 ---
-interface AppUIContext {
-  $count: Prop<number>
-  increment$: DripperStream<void>
-  decrement$: DripperStream<void>
-  save$: DripperStream<void>
-  $statusMessage: Prop<JSHTMLNodeSource>
-  $confirmQuestionDialogbox: Prop<JSHTMLNodeSource>
-}
-
-const AppUIRenderer = prime(({ $count, increment$, decrement$, save$, $statusMessage, $confirmQuestionDialogbox }: AppUIContext) => ({
-  div: [
-    { p: ["Count: ", $count], $: { style: { color: $colorOfCount } } },
-    { button: "+", $: { onclick: increment$ } },
-    { button: "-", $: { onclick: decrement$ } },
-    { button: "Save", $: { onclick: save$, style: { marginLeft: '1em' } } },
-    { div: $statusMessage, $: { id: "status" } },
-    { aside: $confirmQuestionDialogbox }
-  ]
-}));
-
-// --- 3. 副作用フローの定義 ---
+// --- 1. 実行フローの定義 ---
 interface EffectContext {
   confirmQuestionActivated$: DripperStream<string>,
   $confirmAnswerResolved: PromisedProp<string>,
@@ -128,6 +61,76 @@ const EffectRenderer = prime(({
   ],
   $: { "onsave": save$, ignite: "quantum" },
 }));
+
+// --- 2. UIの定義 ---
+interface AppUIContext {
+  $count: Prop<number>
+  increment$: DripperStream<void>
+  decrement$: DripperStream<void>
+  save$: DripperStream<void>
+  $statusMessage: Prop<JSHTMLNodeSource>
+  $confirmQuestionDialogbox: Prop<JSHTMLNodeSource>
+}
+
+const AppUIRenderer = prime(({ $count, increment$, decrement$, save$, $statusMessage, $confirmQuestionDialogbox }: AppUIContext) => ({
+  div: [
+    { p: ["Count: ", $count], $: { style: { color: $colorOfCount } } },
+    { button: "+", $: { onclick: increment$ } },
+    { button: "-", $: { onclick: decrement$ } },
+    { button: "Save", $: { onclick: save$, style: { marginLeft: '1em' } } },
+    { div: $statusMessage, $: { id: "status" } },
+    { aside: $confirmQuestionDialogbox }
+  ]
+}));
+
+// confirm dialog
+const confirmQuestionActivated$ = stream<string>();
+const confirmButtonClicked$ = stream<MouseEvent>();
+const $selectedConfirmAnswer = pipe(
+  confirmButtonClicked$,
+  map((evt) => (evt.target as HTMLButtonElement).value),
+  hold("yet")
+);
+const $confirmAnswerResolved = when<string>((answer) => answer !== "yet")($selectedConfirmAnswer);
+const $confirmQuestionDialogbox = hold<JSHTMLNodeSource>(null)(map<JSHTMLNodeSource, string>((text) => [
+  { p: text },
+  { button: "OK", $: { onclick: confirmButtonClicked$, value: "yes" } },
+  { button: "Cancel", $: { onclick: confirmButtonClicked$, value: "no" } },
+])(confirmQuestionActivated$));
+
+// --- 3. データフローの生成 ---
+const increment$ = stream();
+const decrement$ = stream();
+const save$ = stream();
+const $triggerSave = hold(false)(map(() => true)(save$));
+
+const statusMessageStream$ = stream<string>();
+const changeCountStream = merge([map(() => 1)(increment$), map(() => -1)(decrement$)], ((a, b) => a + b));
+const $count = accum((current: number, val: number) => current + val, 0)(changeCountStream);
+const $statusMessage = hold('Ready.')(statusMessageStream$);
+const $finalMessage = remap<number, string>((v) => `Saved Count:${v}`)($count);
+const $colorOfCount = remap<number, string>((count) => count % 3 ? "blue" : "red")($count);
+
+
+const context = {
+  increment$,
+  decrement$,
+  save$,
+  $triggerSave,
+  statusMessageStream$,
+  changeCountStream,
+  $count,
+  $colorOfCount,
+  $statusMessage,
+  $finalMessage,
+  confirmQuestionActivated$,
+  $selectedConfirmAnswer,
+  $confirmAnswerResolved,
+  $confirmQuestionDialogbox,
+  log: (s: unknown) => console.log(s),
+};
+
+
 
 // --- 4. グラフ可視化 ---
 const dot = dumpGraphDOT(context);
