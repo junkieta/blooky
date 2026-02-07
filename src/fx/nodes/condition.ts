@@ -1,17 +1,17 @@
 // src/fx/nodes/condition.ts
-import type { FxConditionNode, ExecutionContext, FxNode, FxRef, ExecutionStep } from '../types';
+import type { FxConditionNode, ExecutionContext, FxNote, FxRef, ExecutionStep } from '../types';
 import { NodeDefinition } from '../NodeDefinition';
 
-type ThisNode = Extract<FxNode, { type: 'condition' }>;
+type ThisNode = Extract<FxNote, { type: 'condition' }>;
 
 export class ConditionNodeDefinition extends NodeDefinition<'condition'> {
   public readonly type = 'condition';
 
-  public factory(ifCond: FxRef<boolean>, thenBranch: FxNode, elseBranch?: FxNode): ThisNode {
+  public factory(ifCond: FxRef<boolean>, thenBranch: FxNote, elseBranch?: FxNote): ThisNode {
     return { type: 'condition', if: ifCond, then: thenBranch, else: elseBranch };
   }
 
-  public getChildNodes(node: FxConditionNode): FxNode[] {
+  public getSubNotes(node: FxConditionNode): FxNote[] {
     return node.else ? [node.then, node.else] : [node.then];
   }
   

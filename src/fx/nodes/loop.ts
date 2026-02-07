@@ -1,22 +1,22 @@
 // src/fx/nodes/loop.ts
-import type { ExecutionContext, FxLoopNode, FxNode, FxRef, ExecutionStep } from '../types';
+import type { ExecutionContext, FxLoopNode, FxNote, FxRef, ExecutionStep } from '../types';
 import { NodeDefinition } from '../NodeDefinition';
 
-type ThisNode = Extract<FxNode, { type: 'loop' }>;
+type ThisNode = Extract<FxNote, { type: 'loop' }>;
 
 const DEFAULT_MAX_ITERATIONS = 10000;
 
 export class LoopNodeDefinition extends NodeDefinition<'loop'> {
   public readonly type = 'loop';
 
-  public factory(cond: FxRef<boolean>, body: FxNode, options?: {
+  public factory(cond: FxRef<boolean>, body: FxNote, options?: {
     maxIterations?: number;
     maxDuration?: number;
   }): ThisNode {
     return { type: 'loop', cond, body, ...options };
   }
 
-  public getChildNodes(node: FxLoopNode): FxNode[] {
+  public getSubNotes(node: FxLoopNode): FxNote[] {
     return [node.body];
   }
 

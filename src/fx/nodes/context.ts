@@ -1,17 +1,17 @@
 // src/fx/nodes/context.ts
-import type { AppContext, FxContextNode, ExecutionContext, FxNode, ExecutionStep } from '../types';
+import type { AppContext, FxContextNode, ExecutionContext, FxNote, ExecutionStep } from '../types';
 import { NodeDefinition } from '../NodeDefinition';
 
-type ThisNode = Extract<FxNode, { type: 'context' }>;
+type ThisNode = Extract<FxNote, { type: 'context' }>;
 
 export class ContextNodeDefinition extends NodeDefinition<'context'> {
   public readonly type = 'context';
   
-  public factory(context: AppContext, child: FxNode, id: string): FxContextNode {
+  public factory(context: AppContext, child: FxNote, id: string): FxContextNode {
     return { type: 'context', context, child, id };    
   }
   
-  public getChildNodes(node: FxContextNode): FxNode[] {
+  public getSubNotes(node: FxContextNode): FxNote[] {
     return node.child ? [node.child] : [];
   }
   

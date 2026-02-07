@@ -1,11 +1,11 @@
 // src/fx/nodes/collapse.ts
-import type { FxNode, FxRef, ExecutionContext, ExecutionStep } from '../types';
+import type { FxNote, FxRef, ExecutionContext, ExecutionStep } from '../types';
 import { drip } from '../../blooky-fp';
 import { NodeDefinition } from '../NodeDefinition';
 import { Dripper } from '../../blooky-types';
 import { time } from '../../blooky-fx';
 
-type ThisNode = Extract<FxNode, { type: 'collapse' }>;
+type ThisNode = Extract<FxNote, { type: 'collapse' }>;
 
 export class CollapseNodeDefinition extends NodeDefinition<'collapse'> {
   public readonly type = 'collapse';

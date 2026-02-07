@@ -1,5 +1,5 @@
 // blooky-fx.test.ts
-import type { FxNode, AppContext, ExecContext, FxExecutionContext, INodeDefinition, FxNodeType, FxRef } from '../fx/types';
+import type { FxNote, AppContext, ExecContext, FxExecutionContext, INodeDefinition, FxNoteType, FxRef } from '../fx/types';
 
 // =================================================================
 // --- モックのセットアップ ---
@@ -9,33 +9,33 @@ import type { FxNode, AppContext, ExecContext, FxExecutionContext, INodeDefiniti
 // =================================================================
 
 // モック用のNode型
-type MockDoNode = FxNode & { type: 'do', run: (...args: any[]) => any, args?: any[] };
-type MockSequenceNode = FxNode & { type: 'sequence', steps: FxNode[] };
-type MockContextNode = FxNode & { type: 'context', value: any };
-type MockFxNode = MockDoNode|MockSequenceNode|MockContextNode;
-type MockFxNodeType = MockFxNode["type"];
+type MockDoNode = FxNote & { type: 'do', run: (...args: any[]) => any, args?: any[] };
+type MockSequenceNode = FxNote & { type: 'sequence', steps: FxNote[] };
+type MockContextNode = FxNote & { type: 'context', value: any };
+type MockFxNote = MockDoNode|MockSequenceNode|MockContextNode;
+type MockFxNoteType = MockFxNote["type"];
 
-interface MockINodeDefinition<T extends MockFxNodeType> extends INodeDefinition<any> {
+interface MockINodeDefinition<T extends MockFxNoteType> extends INodeDefinition<any> {
   readonly type: T;
-  factory(...args: any[]): Extract<MockFxNode, { type: T }>;
+  factory(...args: any[]): Extract<MockFxNote, { type: T }>;
   step(
-    context: FxExecutionContext & { node: Extract<MockFxNode, { type: T }> }
-  ): Generator<MockFxNode, any, any>;
-  getChildNodes(node: Extract<FxNode, { type: T }>) : null|MockFxNode[]
+    context: FxExecutionContext & { node: Extract<MockFxNote, { type: T }> }
+  ): Generator<MockFxNote, any, any>;
+  getSubNotes(node: Extract<FxNote, { type: T }>) : null|MockFxNote[]
   handle(
-    context: FxExecutionContext & { node: Extract<MockFxNode, { type: T }> }
+    context: FxExecutionContext & { node: Extract<MockFxNote, { type: T }> }
   ): Promise<any>;
 }
 
 // モックNode定義の基底クラス (ユーザー提供のコードを参考に作成)
-abstract class MockNodeDefinition<T extends MockFxNode> implements MockINodeDefinition<T['type']> {
+abstract class MockNodeDefinition<T extends MockFxNote> implements MockINodeDefinition<T['type']> {
     abstract readonly type: T['type'];
     abstract factory(...args: any[]): T;
-    getChildNodes(node: T): MockFxNode[] | null { return null; }
+    getSubNotes(node: T): MockFxNote[] | null { return null; }
     handle(context: FxExecutionContext & { node: T }): any {
         throw new Error(`Node type "${this.type}" does not have a direct handler.`);
     }
-    *step({ node }: FxExecutionContext & { node: T }): Generator<FxNode, any, any> {
+    *step({ node }: FxExecutionContext & { node: T }): Generator<FxNote, any, any> {
         return yield node;
     }
 }
@@ -57,8 +57,8 @@ class DoNodeDef extends MockNodeDefinition<MockDoNode> {
 class SequenceNodeDef extends MockNodeDefinition<MockSequenceNode> {
     readonly type = 'sequence';
     factory(props: Omit<MockSequenceNode, 'type'>): MockSequenceNode { return { type: 'sequence', ...props }; }
-    getChildNodes(node: MockSequenceNode) { return node.steps; }
-    *step({ run, node }: FxExecutionContext & { node: MockSequenceNode }): Generator<FxNode, any, any> {
+    getSubNotes(node: MockSequenceNode) { return node.steps; }
+    *step({ run, node }: FxExecutionContext & { node: MockSequenceNode }): Generator<FxNote, any, any> {
         const results = [];
         for (const step of node.steps) {
             results.push(yield* run(step));

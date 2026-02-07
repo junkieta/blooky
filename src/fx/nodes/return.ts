@@ -1,9 +1,9 @@
 // src/fx/nodes/return.ts
-import type { FxNode, FxRef, ExecutionContext, ExecutionStep } from '../types';
+import type { FxNote, FxRef, ExecutionContext, ExecutionStep } from '../types';
 import { NodeDefinition } from '../NodeDefinition';
 import { blooky } from '../../blooky-fp';
 
-type ThisNode = Extract<FxNode, { type: 'return' }>;
+type ThisNode = Extract<FxNote, { type: 'return' }>;
 
 export const RETURN_VALUE = Symbol("RETURN_VALUE");
 

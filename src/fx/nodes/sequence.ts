@@ -1,17 +1,17 @@
 // src/fx/nodes/sequence.ts
-import type { FxNode, FxSequenceNode, ExecutionContext, ExecutionStep } from '../types';
+import type { FxNote, FxSequenceNode, ExecutionContext, ExecutionStep } from '../types';
 import { NodeDefinition } from '../NodeDefinition';
 
-type ThisNode = Extract<FxNode, { type: 'sequence' }>;
+type ThisNode = Extract<FxNote, { type: 'sequence' }>;
 
 export class SequenceNodeDefinition extends NodeDefinition<'sequence'> {
   public readonly type = 'sequence';
 
-  public factory(steps: FxNode[]): ThisNode {
+  public factory(steps: FxNote[]): ThisNode {
     return { type: 'sequence', steps };
   }
 
-  public getChildNodes(node: FxSequenceNode): FxNode[] {
+  public getSubNotes(node: FxSequenceNode): FxNote[] {
     return node.steps;
   }
 

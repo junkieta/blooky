@@ -6,7 +6,7 @@ const {stream,hold,collapse,drip} = BlookyFp;
 
 import { query, ref, fx as coreFx } from '../blooky-fx'; 
 import { RETURN_VALUE } from '../fx/nodes/return';
-import { FxNode, FxRef } from '../fx/types';
+import { FxNote, FxRef } from '../fx/types';
 import { DripperStream, Prop } from '../blooky-types';
 
 import {
@@ -28,7 +28,7 @@ import {
 
 
 
-describe('Individual FxNode Definitions', () => {
+describe('Individual FxNote Definitions', () => {
     
     // 各NodeDefinitionからファクトリ関数を動的に生成し、`fx`オブジェクトを構築
     const fx = {
@@ -46,7 +46,7 @@ describe('Individual FxNode Definitions', () => {
         wait: new WaitNodeDefinition().factory,
         yield: new YieldNodeDefinition().factory,
         // テスト用のシンプルなdoアクション
-        do: (run: FxRef<any>, options?: { id?: string, arg?: FxRef<any> }): FxNode => 
+        do: (run: FxRef<any>, options?: { id?: string, arg?: FxRef<any> }): FxNote => 
             new CallNodeDefinition().factory(run, options),
     };
 
@@ -129,7 +129,7 @@ describe('Individual FxNode Definitions', () => {
         it('should execute the matching case', async () => {
             const caseAFn = jest.fn();
             const caseBFn = jest.fn();
-            const cases = new Map<any, FxNode>([
+            const cases = new Map<any, FxNote>([
                 ['A', fx.do(caseAFn)],
                 ['B', fx.do(caseBFn)],
             ]);

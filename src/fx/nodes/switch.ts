@@ -1,17 +1,17 @@
 // src/fx/nodes/switch.ts
-import type { ExecutionContext, FxNode, FxRef, FxSwitchNode, ExecutionStep } from '../types';
+import type { ExecutionContext, FxNote, FxRef, FxSwitchNode, ExecutionStep } from '../types';
 import { NodeDefinition } from '../NodeDefinition';
 
-type ThisNode = Extract<FxNode, { type: 'switch' }>;
+type ThisNode = Extract<FxNote, { type: 'switch' }>;
 
 export class SwitchNodeDefinition extends NodeDefinition<'switch'> {
   public readonly type = 'switch';
 
-  public factory(by: FxRef<any>, cases: Map<any, FxNode>, defaultNode?: FxNode): ThisNode {
+  public factory(by: FxRef<any>, cases: Map<any, FxNote>, defaultNode?: FxNote): ThisNode {
     return { type: 'switch', by, cases, default: defaultNode };
   }
 
-  public getChildNodes(node: FxSwitchNode): FxNode[] {
+  public getSubNotes(node: FxSwitchNode): FxNote[] {
     const cases = [...node.cases.values()];
     return node.default ? cases.concat(node.default) : cases;
   }
@@ -40,7 +40,7 @@ export class SwitchNodeDefinition extends NodeDefinition<'switch'> {
       }
     };
     
-    let targetNode: FxNode | undefined;
+    let targetNode: FxNote | undefined;
     
     if (node.cases.has(by)) {
       targetNode = node.cases.get(by)!;

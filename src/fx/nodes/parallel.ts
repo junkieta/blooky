@@ -1,17 +1,17 @@
 // src/fx/nodes/parallel.ts
-import type { FxNode, FxParallelNode, ExecutionContext, ExecutionStep } from '../types';
+import type { FxNote, FxParallelNode, ExecutionContext, ExecutionStep } from '../types';
 import { NodeDefinition } from '../NodeDefinition';
 
-type ThisNode = Extract<FxNode, { type: 'parallel' }>;
+type ThisNode = Extract<FxNote, { type: 'parallel' }>;
 
 export class ParallelNodeDefinition extends NodeDefinition<'parallel'> {
   public readonly type = 'parallel';
 
-  public factory(steps: FxNode[]): ThisNode {
+  public factory(steps: FxNote[]): ThisNode {
     return { type: 'parallel', steps };
   }
 
-  public getChildNodes(node: FxParallelNode): FxNode[] {
+  public getSubNotes(node: FxParallelNode): FxNote[] {
     return node.steps;
   }
 

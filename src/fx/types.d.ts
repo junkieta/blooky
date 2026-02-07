@@ -9,7 +9,7 @@ import { PromisedProp } from "../blooky-fp";
  */
 export type ExecutionStep = {
   phase: string;           // 'init' | 'running' | 'waiting' | 'completed' など
-  node: FxNode;           // 現在のノード
+  node: FxNote;           // 現在のノード
   data?: any;             // フェーズ固有のデータ
   
   // devtools 向け情報（オプショナル）
@@ -49,7 +49,7 @@ export type CancelToken = {
 
 // ─── ExecutionContext: ノード実行時のコンテキスト ───
 export interface ExecutionContext {
-  node: FxNode;
+  node: FxNote;
   appContext: AppContext;
   executionId: string;
   
@@ -57,7 +57,7 @@ export interface ExecutionContext {
   resolve: <T>(ref: FxRef<T>) => Prop<T>;
   
   // 子ノードの実行
-  executeChild: (child: FxNode) => AsyncGenerator<ExecutionStep, any, any>;
+  executeChild: (child: FxNote) => AsyncGenerator<ExecutionStep, any, any>;
   
   // デバッグ・制御
   debugController?: any; // DebugController（循環参照回避のため any）
@@ -70,86 +70,86 @@ export interface ExecutionContext {
 
 // ─── Middleware ───
 export type FxMiddleware = (
-  ctx: { step: ExecutionStep; node: FxNode; executionId: string },
+  ctx: { step: ExecutionStep; node: FxNote; executionId: string },
   next: () => Promise<void>
 ) => Promise<void>;
 
 // ─── NodeDefinition Interface ───
-export interface INodeDefinition<T extends FxNode['type']> {
+export interface INodeDefinition<T extends FxNote['type']> {
   readonly type: T;
   
   /**
    * ノードを実行し、各段階を yield する
    */
   execute(
-    ctx: ExecutionContext & { node: Extract<FxNode, { type: T }> }
+    ctx: ExecutionContext & { node: Extract<FxNote, { type: T }> }
   ): AsyncGenerator<ExecutionStep, any, any>;
   
   /**
    * ノードが持つ子ノードを返す（グラフ可視化用）
    */
-  getChildNodes?(node: Extract<FxNode, { type: T }>): FxNode[] | null;
+  getSubNotes?(node: Extract<FxNote, { type: T }>): FxNote[] | null;
   
   /**
    * ファクトリ関数（fx.call(...) のような API）
    */
-  factory(...args: any[]): Extract<FxNode, { type: T }>;
+  factory(...args: any[]): Extract<FxNote, { type: T }>;
 }
 
-// ─── FxNode 定義 ───
-type FxNodeBase<T extends string, P = {}> = P & {
+// ─── FxNote 定義 ───
+type FxNoteBase<T extends string, P = {}> = P & {
   type: T;
   id?: string;
   catcher?: FxRef<(error: Error) => unknown>;
 };
 
-export type FxNoneNode = FxNodeBase<"none">;
-export type FxSequenceNode = FxNodeBase<"sequence", { steps: FxNode[] }>;
-export type FxParallelNode = FxNodeBase<"parallel", { steps: FxNode[] }>;
-export type FxRaceNode = FxNodeBase<"race", { steps: FxNode[] }>;
-export type FxWaitNode = FxNodeBase<"wait", { 
+export type FxNoneNode = FxNoteBase<"none">;
+export type FxSequenceNode = FxNoteBase<"sequence", { steps: FxNote[] }>;
+export type FxParallelNode = FxNoteBase<"parallel", { steps: FxNote[] }>;
+export type FxRaceNode = FxNoteBase<"race", { steps: FxNote[] }>;
+export type FxWaitNode = FxNoteBase<"wait", { 
   ms?: FxRef<number>; 
   until?: FxRef<Prop<boolean> | PromisedProp<any>>; 
 }>;
-export type FxLoopNode = FxNodeBase<"loop", { 
+export type FxLoopNode = FxNoteBase<"loop", { 
   cond: FxRef<boolean>; 
-  body: FxNode; 
+  body: FxNote; 
   maxIterations?: number; 
   maxDuration?: number; 
 }>;
-export type FxConditionNode = FxNodeBase<"condition", { 
+export type FxConditionNode = FxNoteBase<"condition", { 
   if: FxRef<boolean>; 
-  then: FxNode; 
-  else?: FxNode; 
+  then: FxNote; 
+  else?: FxNote; 
 }>;
-export type FxSwitchNode = FxNodeBase<"switch", { 
+export type FxSwitchNode = FxNoteBase<"switch", { 
   by: FxRef<string | number | symbol>; 
-  cases: Map<string | number | symbol, FxNode>; 
-  default?: FxNode; 
+  cases: Map<string | number | symbol, FxNote>; 
+  default?: FxNote; 
 }>;
-export type FxCallNode = FxNodeBase<"call", { 
+export type FxCallNode = FxNoteBase<"call", { 
   action: FxRef<(v: any) => unknown>; 
   arg?: FxRef<any>; 
   context?: FxRef<any>; 
 }>;
-export type FxCollapseNode = FxNodeBase<"collapse", { 
+export type FxCollapseNode = FxNoteBase<"collapse", { 
   dripper: FxRef<DripperStream<any>>; 
   value: FxRef<any>; 
   promise?: FxRef<"deny" | "allow" | "await">; 
 }>;
-export type FxYieldNode = FxNodeBase<"yield", { 
+export type FxYieldNode = FxNoteBase<"yield", { 
   for: FxRef<FxContextNode>; 
   value: FxRef<any>; 
 }>;
-export type FxContextNode = FxNodeBase<"context", { 
+export type FxContextNode = FxNoteBase<"context", { 
   context: AppContext; 
-  child: FxNode; 
+  child: FxNote; 
 }>;
-export type FxReturnNode = FxNodeBase<"return", { 
+export type FxReturnNode = FxNoteBase<"return", { 
   value: FxRef<any>; 
 }>;
 
-export type FxNode =
+export type FxNote =
   | FxNoneNode
   | FxSequenceNode
   | FxParallelNode
@@ -164,7 +164,7 @@ export type FxNode =
   | FxContextNode
   | FxReturnNode;
 
-export type FxNodeType = FxNode["type"];
+export type FxNoteType = FxNote["type"];
 
 // ─── ExecContext: prepare で生成される実行設定 ───
 export interface ExecContext {
@@ -178,7 +178,7 @@ export interface ExecContext {
 
 // ─── PreparedFx ───
 export interface PreparedFx {
-  readonly rootNode: FxNode;
+  readonly rootNode: FxNote;
   readonly execContext: ExecContext;
   readonly appContext: AppContext;
 }
@@ -191,5 +191,5 @@ export interface ExecutionHandle {
 
 // ─── FxFactoryMap ───
 export type FxFactoryMap = {
-  [K in FxNodeType]: (...args: any[]) => Extract<FxNode, { type: K }>;
+  [K in FxNoteType]: (...args: any[]) => Extract<FxNote, { type: K }>;
 };

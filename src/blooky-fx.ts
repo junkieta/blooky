@@ -3,7 +3,7 @@
 import { nodeDefinitionMap } from "./fx/nodes";
 import { blooky } from "./blooky-fp";
 import type { 
-  FxNode, 
+  FxNote, 
   AppContext, 
   CancelToken, 
   ExecContext, 
@@ -116,7 +116,7 @@ const notifyClockObservers = (effect: DripEffect<any>) => (reservations: Reserva
 
 export const time = { tick, clock };
 
-// ─── FxNode ファクトリ ───
+// ─── FxNote ファクトリ ───
 const fx = {} as FxFactoryMap;
 nodeDefinitionMap.forEach((def, type) => {
   (fx as any)[type] = def.factory.bind(def);
@@ -155,7 +155,7 @@ function createCancelToken(parent?: CancelToken): CancelToken {
 // ─── prepare: 実行準備 ───
 
 function prepare(
-  flow: FxNode,
+  flow: FxNote,
   initialAppContext: AppContext,
   parentExecContext?: Partial<ExecContext>
 ): PreparedFx {
@@ -166,7 +166,7 @@ function prepare(
     $_: "$_" in initialAppContext ? initialAppContext.$_ : NotResolved,
     [RETURN_VALUE]: RETURN_VALUE in initialAppContext ? initialAppContext[RETURN_VALUE] : NotResolved
   };
-  const nodes = flattenFxNode(flow);
+  const nodes = flattenFxNote(flow);
   // idを持つノードのために、ローカルレコードにエントリーを予約する
   nodes.filter((n)=>n.id).forEach((n) => localRecord["#"+n.id!] = n.type === "context" ? n : NotResolved);
   
@@ -196,7 +196,7 @@ function execute(preparedFx: PreparedFx): ExecutionHandle {
   console.log('[fx] execute: starting', { rootNode, executionId: execContext.executionId });  
   
   // ExecutionContext 生成ヘルパー
-  const createExecutionContext = (node: FxNode, parentId: string): ExecutionContext => {
+  const createExecutionContext = (node: FxNote, parentId: string): ExecutionContext => {
     const executionId = `${parentId}:${node.type}`;
     
     return {
@@ -380,7 +380,7 @@ function execute(preparedFx: PreparedFx): ExecutionHandle {
 }
 
 // ─── query: prepare + execute のショートハンド ───
-const query = (node: FxNode, app?: AppContext, ctx?: Partial<ExecContext>) => 
+const query = (node: FxNote, app?: AppContext, ctx?: Partial<ExecContext>) => 
   execute(prepare(node, app || {}, ctx));
 
 // ─── resolveValue: FxRef を Prop に正規化 ───
@@ -395,14 +395,14 @@ const resolveValue = <T>(value: FxRef<T>) => (context: AppContext): Prop<T> => {
 
 
 /**
- * FxNodeツリーを展開して、全てのノードのリストを生成する。
- * @param n FxNode
- * @returns FxNodeの配列
+ * FxNoteツリーを展開して、全てのノードのリストを生成する。
+ * @param n FxNote
+ * @returns FxNoteの配列
  */
-const flattenFxNode = (n:FxNode): FxNode[] => {
-  const children = nodeDefinitionMap.get(n.type)!.getChildNodes(n);
+const flattenFxNote = (n:FxNote): FxNote[] => {
+  const children = nodeDefinitionMap.get(n.type)!.getSubNotes(n);
   return children
-    ? [n, ...children.flatMap(flattenFxNode)]
+    ? [n, ...children.flatMap(flattenFxNote)]
     : [n];
 }
 

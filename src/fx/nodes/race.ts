@@ -1,18 +1,18 @@
 // src/fx/nodes/race.ts
-import type { ExecutionContext, FxNode, FxRaceNode, ExecutionStep } from '../types';
+import type { ExecutionContext, FxNote, FxRaceNode, ExecutionStep } from '../types';
 import { NodeDefinition } from '../NodeDefinition';
 import { createCancelToken } from '../../blooky-fx';
 
-type ThisNode = Extract<FxNode, { type: 'race' }>;
+type ThisNode = Extract<FxNote, { type: 'race' }>;
 
 export class RaceNodeDefinition extends NodeDefinition<'race'> {
   public readonly type = 'race';
 
-  public factory(steps: FxNode[]): ThisNode {
+  public factory(steps: FxNote[]): ThisNode {
     return { type: 'race', steps };
   }
 
-  public getChildNodes(node: FxRaceNode): FxNode[] {
+  public getSubNotes(node: FxRaceNode): FxNote[] {
     return node.steps;
   }
 

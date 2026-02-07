@@ -1,5 +1,5 @@
 // src/fx/debugger.ts
-import type { FxNode, ExecutionStep } from './types';
+import type { FxNote, ExecutionStep } from './types';
 
 export type StepMode = 'into' | 'over' | 'out';
 
@@ -100,7 +100,7 @@ export class DebugController extends EventTarget {
   }
 
   // ──── Hooks (called by middleware) ────
-  async beforeStep(node: FxNode, step: ExecutionStep, executionId: string) {
+  async beforeStep(node: FxNote, step: ExecutionStep, executionId: string) {
 
     const rootExecutionId = executionId.slice(0, executionId.indexOf(":"));
 
@@ -155,7 +155,7 @@ export class DebugController extends EventTarget {
     }));
   }
 
-  afterStep(node: FxNode, step: ExecutionStep, executionId: string) {
+  afterStep(node: FxNote, step: ExecutionStep, executionId: string) {
     console.log('[DebugController] afterStep:', {
       executionId,
       phase: step.phase,
