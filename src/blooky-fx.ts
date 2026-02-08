@@ -1,8 +1,8 @@
 // src/blooky-fx.ts
 
 import { nodeDefinitionMap } from "./fx/nodes";
-import { blooky } from "./blooky-fp";
 import type { 
+  FxRefSymbol as FxRefSymbolType,
   FxNote, 
   AppContext, 
   CancelToken, 
@@ -12,8 +12,7 @@ import type {
   PreparedFx, 
   FxFactoryMap,
   ExecutionStep,
-  FxRef,
-  CancelReason
+  CancelReason,
 } from "./fx/types";
 import type { Prop } from "./blooky-types";
 
@@ -29,16 +28,24 @@ nodeDefinitionMap.forEach((def, type) => {
 });
 
 // ─── FxRef 参照オブジェクト ───
-const FxRefSymbol = Symbol("FxRef");
-const ref = <T>(key: string): FxRef<T> => ({ [FxRefSymbol]: true, key });
-const isFxRef = <T>(v: unknown): v is Extract<FxRef<T>, ({ [K in typeof FxRefSymbol]: true; } & { key: string; })> => 
-  v && (v as any)[FxRefSymbol] === true;
+export const FxRefSymbol: typeof FxRefSymbolType = Symbol("FxRef") as typeof FxRefSymbolType;
+
+export type FxRefKey<T> = {
+  readonly [FxRefSymbol]: true;
+  readonly key: string;
+};
+
+export type FxRef<T> = FxRefKey<T> | Prop<T> | T;
 
 
+const ref = <T>(key: string): FxRefKey<T> =>
+  ({ [FxRefSymbol]: true, key } as const);
 
+const isFxRefKey = <T>(v: unknown): v is FxRefKey<T> =>
+  !!v && typeof v === "object" && (v as any)[FxRefSymbol] === true;
 // ─── resolveValue: FxRef を Prop に正規化 ───
 const resolveValue = <T>(value: FxRef<T>) => (context: AppContext): Prop<T> => {
-  if (isFxRef<T>(value)) { 
+  if (isFxRefKey<T>(value)) { 
     value = context[value.key];
   }
   return typeof value === "function"
@@ -48,5 +55,5 @@ const resolveValue = <T>(value: FxRef<T>) => (context: AppContext): Prop<T> => {
 
 
 export {
-  fx, isFxRef, ref, resolveValue
+  fx, isFxRefKey as isFxRef, ref, resolveValue
 };

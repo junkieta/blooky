@@ -23,10 +23,15 @@ export type ExecutionStep = {
 };
 
 // ─── FxRef: 実行時解決される値への参照 ───
-export type FxRef<T> = 
-  | ({ [key in symbol]: true; } & { key: string; })
-  | Prop<T> 
-  | T;
+export declare const FxRefSymbol: unique symbol;
+
+export type FxRefKey<T> = {
+  readonly [FxRefSymbol]: true;
+  readonly key: string;
+};
+
+export type FxRef<T> = FxRefKey<T> | Prop<T> | T;
+
 
 // ─── AppContext: アプリケーションコンテキスト ───
 export type AppContext = Record<string | symbol, any>;

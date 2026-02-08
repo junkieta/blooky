@@ -1,6 +1,7 @@
 {
   "compilerOptions": {
     "isolatedModules": true,
+    "declaration": true,
     "target": "esnext",
     "lib": ["ESNext", "DOM"], // 必要なら DOM を追加
     "module": "nodenext"
