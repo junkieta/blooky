@@ -31,7 +31,7 @@
 
 ### 1.1 Dependency
 
-本仕様は **score-fx Protocol Specification v1.1** を完全に前提とする。
+本仕様は **score-fx Protocol Specification v1.0.0** を完全に前提とする。
 
 特に以下の前提に依存する：
 
@@ -82,7 +82,7 @@ Runner はそれを **解釈し、PerformanceStep に変換する唯一の主体
 ### 3.1 Minimal Event Set
 
 blooky-fx v1.0 において、Semantics が使用できる `SemanticEvent` は
-**score-fx Protocol Specification v1.1 により定義された最小集合に限定**される。
+**score-fx Protocol Specification v1.0.0 により定義された最小集合に限定**される。
 
 本仕様は、SemanticEvent の構造や拡張を定義しない。
 

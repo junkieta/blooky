@@ -220,6 +220,9 @@ Execution の意味論を変更しない。
 
 `resolveValue(ref, appContext)` は、FxRef を `Prop<T>` に正規化する操作である。
 
+Note (Normative):
+本仕様において `Prop<T>` とは、blooky-fp における定義に従い、() => T を含む pull-based value source の総称である。
+
 #### 規則：
 
 1. `Prop<T>` → そのまま返す（MUST） 
