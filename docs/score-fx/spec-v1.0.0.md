@@ -22,11 +22,11 @@
 
 | 用語 | 定義 | 役割 |
 | --- | --- | --- |
-| **FxNote** | 実行の小単位 | 譜面上の音符（記譜点）。処理の定義と識別子（`note_id`）を持つ。 |
+| **FxNote** | 実行の小単位 | 譜面上の記譜点。処理の定義と識別子（`note_id`）を持つ。 |
 | **FxScore** | 実行の構造定義 | 譜面。`FxNote` が構造化（直列・並列等）された集合。 |
 | **Performance** | 実行ドメイン | 譜面が演奏される独立した空間。固有の `execution_id` を持つ。 |
 | **PerformanceStep** | 実行の事実 | 演奏の一瞬を記録したデータ。不変の事実。 |
-| **Timeline** | 時間構造（Temporal Structure） | Score 構造と実績 Step を重ね合わせ、進行位置と到達可能性を表す。Realized Timeline（実績）と Virtual Timeline（予測線）という射影を持つ。|
+| **Timeline** | 時間構造（Temporal Structure） | PerformanceStep の順序を保持する記録媒体（StepLog）。 |
 | **Runner** | 実行主体 | 奏者。Score を読み取り、事実を Timeline に刻む Agent。 |
 
 ---
@@ -52,7 +52,7 @@ Runner が `FxNote` を通過する際の状態遷移。
 * **`enter`**: 記譜点に到達した。
 * **`active`**: 記譜点の処理（非同期 IO 等）を開始した。
 * **`suspend`**: 外部要因（子 Score、待機条件）により演奏を一時中断した。
-* **`resume`**: 待機条件が解消し、演奏を再開した。
+* **`resume`**: 待機条件が解消し、演奏を再開した。（再開の記録方法は §8.5 に従う）
 * **`exit`**: 記譜点の処理を完了し、値を確定させた。
 * **`cancel`**: 演奏空間（Performance）の破棄により、処理が中断された。
 
@@ -66,10 +66,9 @@ Score は静的であり、演奏中に自身を書き換えることはない�
 
 ### 4.2 Effect Binding (副作用の束縛)
 
-`exit` フェーズにおいてのみ、最大1つの `effect` を付与できる。
-
-* `effect` は実行そのものではなく、外部システム（FRP の Stream 注入等）への **参照情報** である。
-* 形式: `{ kind: string, target: string, value: any }`
+`effect` は実行そのものではなく、外部システム（FRP の Stream 注入等）への **参照情報** である。
+score-fx は `effect` の具体的なフォーマットを規定しない（opaque）。
+`EffectBinding` は `PerformanceStep.effect` に格納される不透明値である。
 
 ### 4.3 Error-to-Value Mapping (不協和音の処理)
 
@@ -80,37 +79,25 @@ Score は静的であり、演奏中に自身を書き換えることはない�
 
 ### 4.4 Cancellation Propagation (演奏の中止)
 
-Performance が `cancel` された場合、Timeline は即座に `cancel` フェーズの Step を発行し、すべての Sub-Timeline（子演奏）に伝播させなければならない。キャンセル後の Step 発行は静かに無視される。
+Performance が `cancel` された場合、Runner は即座に `cancel` フェーズの Step を記録し、すべての Sub-Performance（子演奏）に伝播させなければならない。キャンセル後の Step 発行は静かに無視される。
 
 ---
 
-## 5. Timeline Model (記録と予測)
+## 5. Projection Model（Informative）
 
-Timeline は、譜面（FxScore）の構造を段階的に解釈することで形成される時間構造である。
-譜面はまず全体が到達可能性（Virtual Timeline）として解釈され、
-それからなされる演奏によって実績（Realized Timeline）が具体化・実現されていく。
+Timeline は PerformanceStep の順序を保持する記録媒体（StepLog）である。
+重ね合わせや可視化は **Projection** の責務であり、DevTools などの観測者が
+Score 構造と Timeline を入力として View を構成してよい。
 
-### 5.1 Realized Timeline (実績)
+### 5.1 Realized Projection（実績）
 
-Realized Timeline は、「すでに起きた演奏の事実」を表す。
+Realized Projection は、「すでに起きた演奏の事実」を表す View である。
 ここでいう事実とは、Runner により確定された `PerformanceStep` の連なりである。
 
-Realized Timeline は過去の保存物であると同時に、観測者にとっての確定情報源である。
+### 5.2 Virtual Projection（予測線）
 
-### 5.2 Virtual Timeline (予測線)
-
-Virtual Timeline は、`FxScore` の構造に基づき、現時点から到達しうる `FxNote` の経路（到達可能性）を表す。
-Virtual Timeline は「未来の候補」であり、まだ確定していないため、`PerformanceStep` としての事実を伴わない。
-
-### 5.3 Observability（重ね合わせ）
-
-Virtual Timeline は、どの順序で、どの範囲まで演奏が進行しうるかという時間構造を表す。
-Realized Timeline は、この Virtual Timeline を参照しながら、Runner によって具体化・実現される演奏の射影である。
-
-DevTools 等の観測者は、
-Virtual Timeline（到達可能性の構造）と
-Realized Timeline（具体化されつつある進行）を重ね合わせることで、
-現在の進行位置と、未来に到達しうる演奏経路を可視化できる。
+Virtual Projection は、`FxScore` の構造に基づき、現時点から到達しうる `FxNote` の経路（到達可能性）を表す View である。
+Virtual Projection は「未来の候補」であり、`PerformanceStep` としての事実を伴わない。
 
 ---
 
@@ -297,9 +284,7 @@ Runner は各ノートに対して、少なくとも以下の状態遷移を扱�
 
 1. Semantics が `result(value)` を yield し、Runner がそれを受理した
 2. Semantics が `terminate(value?)` を yield し、（本仕様が定義するスコープで）Performance が終端した
-3. Runner が本章の構造規則に従って「完了した」と判定した
-
-   * 例：sequence の親が、子ノートをすべて完了させた
+3. 構造ノート（sequence/parallel/race/loop/condition/switch）は **8.4 に従って完了**と判定される
 
 > 注：`terminate` は Performance-wide（Performance 全体の終端）であり、個別ノート完了の一般手段ではない。
 
@@ -417,7 +402,8 @@ loop は “反復する構造” を提供するが、反復条件はプロフ�
 
 **選択決定値の取得**
 
-* 選択決定値の取得方法はプロファイルに委ねる（MUST）。
+* `condition` / `switch` は `note.data` に **選択決定値を得るための参照（opaque）**を保持しなければならない（MUST）。
+* Runner はこの参照を **Profile-defined resolver** で解決して選択決定値を得る（MUST）。
   典型例：
 
   * 直前ノートの `result` を入力として使う
@@ -474,42 +460,30 @@ Runner は `terminate` を受け取ったら、以後の subnote スケジュー
 
 ### 1. Core Manifesto (設計原則)
 
-1.1 **Staticity of FxScore**: `FxScore`は譜面、不変の設計図であり、実行中に自身を書き換えない。
-1.2 **FxNote as a Point**: `FxNote` は譜面上の記譜点であり、ロジックや駆動能力を持たない。
-1.3 **Runner as a Performer**: 演奏の主権は `Runner` にあり、**これにより譜面（構造）と実行（時間）は物理的に分離される。**
+* `FxScore` は不変の設計図であり、実行中に自身を書き換えない。
+* `FxNote` は譜面上の記譜点であり、ロジックや駆動能力を持たない。
+* 演奏の主権は `Runner` にあり、譜面（構造）と実行（時間）は分離される。
 
 ---
 
 ### 2. The Score Layer (AST 定義)
 
-2.1 **FxNote Interface**
-
-```typescript
-interface FxNote {
-  readonly note_id: string; // 譜面内一意の識別子
-  readonly kind: string;    // 意味論(Semantics)の識別キー
-  readonly data: any;        // 静的な定義データ
-  getSubNotes(): FxNote[];   // 構造上の下位要素。Runner はこれを用いて Virtual Timeline を構築する。
-}
-```
-
-2.2 **FxScore Structure**
-`root: FxNote` を起点とする、シリアライズ可能なデータ構造。
+* `FxNote` / `FxScore` の静的性は本文 §2〜§4 に従う。
 
 ---
 
 ### 3. Semantics Contract (解釈インターフェース)
 
-3.1 **Role and Sovereignty**: Semantics は Note を解釈するが、演奏（Performance）そのものは行わない。
-3.2 **One-way Communication**: Semantics と Runner は、Generator を通じた一方向の通信（合図の発行）のみを行う。
-3.3 **The Resumption Principle**: `resume` は `SemanticEvent` ではない。**再開は「世界の状態が変化した事実」の観測であり、実行管理上の判断である。** Semantics は再開のタイミングに関知しない。
+* Semantics は Note を解釈するが、演奏（Performance）そのものは行わない。
+* Semantics と Runner は、Generator を通じた一方向の通信（合図の発行）のみを行う。
+* `resume` は `SemanticEvent` ではなく、再開は Runner が観測結果として記録する。
 
 ---
 
 ### 4. The Performance Layer (事実の記録)
 
-4.1 **PerformanceStep**: 演奏中に発生した不変の事実。`phase`, `note_id`, `payload`, `effect`, `timestamp` を含む。
-4.2 **Error-to-Value Mapping**: 例外は `throw` せず、`result(errorValue)` として `exit` フェーズの `payload` にカプセル化する。
+* `PerformanceStep` は演奏中に発生した不変の事実である（詳細は本文 §3〜§8）。
+* Error-to-Value Mapping の方針は本文に従う。
 
 ---
 
