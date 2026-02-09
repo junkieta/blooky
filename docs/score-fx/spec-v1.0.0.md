@@ -138,6 +138,334 @@ type ObservationPacket = {
 
 ---
 
+## 7. SemanticEvent Vocabulary（Normative）
+
+本章は、Semantics が Runner に対して yield できる **SemanticEvent の閉集合（closed set）**を定義する。
+Runner は本章の規則に従ってイベントを解釈しなければならない（MUST）。
+
+### 7.1 SemanticEvent とは
+
+**SemanticEvent** は、Semantics がある `FxNote` を解釈する過程で生成する **通知（notification）**である。
+
+* SemanticEvent は **制御命令ではない**（後述）。
+* SemanticEvent の種類（kind）は **閉集合**であり、本仕様で定義されたもの以外を追加してはならない（MUST NOT）。
+
+### 7.2 型定義（参考）
+
+```ts
+export type ConditionRef = unknown; // opaque reference
+
+export type SemanticEvent =
+  | { type: "result"; value: unknown }
+  | { type: "suspend"; until: ConditionRef }
+  | { type: "effect"; ref: unknown }
+  | { type: "terminate"; value?: unknown };
+```
+
+### 7.3 配送と処理モデル
+
+1. Semantics は 0 個以上の SemanticEvent を yield してよい（MAY）。
+2. Runner は、Semantics が生成した順序どおりにイベントを処理しなければならない（MUST）。
+3. Runner は、イベントを並べ替え・欠落・重複させてはならない（MUST NOT）。
+
+### 7.4 制御命令ではない（重要）
+
+SemanticEvent は、Runner に対して任意の subnote を選択・順序変更させるための命令として解釈されてはならない（MUST NOT）。
+
+* subnote のスケジューリング（sequence/parallel/race 等）は、**Score 構造と Runner の構造規則**によって決まる。
+* SemanticEvent は **観測可能な事実の通知**である。
+
+### 7.5 `result(value)`
+
+#### 意味
+
+`result` は、当該ノートの意味的な値が **確定した**ことを示す。
+
+#### 規則
+
+1. Semantics は、1 つのノート評価に対して `result` を高々 1 回 yield してよい（MAY）。
+2. Semantics が `result` を yield した場合、そのノート評価は **完了**とみなされる（MUST）。
+3. `result` を yield した後、Semantics は当該ノート評価に関して **追加のイベントを yield してはならない**（MUST NOT）。
+   （※ `effect` を出すなら `result` より前に出る必要がある）
+
+#### Runner の義務
+
+* Runner は `result.value` を、PerformanceStep の該当フィールドへ確実に反映しなければならない（MUST）。
+
+### 7.6 `effect(ref)`
+
+#### 意味
+
+`effect` は、Semantics が解釈過程で得た **外部参照（binding / ref）を記録する**ための通知である。
+
+* `effect` 自体は命令ではなく、**事実の記録**である。
+
+#### 規則
+
+1. Semantics は任意個の `effect` を yield してよい（MAY）。
+2. Runner は `effect` によって **即時に副作用を実行してはならない**（MUST NOT）。
+3. `ref` の具体的意味（FxRef への正規化やコミット方式）は、本仕様では規定しない。
+   それは Bridge 仕様など上位（または隣接）仕様が規定してよい（MAY）。
+
+#### Runner の義務
+
+* Runner は `effect.ref` を、後段で Tick などの単位に集約できる形で **確実に記録**しなければならない（MUST）。
+  （実装上はイベント列として保存して defer するのが推奨）
+
+### 7.7 `suspend(until)`
+
+#### 意味
+
+`suspend` は、評価を継続できないため **待機状態に入る**ことを示す。
+
+#### 規則
+
+1. Semantics は、1 つのノート評価試行に対して `suspend` を高々 1 回 yield してよい（MAY）。
+2. `until` は **ConditionRef（opaque）** でなければならない（MUST）。
+3. `suspend` は値の確定を意味しない（MUST）。
+
+#### Runner の義務
+
+1. Runner は `suspend` を受け取ったら、当該ノート評価を **中断（suspended）**状態に遷移させなければならない（MUST）。
+2. Runner は対応する step（例：`phase="suspend"`）を emit/record し、`until` を保持しなければならない（MUST）。
+3. `until` が成立したと判断したら Runner は評価を再開し、再開 step（例：`phase="resume"`）を emit/record してから継続しなければならない（MUST）。
+
+### 7.8 `terminate(value?)`（Performance-wide）
+
+#### 意味
+
+`terminate` は、**この Performance 全体を早期終了する**ことを示す。
+
+* `terminate` は例外ではない。
+* `terminate` は構造上の「完了」信号である。
+
+#### 規則
+
+1. Semantics は、1 つの Performance に対して `terminate` を高々 1 回 yield してよい（MAY）。
+2. `terminate` は **Performance-wide** である（MUST）。
+   すなわち、発生時点以降に予定されている実行（subnote の実行を含む）をすべて打ち切り、Performance を終端させる。
+3. Semantics は `terminate` を yield した後、追加のイベントを yield してはならない（MUST NOT）。
+
+#### `result` との排他（Normative）
+
+* Semantics は、同一ノート評価（および同一 Performance）において `result` と `terminate` を **両方 yield してはならない**（MUST NOT）。
+  どちらか一方のみが許可される。
+
+#### Runner の義務
+
+* Runner は `terminate` を受け取ったら、以下を行わなければならない（MUST）：
+
+  1. 以後の subnote スケジューリングを停止する
+  2. Performance を終端状態へ遷移させる
+  3. 最終 step（例：`phase="exit"` あるいは `phase="cancel"`）を emit/record し、`value` があればそれを保持する
+  4. Timeline の不変条件（順序・重複・欠落等）を破ってはならない
+
+### 7.9 エラー方針（境界規範）
+
+Semantics は Runner 境界をまたいで例外（throw）を漏らしてはならない（MUST NOT）。
+内部エラーがある場合は、仕様が定める **値としての失敗表現**に落とし込むか、`terminate` を用いて制御された終端として表現しなければならない（MUST）。
+
+---
+
+## 8. Structural Progression Rules（構造進行規則 / Normative）
+
+### 8.1 目的
+
+本章は、Score の構造（subnotes を含むノート木）を **Runner がどのように進行（progression）として解釈するか**を定義する。
+ここで定義されるのは **実行の外形（いつ子を開始し、いつ親が完了するか）**のみであり、各ノートの意味内容（Semantics の内部ロジック）や FRP/Bridge の詳細は対象外とする。
+
+> この章が必要なのは、SemanticEvent を「制御命令ではない」と定義した結果、
+> **進行の主権が Runner＋構造に完全に移った**ためである。
+
+### 8.2 共通定義
+
+#### 8.2.1 ノートの状態（Normative）
+
+Runner は各ノートに対して、少なくとも以下の状態遷移を扱わなければならない（MUST）。
+
+* **未開始（not-started）**
+* **進行中（running）**
+* **待機中（suspended）**
+* **完了（completed）**
+* **中止（cancelled）**
+
+※ 内部表現は任意。ただし観測（Timeline/PerformanceStep）上は区別できる必要がある。
+
+#### 8.2.2 完了（completion）の定義（Normative）
+
+ノートは、以下のいずれかで **完了（completed）**とみなされる（MUST）。
+
+1. Semantics が `result(value)` を yield し、Runner がそれを受理した
+2. Semantics が `terminate(value?)` を yield し、（本仕様が定義するスコープで）Performance が終端した
+3. Runner が本章の構造規則に従って「完了した」と判定した
+
+   * 例：sequence の親が、子ノートをすべて完了させた
+
+> 注：`terminate` は Performance-wide（Performance 全体の終端）であり、個別ノート完了の一般手段ではない。
+
+#### 8.2.3 排他（Normative）
+
+同一ノート評価において、Semantics は `result` と `terminate` を両方 yield してはならない（MUST NOT）。
+
+#### 8.2.4 例外の禁止（境界規範 / Normative）
+
+Semantics は Runner 境界をまたいで throw を漏らしてはならない（MUST NOT）。
+Runner も境界外へ throw を漏らさないことが推奨される（SHOULD）。
+（値としての失敗表現は別章/別仕様で規定してよい）
+
+### 8.3 subnotes の開始規則（共通）
+
+#### 8.3.1 開始権限（Normative）
+
+Runner は、親ノートの構造規則が許すタイミングでのみ子ノート（subnote）を開始してよい（MUST）。
+SemanticEvent は子ノートの開始順序・選択を指示する命令として解釈してはならない（MUST NOT）。
+
+#### 8.3.2 再入（Normative）
+
+同一ノートを重複して開始してはならない（MUST NOT）。
+（loop 等で再実行する場合は「新しい評価インスタンス」として扱うか、Runner の管理下で再入を明示的に区別する）
+
+### 8.4 構造ノートごとの進行規則（最小）
+
+> ここでは **最小の外形**だけを書く。
+> “いつ開始するか / いつ完了するか / terminate/cancel が来たらどうするか” のみ。
+
+#### 8.4.1 `sequence`（順次実行）
+
+**開始**
+
+* `sequence` の開始時、Runner は最初の子ノートを開始する（MUST）。
+
+**進行**
+
+* ある子ノートが完了したら、Runner は次の子ノートを開始する（MUST）。
+* いずれかの子が `suspend` で待機に入った場合、Runner はその待機解除まで `sequence` の進行を停止する（MUST）。
+  （待機解除後、同じ子から再開する）
+
+**完了**
+
+* 全ての子ノートが完了した時点で、`sequence` 自身は完了とみなされる（MUST）。
+* `sequence` の `result` 値をどうするかは、プロファイルで定義してよい（MAY）。
+  （例：最後の子の result を採用、配列で集約、void 等）
+
+#### 8.4.2 `parallel`（並列実行）
+
+**開始**
+
+* `parallel` の開始時、Runner は全ての子ノートを開始してよい（MAY）。
+  ただし開始順は規定しない。
+
+**完了**
+
+* `parallel` の完了条件はプロファイルで選択できるが、少なくとも次のいずれかを明示しなければならない（MUST）：
+
+  * 全子完了で完了（all-of）
+  * 任意一子完了で完了（any-of）
+* score-fx 本体としての推奨は **all-of**（SHOULD）。
+  （race を別に持つなら parallel は all-of が読みやすい）
+
+**待機**
+
+* いずれかの子が `suspend` の場合でも、他の子の進行は妨げない（MUST）。
+
+#### 8.4.3 `race`（最初に終わったものが勝つ）
+
+**開始**
+
+* `race` の開始時、Runner は全ての子ノートを開始してよい（MAY）。
+
+**勝者決定**
+
+* 最初に **完了**した子ノートを勝者とする（MUST）。
+
+  * 完了とは 8.2.2 に定義した completed を指す（result による完了が基本）
+
+**残りの扱い**
+
+* 勝者が決定した時点で、Runner は残りの子ノートを中止（cancel）しなければならない（MUST）。
+  （中止理由や CancelToken の詳細は別章/別仕様でよい）
+
+**race 自身の完了**
+
+* 勝者決定と同時に `race` は完了とみなされる（MUST）。
+
+#### 8.4.4 `loop`（反復）
+
+loop は “反復する構造” を提供するが、反復条件はプロファイルに委ねる。score-fx としての最小規範は以下。
+
+**開始**
+
+* `loop` の開始時、Runner は本体ノート（body）を開始する（MUST）。
+
+**反復**
+
+* 本体ノートが完了した時点で、Runner は次の反復を開始してよい（MAY）。
+  反復の停止条件はプロファイルで規定する（MUST）。
+  （例：回数、条件、外部キャンセル等）
+
+**完了**
+
+* 停止条件が満たされた時点で loop は完了とみなされる（MUST）。
+
+> 注：loop の “break/continue 的な局所終端” を `terminate` で表現してはならない（MUST NOT）。terminate は Performance-wide のみ。
+
+#### 8.4.5 `condition` / `switch`（分岐）
+
+**開始**
+
+* Runner は condition/switch が要求する “選択決定値” を得た後、対応する子ノートを開始する（MUST）。
+
+**選択決定値の取得**
+
+* 選択決定値の取得方法はプロファイルに委ねる（MUST）。
+  典型例：
+
+  * 直前ノートの `result` を入力として使う
+  * AppContext 等の参照から得る
+  * ルート引数から得る
+
+**選択の規範**
+
+* 選択が確定したら、Runner は選ばれた 1 つ（または規定個数）の子ノートのみを開始しなければならない（MUST）。
+* 選ばれなかった子ノートは開始してはならない（MUST NOT）。
+
+### 8.5 `suspend` と再開（resume）
+
+#### 8.5.1 `suspend(until)` の opaque 化（Normative）
+
+`suspend.until` の型は `ConditionRef`（opaque）である。
+ConditionRef の評価方法（真偽判定・購読・ポーリング等）は **プロファイル**が定義する。
+
+#### 8.5.2 Runner の義務（Normative）
+
+* Runner は `suspend` を受け取ったら、該当ノートを suspended に遷移させる（MUST）。
+* Runner は ConditionRef が “成立”したと判断したら、ノートを running に戻し、再評価を継続する（MUST）。
+* `resume` は SemanticEvent ではなく Runner が Timeline 上の step として刻む（MUST）。
+  （step の厳密な種類名は本仕様の step 定義に従う）
+
+### 8.6 `terminate`（Performance-wide）
+
+#### 8.6.1 意味（Normative）
+
+`terminate` は **Performance 全体を早期終了**させる通知である。
+Runner は `terminate` を受け取ったら、以後の subnote スケジューリングを停止し、Performance を終端しなければならない（MUST）。
+
+#### 8.6.2 伝播（Normative）
+
+`terminate` は局所スコープに閉じてはならない（MUST NOT）。
+（region termination を設けない）
+
+### 8.7 これ以上を score-fx に入れない（境界宣言）
+
+本章は以下を規定しない（MUST NOT imply）：
+
+* FRP（Prop/Stream）の計算規則や atomic commit（Tick）
+* effect の適用単位（Bridge の責務）
+* Semantics の内部意味論（blooky-fx registry の責務）
+* DevTools/UI の投影
+
+---
+
 ## Appendix A: Design & Interpretation Rules（規約版）
 
 **Note:** 設計判断の最終結果のみを規定する。背景となる代替案の検討は本規約の対象外である。
