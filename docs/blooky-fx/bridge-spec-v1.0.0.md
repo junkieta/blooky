@@ -386,5 +386,3 @@ blooky-fx は競合解決規則を提供しない。
 ---
 
 **END OF blooky-fx Bridge Specification v1.0.0**
-
-どちらに進むか、指示してください。
