@@ -1,573 +1,372 @@
 # score-fx Protocol Specification v1.0.0
 
 **Project Name:** score-fx
-
 **Version:** 1.0.0 (Score & Performance Edition)
+**Status:** 🔒 **Final / Frozen**
 
-**Status:** 🔒 Final Protocol Definition
+---
+
+## 0. Purpose and Scope
+
+本仕様は、非同期実行を「譜面（Score）」と「演奏（Performance）」として記述し、演奏過程を **時間軸上に確定していく事実（PerformanceStep）の列**として扱うための **実行記述プロトコル**を定義する。
+
+本仕様が規定するのは次の最小集合のみである：
+
+1. Score（静的構造）を演奏する際に発生する **事実（PerformanceStep）** の型と順序
+2. Runner と Semantics の境界契約（通知語彙、throw 禁止、suspend/resume の責務分離）
+3. 構造ノート（sequence/parallel/race/loop/condition/switch）の **進行規則**
+
+本仕様は、キーワード **MUST, MUST NOT, SHOULD, SHOULD NOT, MAY** を **RFC 2119** の定義に従って解釈する。
 
 ---
 
 ## 1. Overview
 
-**score-fx** は、非同期実行の構造を「譜面（Score）」、その過程を「演奏（Performance）」として定義するプロトコルである。実行の副作用を命令としてではなく、シリアライズ可能な「事実（PerformanceStep）」の堆積として扱うことで、**実行の透明性と観測可能性を確保する**ことを目的とする。
+**score-fx** は、非同期実行の構造を **譜面（Score）**、その過程を **演奏（Performance）** として定義する実行記述プロトコルである。
 
-また、単一の実行結果や再現性を規範としない。  同一の Score から異なる Performance が生じうることを前提とし、  それらを **同一の構造に対する異なる演奏**として扱う。
+score-fx は実行を「命令の逐次適用」としてではなく、**時間軸上に確定していく事実（PerformanceStep）の記録**として扱う。
 
-この設計により、score-fx は実行の制御ではなく、  **実行の記述と解釈可能性**を中核的価値とする。
+同一の Score から異なる Performance が生じうることを前提とし、それらを **同一の構造に対する異なる演奏**として扱う。
 
----
-
-## 2. Terminology (命名定義)
-
-| 用語 | 定義 | 役割 |
-| --- | --- | --- |
-| **FxNote** | 実行の小単位 | 譜面上の記譜点。処理の定義と識別子（`note_id`）を持つ。 |
-| **FxScore** | 実行の構造定義 | 譜面。`FxNote` が構造化（直列・並列等）された集合。 |
-| **Performance** | 実行ドメイン | 譜面が演奏される独立した空間。固有の `execution_id` を持つ。 |
-| **PerformanceStep** | 実行の事実 | 演奏の一瞬を記録したデータ。不変の事実。 |
-| **Timeline** | 時間構造（Temporal Structure） | PerformanceStep の順序を保持する記録媒体（StepLog）。 |
-| **Runner** | 実行主体 | 奏者。Score を読み取り、事実を Timeline に刻む Agent。 |
+本仕様では **FxNote を Note と略記**してよい。
+また、構造ノートの子要素を **subnote（子ノート）**と呼ぶ。
 
 ---
 
-## 3. Core Data Structures
+## 2. Terminology（命名定義）
+
+| 用語                  | 定義       | 役割                                                               |
+| ------------------- | -------- | ---------------------------------------------------------------- |
+| **FxNote（Note）**    | 実行の小単位   | 譜面上の記譜点                                                          |
+| **FxScore**         | 実行の構造定義  | Note からなる静的譜面                                                    |
+| **Performance**     | 演奏空間     | 固有の `execution_id` を持つ実行ドメイン                                     |
+| **PerformanceStep** | 実行の事実    | 演奏中に確定した不変の出来事                                                   |
+| **Timeline**        | 時間軸（概念）  | 演奏時間の進行そのもの                                                      |
+| **StepRecord**      | 事実列（実体）  | PerformanceStep の順序列（保存・配送されうる）                                  |
+| **Playhead**        | 現在境界（概念） | 確定（Stepが存在）と未確定可能性を分ける概念境界                                       |
+| **Runner**          | 実行主体     | 譜面を演奏し、事実を刻む存在                                                   |
+| **Semantics**       | 意味論      | Note を解釈し、合図（SemanticEvent）を送る                                   |
+| **Profile**         | 拡張契約     | Protocol 未規定部分（until の評価方法、loop 停止条件、選択値 resolver 等）を定義する実装固有の契約 |
+
+**Normative note:** Timeline は StepRecord と同一ではない。Timeline は概念、StepRecord は実体である。
+
+---
+
+## 3. Core Data Structures（Normative）
 
 ### 3.1 PerformanceStep
 
-演奏の最小記録単位。
+PerformanceStep は演奏中に発生した **不変の事実**である。
 
-* **`phase`**: `PerformancePhase` (後述)
-* **`note_id`**: Score 内で一意の記譜点識別子
-* **`execution_id`**: Performance を識別する一意の ID
-* **`payload`**: **[Extensible]** そのフェーズに付随するデータ。上位層（blooky-fx 等）がコンテキストのスナップショット等を格納する器となる。
-* **`effect`**: `EffectBinding` (後述)
-
-Note: score-fx は Step の因果順序のみを規定し、到達保証や配送保証は Transport 層の責務とする。
-
-### 3.2 PerformancePhase (演奏フェーズ)
-
-Runner が `FxNote` を通過する際の状態遷移。
-
-* **`enter`**: 記譜点に到達した。
-* **`active`**: 記譜点の処理（非同期 IO 等）を開始した。
-* **`suspend`**: 外部要因（子 Score、待機条件）により演奏を一時中断した。
-* **`resume`**: 待機条件が解消し、演奏を再開した。（再開の記録方法は §8.5 に従う）
-* **`exit`**: 記譜点の処理を完了し、値を確定させた。
-* **`cancel`**: 演奏空間（Performance）の破棄により、処理が中断された。
-
----
-
-## 4. Operational Rules (運用規則)
-
-### 4.1 Score as a Blueprint (譜面の非干渉)
-
-Score は静的であり、演奏中に自身を書き換えることはない。Runner は Score を読み取り専用として扱い、すべての動的な状態変化は Timeline（PerformanceStep）にのみ記録される。
-
-### 4.2 Effect Binding (副作用の束縛)
-
-`effect` は実行そのものではなく、外部システム（FRP の Stream 注入等）への **参照情報** である。
-score-fx は `effect` の具体的なフォーマットを規定しない（opaque）。
-`EffectBinding` は `PerformanceStep.effect` に格納される不透明値である。
-
-### 4.3 Error-to-Value Mapping (不協和音の処理)
-
-演奏中に発生した例外は、制御例外（throw）として扱わず、計算結果としての「値」に変換する。
-
-* エラーは `PerformanceStep.payload` に格納され、`exit` フェーズをもって記録される。
-* 上位層はこれを `FxCallResult` 等として解釈する。
-
-### 4.4 Cancellation Propagation (演奏の中止)
-
-Performance が `cancel` された場合、Runner は即座に `cancel` フェーズの Step を記録し、すべての Sub-Performance（子演奏）に伝播させなければならない。キャンセル後の Step 発行は静かに無視される。
-
----
-
-## 5. Projection Model（Informative）
-
-Timeline は PerformanceStep の順序を保持する記録媒体（StepLog）である。
-重ね合わせや可視化は **Projection** の責務であり、DevTools などの観測者が
-Score 構造と Timeline を入力として View を構成してよい。
-
-### 5.1 Realized Projection（実績）
-
-Realized Projection は、「すでに起きた演奏の事実」を表す View である。
-ここでいう事実とは、Runner により確定された `PerformanceStep` の連なりである。
-
-### 5.2 Virtual Projection（予測線）
-
-Virtual Projection は、`FxScore` の構造に基づき、現時点から到達しうる `FxNote` の経路（到達可能性）を表す View である。
-Virtual Projection は「未来の候補」であり、`PerformanceStep` としての事実を伴わない。
-
----
-
-## 6. Observability Layer（観測）
-
-Runner は `PerformanceStep` を生成した時点で、それを外部の観測者へ通知してよい（MAY）。
-ただし観測は実行制御の手段として公開されるべきではない（SHOULD NOT）。
-この通知は制御のためではなく、デバッグや可視化等の観測用途を目的とする。
-
-score-fx は、通知の配送方式（同期/非同期、push/pull、永続化、再送、順序保証など）を規定しない。
-
-### 6.1 ObservationPacket（通知フォーマット：参考）
-
-以下は、観測者へ通知するための最小形式の一例である（informative）。
-
-```typescript
-type ObservationPacket = {
+```ts
+type PerformanceStep = {
+  phase: PerformancePhase;
+  note_id: string;
   execution_id: string;
-  step: PerformanceStep;
-}
+
+  // Ordering
+  step_index: number;     // MUST be monotonic within execution_id
+
+  // Optional wall-clock / telemetry
+  timestamp?: number;     // MAY be present; semantics are informative
+
+  // Extensible payload/effect
+  payload?: unknown;      // extensible, opaque to score-fx
+  effect?: unknown;       // EffectBinding (opaque)
+};
 ```
 
-実装は、必要に応じて追加フィールドを含めてもよい（MAY）。
-ただし、その追加フィールドの意味解釈は score-fx の範囲外である。
+* **順序の規範**は `step_index` によって規定される（§4.5）。
+* `timestamp` は任意であり、実時刻である必要はない（informative）。本仕様の conformance は `timestamp` に依存しない。
+
+### 3.2 PerformancePhase
+
+```ts
+type PerformancePhase =
+  | "enter"
+  | "active"
+  | "suspend"
+  | "resume"
+  | "exit"
+  | "cancel";
+```
+
+* `resume` は **SemanticEvent ではない**。Runner が観測結果として記録する（MUST）。
+* `cancel` は Performance-wide の中止として扱う（§4.4）。
+
+---
+
+## 4. Operational Rules（Normative）
+
+### 4.1 Staticity of Score
+
+FxScore は静的な設計図であり、演奏中に書き換えられてはならない（MUST NOT）。
+Runner は Score を読み取り専用として扱わなければならない（MUST）。
+
+### 4.2 Effect Binding（opaque）
+
+`effect` は副作用そのものではなく、**外部世界への参照情報**である。
+score-fx は `effect` の形式・意味解釈・適用方式・適用単位を規定しない（MUST NOT）。
+
+* Semantics が `SemanticEvent.effect` を emit してよい（MAY）。
+* Runner はそれを任意の Step に反映してよい（MAY）。どの phase に付与するかは **Profile** が定義してよい（MAY）。
+
+### 4.3 Error-to-Value Mapping
+
+例外（throw）は境界を越えて漏れてはならない（MUST NOT）。
+
+* Semantics は Runner 境界をまたいで throw を漏らしてはならない（MUST NOT）。
+* Runner も外部へ throw を漏らさないことが推奨される（SHOULD）。
+
+失敗は **値**として `payload` に表現される。
+ただし `payload` は opaque であるため、score-fx は「成功／失敗」を判定しない（MUST NOT）。
+
+### 4.4 Cancellation（Performance-wide）
+
+外部要因により Performance が cancel された場合：
+
+1. Runner は `phase:"cancel"` の Step を StepRecord に記録しなければならない（MUST）。
+2. Runner はすべての Sub-Performance に cancel を伝播させなければならない（MUST）。
+3. cancel 後に生成される Step は無視される設計が推奨される（SHOULD）。ただしログ収集目的で記録することは妨げない（MAY）。
+
+### 4.5 Step Ordering（因果順序）
+
+同一 `execution_id` の StepRecord は次を満たさなければならない（MUST）：
+
+* `step_index` は単調増加である（MUST）。
+* 同一 `note_id` の phase 列は §8 の状態・進行規則と矛盾してはならない（MUST NOT）。
+
+### 4.6 terminate と cancel の関係（Normative）
+
+`terminate` と `cancel` は **別概念**である：
+
+* `terminate` は **Semantics → Runner** の通知であり、**正常系の早期終端（Performance-wide）**を表す。
+* `cancel` は **外部要因の中止**および中止伝播の手段である。
+
+Runner が `terminate` を受理した場合：
+
+1. Runner は当該 Performance を **終端状態**へ遷移させ、以後の subnote スケジューリングを停止しなければならない（MUST）。
+2. Runner は終端を StepRecord に表現しなければならない（MUST）。その表現は次のいずれか：
+
+   * (A) **`phase:"exit"`** の Step を、終端ノート（どの note_id とするかは Profile）に対して記録する
+   * (B) **`phase:"cancel"`** を記録してよい（MAY）
+     ※ v1.0.0 は「terminate＝cancel と同一視」を要求しない（MUST NOT）。
+3. Sub-Performance の扱いは Profile が定義する（MUST）。ただし、**terminate を子に“自動伝播”してはならない**（MUST NOT）。必要なら cancel（§4.4）を用いる。
+
+Sub-Performance が `terminate` した場合：
+
+* 親 Performance は自動的に terminate しない（MUST NOT）。親がどう扱うか（結果として terminate する／継続する／cancel する）は **構造規則または Profile** に委ねる（MAY）。
+
+---
+
+## 5. Timeline and Projection Model
+
+### 5.1 Timeline（Normative）
+
+Timeline とは Performance における **演奏時間の進行を表す一次元の時間軸（概念）**である。
+Timeline はログではない（Normative）。
+
+### 5.2 Playhead（Informative）
+
+Playhead は Timeline 上で「確定（Step が存在）／未確定可能性」を分ける概念境界である。
+Playhead は Step として表現されない（Normative ではなく informative な設計原則）。
+UI が Playhead を描画することは Projection の責務である。
+
+### 5.3 PerformanceStep と確定性（Normative）
+
+確定性は **Step の存在によってのみ判断**される（MUST）。
+score-fx は「確定領域」「未確定領域」などの名前付き Region を内部概念として持たない（MUST NOT）。
+
+### 5.4 Projection（Informative）
+
+Projection は Timeline（概念）と Score（構造）と StepRecord（事実列）を入力として実行状況を可視化する View である。
+色・形・レイヤー・領域分割はすべて Projection の責務である。
+
+---
+
+## 6. Observability（Normative）
+
+Runner は Step を観測者に通知してよい（MAY）。
+観測は制御に使われてはならない（SHOULD NOT）。
+通知方式（同期/非同期、push/pull、永続化、再送、順序保証など）は規定しない。
 
 ---
 
 ## 7. SemanticEvent Vocabulary（Normative）
 
-本章は、Semantics が Runner に対して yield できる **SemanticEvent の閉集合（closed set）**を定義する。
-Runner は本章の規則に従ってイベントを解釈しなければならない（MUST）。
+SemanticEvent は Semantics → Runner の **一方向通知**である。
+SemanticEvent は **制御命令ではない**（MUST NOT interpret as control command）。
 
-### 7.1 SemanticEvent とは
-
-**SemanticEvent** は、Semantics がある `FxNote` を解釈する過程で生成する **通知（notification）**である。
-
-* SemanticEvent は **制御命令ではない**（後述）。
-* SemanticEvent の種類（kind）は **閉集合**であり、本仕様で定義されたもの以外を追加してはならない（MUST NOT）。
-
-### 7.2 型定義（参考）
+### 7.1 Closed Set（Normative）
 
 ```ts
-export type ConditionRef = unknown; // opaque reference
-
-export type SemanticEvent =
+type SemanticEvent =
   | { type: "result"; value: unknown }
-  | { type: "suspend"; until: ConditionRef }
   | { type: "effect"; ref: unknown }
+  | { type: "suspend"; until: unknown }
   | { type: "terminate"; value?: unknown };
 ```
 
-### 7.3 配送と処理モデル
+### 7.2 `result`（Normative）
 
-1. Semantics は 0 個以上の SemanticEvent を yield してよい（MAY）。
-2. Runner は、Semantics が生成した順序どおりにイベントを処理しなければならない（MUST）。
-3. Runner は、イベントを並べ替え・欠落・重複させてはならない（MUST NOT）。
+* 同一ノート評価に対し高々 1 回（MUST NOT emit more than once）。
+* `result` の後に追加イベントを emit してはならない（MUST NOT）。
 
-### 7.4 制御命令ではない（重要）
+### 7.3 `effect`（Normative）
 
-SemanticEvent は、Runner に対して任意の subnote を選択・順序変更させるための命令として解釈されてはならない（MUST NOT）。
+* 外部参照（opaque）の通知。
+* Semantics は副作用を実行してはならない（MUST NOT）。
 
-* subnote のスケジューリング（sequence/parallel/race 等）は、**Score 構造と Runner の構造規則**によって決まる。
-* SemanticEvent は **観測可能な事実の通知**である。
+### 7.4 `suspend`（Normative）
 
-### 7.5 `result(value)`
+* `until` は opaque。
+* 評価方法（購読、ポーリング、真偽判定など）は Profile が定義する（MUST）。
 
-#### 意味
+### 7.5 `terminate`（Normative）
 
-`result` は、当該ノートの意味的な値が **確定した**ことを示す。
-
-#### 規則
-
-1. Semantics は、1 つのノート評価に対して `result` を高々 1 回 yield してよい（MAY）。
-2. Semantics が `result` を yield した場合、そのノート評価は **完了**とみなされる（MUST）。
-3. `result` を yield した後、Semantics は当該ノート評価に関して **追加のイベントを yield してはならない**（MUST NOT）。
-   （※ `effect` を出すなら `result` より前に出る必要がある）
-
-#### Runner の義務
-
-* Runner は `result.value` を、PerformanceStep の該当フィールドへ確実に反映しなければならない（MUST）。
-
-### 7.6 `effect(ref)`
-
-#### 意味
-
-`effect` は、Semantics が解釈過程で得た **外部参照（binding / ref）を記録する**ための通知である。
-
-* `effect` 自体は命令ではなく、**事実の記録**である。
-
-#### 規則
-
-1. Semantics は任意個の `effect` を yield してよい（MAY）。
-2. Runner は `effect` によって **即時に副作用を実行してはならない**（MUST NOT）。
-3. `ref` の具体的意味（FxRef への正規化やコミット方式）は、本仕様では規定しない。
-   それは Bridge 仕様など上位（または隣接）仕様が規定してよい（MAY）。
-
-#### Runner の義務
-
-* Runner は `effect.ref` を、後段で Tick などの単位に集約できる形で **確実に記録**しなければならない（MUST）。
-  （実装上はイベント列として保存して defer するのが推奨）
-
-### 7.7 `suspend(until)`
-
-#### 意味
-
-`suspend` は、評価を継続できないため **待機状態に入る**ことを示す。
-
-#### 規則
-
-1. Semantics は、1 つのノート評価試行に対して `suspend` を高々 1 回 yield してよい（MAY）。
-2. `until` は **ConditionRef（opaque）** でなければならない（MUST）。
-3. `suspend` は値の確定を意味しない（MUST）。
-
-#### Runner の義務
-
-1. Runner は `suspend` を受け取ったら、当該ノート評価を **中断（suspended）**状態に遷移させなければならない（MUST）。
-2. Runner は対応する step（例：`phase="suspend"`）を emit/record し、`until` を保持しなければならない（MUST）。
-3. `until` が成立したと判断したら Runner は評価を再開し、再開 step（例：`phase="resume"`）を emit/record してから継続しなければならない（MUST）。
-
-### 7.8 `terminate(value?)`（Performance-wide）
-
-#### 意味
-
-`terminate` は、**この Performance 全体を早期終了する**ことを示す。
-
-* `terminate` は例外ではない。
-* `terminate` は構造上の「完了」信号である。
-
-#### 規則
-
-1. Semantics は、1 つの Performance に対して `terminate` を高々 1 回 yield してよい（MAY）。
-2. `terminate` は **Performance-wide** である（MUST）。
-   すなわち、発生時点以降に予定されている実行（subnote の実行を含む）をすべて打ち切り、Performance を終端させる。
-3. Semantics は `terminate` を yield した後、追加のイベントを yield してはならない（MUST NOT）。
-
-#### `result` との排他（Normative）
-
-* Semantics は、同一ノート評価（および同一 Performance）において `result` と `terminate` を **両方 yield してはならない**（MUST NOT）。
-  どちらか一方のみが許可される。
-
-#### Runner の義務
-
-* Runner は `terminate` を受け取ったら、以下を行わなければならない（MUST）：
-
-  1. 以後の subnote スケジューリングを停止する
-  2. Performance を終端状態へ遷移させる
-  3. 最終 step（例：`phase="exit"` あるいは `phase="cancel"`）を emit/record し、`value` があればそれを保持する
-  4. Timeline の不変条件（順序・重複・欠落等）を破ってはならない
-
-### 7.9 エラー方針（境界規範）
-
-Semantics は Runner 境界をまたいで例外（throw）を漏らしてはならない（MUST NOT）。
-内部エラーがある場合は、仕様が定める **値としての失敗表現**に落とし込むか、`terminate` を用いて制御された終端として表現しなければならない（MUST）。
+* Performance-wide の早期終端通知。
+* `result` と排他（MUST NOT emit both in the same evaluation）。
 
 ---
 
-## 8. Structural Progression Rules（構造進行規則 / Normative）
+## 8. Structural Progression Rules（Normative）
 
-### 8.1 目的
+### 8.1 原則（Normative）
 
-本章は、Score の構造（subnotes を含むノート木）を **Runner がどのように進行（progression）として解釈するか**を定義する。
-ここで定義されるのは **実行の外形（いつ子を開始し、いつ親が完了するか）**のみであり、各ノートの意味内容（Semantics の内部ロジック）や FRP/Bridge の詳細は対象外とする。
+* 進行の主権は Runner にある（MUST）。
+* SemanticEvent は subnote の開始順序・選択を指示する命令として解釈してはならない（MUST NOT）。
+* Runner は構造規則が許すタイミングでのみ subnote を開始してよい（MUST）。
+* 同一ノート評価を重複して開始してはならない（MUST NOT）。
 
-> この章が必要なのは、SemanticEvent を「制御命令ではない」と定義した結果、
-> **進行の主権が Runner＋構造に完全に移った**ためである。
+### 8.2 ノート状態と Phase の対応（Normative）
 
-### 8.2 共通定義
+Runner は各ノート評価を次の状態として区別できなければならない（MUST）：
 
-#### 8.2.1 ノートの状態（Normative）
+* not-started / running / suspended / completed / cancelled
 
-Runner は各ノートに対して、少なくとも以下の状態遷移を扱わなければならない（MUST）。
+状態と Phase の対応は次の通り（Normative）：
 
-* **未開始（not-started）**
-* **進行中（running）**
-* **待機中（suspended）**
-* **完了（completed）**
-* **中止（cancelled）**
+| State       | Allowed Phases                | Next State                        |
+| ----------- | ----------------------------- | --------------------------------- |
+| not-started | enter                         | running                           |
+| running     | active, suspend, exit, cancel | suspended / completed / cancelled |
+| suspended   | resume, cancel                | running / cancelled               |
+| completed   | (none)                        | terminal                          |
+| cancelled   | (none)                        | terminal                          |
 
-※ 内部表現は任意。ただし観測（Timeline/PerformanceStep）上は区別できる必要がある。
+**追加規範：**
 
-#### 8.2.2 完了（completion）の定義（Normative）
+* `enter` は当該ノート評価につき高々 1 回（MUST NOT duplicate）。
+* `exit` と `cancel` は終端 Phase であり、以後そのノート評価に対して Phase を記録してはならない（MUST NOT）。
 
-ノートは、以下のいずれかで **完了（completed）**とみなされる（MUST）。
+### 8.3 Completion（Normative）
 
-1. Semantics が `result(value)` を yield し、Runner がそれを受理した
-2. Semantics が `terminate(value?)` を yield し、（本仕様が定義するスコープで）Performance が終端した
-3. 構造ノート（sequence/parallel/race/loop/condition/switch）は **8.4 に従って完了**と判定される
+ノートは次のいずれかで完了とみなされる（MUST）：
 
-> 注：`terminate` は Performance-wide（Performance 全体の終端）であり、個別ノート完了の一般手段ではない。
+1. `result` が受理された
+2. 構造ノートが本章の規則に従って完了と判定された
+3. Performance が terminate により終端し、当該ノート評価が終端処理により completed 扱いになった（Profile で定義してよい）
 
-#### 8.2.3 排他（Normative）
+### 8.4 構造ノート
 
-同一ノート評価において、Semantics は `result` と `terminate` を両方 yield してはならない（MUST NOT）。
+#### 8.4.1 `sequence`（Normative）
 
-#### 8.2.4 例外の禁止（境界規範 / Normative）
+* 子を順に開始（MUST）
+* 全子完了で完了（MUST）
 
-Semantics は Runner 境界をまたいで throw を漏らしてはならない（MUST NOT）。
-Runner も境界外へ throw を漏らさないことが推奨される（SHOULD）。
-（値としての失敗表現は別章/別仕様で規定してよい）
+#### 8.4.2 `parallel`（Normative）
 
-### 8.3 subnotes の開始規則（共通）
+* 子の開始は並行でよい（MAY）
+* v1.0.0 の既定は all-of（全子完了で完了）（MUST）
 
-#### 8.3.1 開始権限（Normative）
+#### 8.4.3 `race`（Normative）
 
-Runner は、親ノートの構造規則が許すタイミングでのみ子ノート（subnote）を開始してよい（MUST）。
-SemanticEvent は子ノートの開始順序・選択を指示する命令として解釈してはならない（MUST NOT）。
+* 最初に完了した子が勝者（MUST）
+* 残りは cancel（MUST）
+* 勝者完了で親完了（MUST）
 
-#### 8.3.2 再入（Normative）
+#### 8.4.4 `loop`（Normative）
 
-同一ノートを重複して開始してはならない（MUST NOT）。
-（loop 等で再実行する場合は「新しい評価インスタンス」として扱うか、Runner の管理下で再入を明示的に区別する）
+* 反復条件（継続／停止）は Profile 定義（MUST）
+* terminate を break/continue に使ってはならない（MUST NOT）
 
-### 8.4 構造ノートごとの進行規則（最小）
+#### 8.4.5 `condition` / `switch`（Normative）
 
-> ここでは **最小の外形**だけを書く。
-> “いつ開始するか / いつ完了するか / terminate/cancel が来たらどうするか” のみ。
+##### 8.4.5.1 Selection Resolution（Normative）
 
-#### 8.4.1 `sequence`（順次実行）
+1. Runner は condition/switch の開始時（少なくとも `phase:"enter"` の前後）に、`note.data` に保持された **選択参照（opaque）**を **Profile resolver** で解決しなければならない（MUST）。
+2. 解決が同期的であることが推奨される（SHOULD）。
+3. 解決が非同期の場合、Runner は `phase:"active"` を記録し、解決完了を待ってから選択された子を開始しなければならない（MUST）。
 
-**開始**
+##### 8.4.5.2 Selection（Normative）
 
-* `sequence` の開始時、Runner は最初の子ノートを開始する（MUST）。
+* 選択確定後、該当子のみ開始（MUST）
+* 非選択子は開始してはならない（MUST NOT）
 
-**進行**
+### 8.5 suspend / resume（Normative）
 
-* ある子ノートが完了したら、Runner は次の子ノートを開始する（MUST）。
-* いずれかの子が `suspend` で待機に入った場合、Runner はその待機解除まで `sequence` の進行を停止する（MUST）。
-  （待機解除後、同じ子から再開する）
-
-**完了**
-
-* 全ての子ノートが完了した時点で、`sequence` 自身は完了とみなされる（MUST）。
-* `sequence` の `result` 値をどうするかは、プロファイルで定義してよい（MAY）。
-  （例：最後の子の result を採用、配列で集約、void 等）
-
-#### 8.4.2 `parallel`（並列実行）
-
-**開始**
-
-* `parallel` の開始時、Runner は全ての子ノートを開始してよい（MAY）。
-  ただし開始順は規定しない。
-
-**完了**
-
-* `parallel` の完了条件はプロファイルで選択できるが、少なくとも次のいずれかを明示しなければならない（MUST）：
-
-  * 全子完了で完了（all-of）
-  * 任意一子完了で完了（any-of）
-* score-fx 本体としての推奨は **all-of**（SHOULD）。
-  （race を別に持つなら parallel は all-of が読みやすい）
-
-**待機**
-
-* いずれかの子が `suspend` の場合でも、他の子の進行は妨げない（MUST）。
-
-#### 8.4.3 `race`（最初に終わったものが勝つ）
-
-**開始**
-
-* `race` の開始時、Runner は全ての子ノートを開始してよい（MAY）。
-
-**勝者決定**
-
-* 最初に **完了**した子ノートを勝者とする（MUST）。
-
-  * 完了とは 8.2.2 に定義した completed を指す（result による完了が基本）
-
-**残りの扱い**
-
-* 勝者が決定した時点で、Runner は残りの子ノートを中止（cancel）しなければならない（MUST）。
-  （中止理由や CancelToken の詳細は別章/別仕様でよい）
-
-**race 自身の完了**
-
-* 勝者決定と同時に `race` は完了とみなされる（MUST）。
-
-#### 8.4.4 `loop`（反復）
-
-loop は “反復する構造” を提供するが、反復条件はプロファイルに委ねる。score-fx としての最小規範は以下。
-
-**開始**
-
-* `loop` の開始時、Runner は本体ノート（body）を開始する（MUST）。
-
-**反復**
-
-* 本体ノートが完了した時点で、Runner は次の反復を開始してよい（MAY）。
-  反復の停止条件はプロファイルで規定する（MUST）。
-  （例：回数、条件、外部キャンセル等）
-
-**完了**
-
-* 停止条件が満たされた時点で loop は完了とみなされる（MUST）。
-
-> 注：loop の “break/continue 的な局所終端” を `terminate` で表現してはならない（MUST NOT）。terminate は Performance-wide のみ。
-
-#### 8.4.5 `condition` / `switch`（分岐）
-
-**開始**
-
-* Runner は condition/switch が要求する “選択決定値” を得た後、対応する子ノートを開始する（MUST）。
-
-**選択決定値の取得**
-
-* `condition` / `switch` は `note.data` に **選択決定値を得るための参照（opaque）**を保持しなければならない（MUST）。
-* Runner はこの参照を **Profile-defined resolver** で解決して選択決定値を得る（MUST）。
-  典型例：
-
-  * 直前ノートの `result` を入力として使う
-  * AppContext 等の参照から得る
-  * ルート引数から得る
-
-**選択の規範**
-
-* 選択が確定したら、Runner は選ばれた 1 つ（または規定個数）の子ノートのみを開始しなければならない（MUST）。
-* 選ばれなかった子ノートは開始してはならない（MUST NOT）。
-
-### 8.5 `suspend` と再開（resume）
-
-#### 8.5.1 `suspend(until)` の opaque 化（Normative）
-
-`suspend.until` の型は `ConditionRef`（opaque）である。
-ConditionRef の評価方法（真偽判定・購読・ポーリング等）は **プロファイル**が定義する。
-
-#### 8.5.2 Runner の義務（Normative）
-
-* Runner は `suspend` を受け取ったら、該当ノートを suspended に遷移させる（MUST）。
-* Runner は ConditionRef が “成立”したと判断したら、ノートを running に戻し、再評価を継続する（MUST）。
-* `resume` は SemanticEvent ではなく Runner が Timeline 上の step として刻む（MUST）。
-  （step の厳密な種類名は本仕様の step 定義に従う）
-
-### 8.6 `terminate`（Performance-wide）
-
-#### 8.6.1 意味（Normative）
-
-`terminate` は **Performance 全体を早期終了**させる通知である。
-Runner は `terminate` を受け取ったら、以後の subnote スケジューリングを停止し、Performance を終端しなければならない（MUST）。
-
-#### 8.6.2 伝播（Normative）
-
-`terminate` は局所スコープに閉じてはならない（MUST NOT）。
-（region termination を設けない）
-
-### 8.7 これ以上を score-fx に入れない（境界宣言）
-
-本章は以下を規定しない（MUST NOT imply）：
-
-* FRP（Prop/Stream）の計算規則や atomic commit（Tick）
-* effect の適用単位（Bridge の責務）
-* Semantics の内部意味論（blooky-fx registry の責務）
-* DevTools/UI の投影
+* `resume` は Runner が記録する Phase（MUST）
+* Semantics は resume タイミングに関与しない（MUST NOT imply）
+* `until` の評価方法は Profile 定義（MUST）
 
 ---
 
-## Appendix A: Design & Interpretation Rules（規約版）
+## 9. Boundary Declaration（Normative）
 
-**Note:** 設計判断の最終結果のみを規定する。背景となる代替案の検討は本規約の対象外である。
+score-fx は以下を規定しない（MUST NOT imply）：
 
----
-
-### 1. Core Manifesto (設計原則)
-
-* `FxScore` は不変の設計図であり、実行中に自身を書き換えない。
-* `FxNote` は譜面上の記譜点であり、ロジックや駆動能力を持たない。
-* 演奏の主権は `Runner` にあり、譜面（構造）と実行（時間）は分離される。
+* FRP / Stream の計算規則、atomic commit、tick
+* effect の適用単位・適用方式（実行）
+* Semantics の内部意味論（registry、DSL、実装）
+* UI / DevTools 表現（Projection の形式）
+* `payload` の意味（成功／失敗判定を含む）
 
 ---
 
-### 2. The Score Layer (AST 定義)
+## 10. Conformance（Normative）
 
-* `FxNote` / `FxScore` の静的性は本文 §2〜§4 に従う。
+実装が score-fx v1.0.0 に conformant であるためには：
 
----
-
-### 3. Semantics Contract (解釈インターフェース)
-
-* Semantics は Note を解釈するが、演奏（Performance）そのものは行わない。
-* Semantics と Runner は、Generator を通じた一方向の通信（合図の発行）のみを行う。
-* `resume` は `SemanticEvent` ではなく、再開は Runner が観測結果として記録する。
+1. §4 の Operational Rules を満たすこと（MUST）
+2. §7 の SemanticEvent Vocabulary を closed set として扱うこと（MUST）
+3. §8 の Structural Progression Rules に従うこと（MUST）
 
 ---
 
-### 4. The Performance Layer (事実の記録)
+## Appendix A: Examples（Informative）
 
-* `PerformanceStep` は演奏中に発生した不変の事実である（詳細は本文 §3〜§8）。
-* Error-to-Value Mapping の方針は本文に従う。
+### A.1 Simple Sequence
 
----
+```ts
+// Score (shape is illustrative)
+const score = sequence([
+  call({ note_id: "fetch" }),
+  call({ note_id: "process" }),
+]);
 
-## Appendix B: Versioning Policy
+// Expected StepRecord (illustrative)
+[
+  { phase: "enter",  note_id: "fetch",   step_index: 1, execution_id: "E" },
+  { phase: "active", note_id: "fetch",   step_index: 2, execution_id: "E" },
+  { phase: "exit",   note_id: "fetch",   step_index: 3, execution_id: "E", payload: {/*...*/} },
 
-本仕様は **Semantic Versioning（MAJOR.MINOR.PATCH）** に基づいて管理される。
-ただし、本仕様における「互換性」は **実装 API ではなく、仕様準拠性（conformance）** を基準とする。
-
-### 1. Compatibility Definition（互換性の定義）
-
-あるバージョン *vX.Y.Z* に準拠した実装が、
-*vX.Y.(Z+1)* または *vX.(Y+1).0* の仕様を読んだ際に
-**非準拠と判定されない**場合、その変更は後方互換であるとみなす。
-
-本仕様は、**実行結果の一意性や再現性を互換性の条件としない**。
-
----
-
-### 2. PATCH Version（X.Y.Z+1）
-
-PATCH バージョンは、**仕様の意味論を変更しない修正**に対して割り当てられる。
-
-含まれる変更例：
-
-* 誤字・脱字・表現上の誤解を招く記述の修正
-* 実装を不必要に拘束していた記述の削除・緩和
-* 用語定義の明確化（意味の変更を伴わないもの）
-* 外部仕様・固有名詞への不要な依存の除去
-* Informative（非規範）セクションの修正
-
-PATCH 更新により、既存の準拠実装が非準拠になることはない。
+  { phase: "enter",  note_id: "process", step_index: 4, execution_id: "E" },
+  { phase: "active", note_id: "process", step_index: 5, execution_id: "E" },
+  { phase: "exit",   note_id: "process", step_index: 6, execution_id: "E", payload: {/*...*/} },
+]
+```
 
 ---
 
-### 3. MINOR Version（X.Y+1.0）
+## 11. Frozen Declaration（Normative）
 
-MINOR バージョンは、**後方互換性を保った拡張**に対して割り当てられる。
+🔒 **Frozen**
 
-含まれる変更例：
-
-* 新しい概念・用語・章の追加（既存定義の意味を変更しないもの）
-* 任意要素（MAY / OPTIONAL）の追加
-* Informative な Appendix や Design Notes の追加
-* 既存の曖昧な規定を、互換性を保ったまま規範化する変更
-
-MINOR 更新では、既存実装は引き続き準拠とみなされる。
+* v1.0.0 は score-fx の基準点である。
+* 後方互換を壊す変更は禁止（MUST NOT）。
+* 意味論変更は MAJOR のみ（MUST）。
+* SemanticEvent の語彙（Closed Set）と構造進行規則は v1.0.0 で凍結される（MUST）。
 
 ---
 
-### 4. MAJOR Version（X+1.0.0）
-
-MAJOR バージョンは、**後方互換性を破る変更**に対して割り当てられる。
-
-含まれる変更例：
-
-* 既存の必須要件（MUST）の意味変更・削除
-* これまで許容されていた挙動を禁止する変更
-* 中核概念（Score / Performance / Timeline 等）の意味的再定義
-* 準拠判定基準そのものの変更
-
-MAJOR 更新では、既存実装が非準拠となりうる。
-
----
-
-### 5. Frozen Declaration と Versioning の関係
-
-本仕様における **Frozen** とは、
-
-> 「後方互換性ポリシーを変更しない」
-
-ことを意味し、
-**文言の一切の変更を禁止することを意味しない**。
-
-Frozen 状態においても、
-PATCH バージョンによる修正および明確化は許容される。
-
----
-
-### 6. Pre-release Editing Policy（公開前編集）
-
-公開前の仕様については、**バージョン番号を変更することなく内容を修正してよい**。
-最初に公開された版が、その MAJOR.MINOR 系列における**基準版（X.Y.0）**となる。
-
----
-
-
-**END OF SPECIFICATION v1.0.0**
+# END OF score-fx Protocol Specification v1.0.0
