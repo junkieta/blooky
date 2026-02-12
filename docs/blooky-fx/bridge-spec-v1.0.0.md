@@ -127,10 +127,10 @@ Conflict とは、同一 Tick 内において：
 
 ### 3.2 Conflict MUST NOT Occur（Normative）
 
-同一 Tick 内での Conflict は仕様違反であり、発生してはならない（MUST NOT）。
-
-* Bridge は競合解決戦略を提供しない
-* 分岐・統合は FRP 側の構造で表現されるべきである
+同一 Tick 内で同一 Prop への異値更新が検出された場合、
+Bridge は conflict を検出して Tick failure として確定しなければならない（MUST）。
+Bridge は当該 Tick を commit してはならない（MUST NOT）。
+Bridge は conflict 解決規則（優先順位・last-write-wins 等）を提供してはならない（MUST NOT）。
 
 ---
 
@@ -181,6 +181,24 @@ Bridge Profile が 1 effect から複数の更新（0..N）を返す場合でも
 
 ---
 
+### 4.4 Cancellation Boundary Rules（Normative）
+
+Bridge は `phase:"cancel"` を受理した execution について、以下を満たさなければならない（MUST）:
+
+1. `phase:"cancel"` の Step を Tick 対象として予約してはならない（MUST NOT）。
+2. cancel step_index より後に到着した Step は commit 対象に含めてはならない（MUST NOT）。
+3. cancel は Effect Map を変更してはならない（MUST NOT）。
+
+Bridge は以下を行ってよい（MAY）:
+
+1. cancel 後に到着した Step を ignored として観測通知する。
+2. 当該 execution に紐づく未処理 reservation を reject する。
+
+**Failure boundary note（Normative）**:
+ここでの reject は通知経路であり、未処理例外を境界外へ漏らす目的で使ってはならない（MUST NOT）。
+
+---
+
 ## 5. Observer Contract
 
 ### 5.1 Observer Role
@@ -222,6 +240,11 @@ Observer は Tick を Atomic Commit として扱わなければならない（MU
 
 ## 6. Bridge Profile（Normative）
 
+**Profile Slot note（Normative）**:
+Bridge Profile は独立プロトコルではなく、Bridge 実装が差し替える解決関数群の束である。
+Bridge v1.0.0 が要求するのは、必要な解決関数が存在し呼び出せることであり、
+Profile 自体の closed set や独立 conformance は規定しない。
+
 Bridge Profile は、Bridge が以下を解釈するための契約である：
 
 1. **Effect Resolution**
@@ -260,11 +283,6 @@ Bridge Profile は、Bridge が以下を解釈するための契約である：
 export type TickId = string | number;
 
 export type AppContext = Record<string | symbol, unknown>;
-
-export type FxRef<T> =
-  | { key: string | symbol }
-  | Prop<T>
-  | T;
 
 interface BridgeProfile {
   /**

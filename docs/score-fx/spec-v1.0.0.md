@@ -46,7 +46,7 @@ score-fx は実行を「命令の逐次適用」としてではなく、**時間
 | **Playhead**        | 現在境界（概念） | 確定（Stepが存在）と未確定可能性を分ける概念境界                                       |
 | **Runner**          | 実行主体     | 譜面を演奏し、事実を刻む存在                                                   |
 | **Semantics**       | 意味論      | Note を解釈し、合図（SemanticEvent）を送る                                   |
-| **Profile**         | 拡張契約     | Protocol 未規定部分（until の評価方法、loop 停止条件、選択値 resolver 等）を定義する実装固有の契約 |
+| **Profile** | 拡張契約 | 実装が差し替える解決関数群の束。独立プロトコルではない。score-fx が要求するのは必要な解決関数の存在のみであり、Profile 自体の closed set / 独立 conformance は規定しない。 |
 
 **Normative note:** Timeline は StepRecord と同一ではない。Timeline は概念、StepRecord は実体である。
 
@@ -330,6 +330,9 @@ score-fx は以下を規定しない（MUST NOT imply）：
 1. §4 の Operational Rules を満たすこと（MUST）
 2. §7 の SemanticEvent Vocabulary を closed set として扱うこと（MUST）
 3. §8 の Structural Progression Rules に従うこと（MUST）
+
+**Profile Slot note（Normative）**:
+本仕様は Profile 自体の conformance を規定しない（MUST NOT）。
 
 ---
 

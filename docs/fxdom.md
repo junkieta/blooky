@@ -91,6 +91,11 @@ fxdom は参照値の全体系を規定しない。
 
 他の属性値（`fn`, `by`, `until`, `ms`, `value`, `done` など）の解決は **実装（Profile/Host）**に委ねる。
 
+**Profile Slot note（Normative）**:
+fxdom における Profile/Host は、参照解決のための実装差し替え点である。
+fxdom が要求するのは解決関数が存在し呼び出せることであり、
+Profile/Host 自体の closed set や独立 conformance は規定しない。
+
 ---
 
 ## 4. Element Vocabulary
@@ -617,6 +622,12 @@ fxdom は「参照の全体系」を規定しない。
 * それらの解決規約は **Profile/Host** の責務
 
 fxdom は「DOM 外参照禁止」のような一般語彙で ContextRef を否定しない。
+
+### Context Vocabulary Mapping（Normative）
+
+- **AppContext**: 実行時の値辞書（`Record<string | symbol, unknown>` 相当）
+- **ContextRef**: fxdom 上のキー参照表現（例: `"$count"`）
+- **Resolution**: ContextRef を AppContext に対して解決する処理（Host/Runner の責務）
 
 ---
 
