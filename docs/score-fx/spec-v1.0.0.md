@@ -333,31 +333,6 @@ score-fx は以下を規定しない（MUST NOT imply）：
 
 ---
 
-## Appendix A: Examples（Informative）
-
-### A.1 Simple Sequence
-
-```ts
-// Score (shape is illustrative)
-const score = sequence([
-  call({ note_id: "fetch" }),
-  call({ note_id: "process" }),
-]);
-
-// Expected StepRecord (illustrative)
-[
-  { phase: "enter",  note_id: "fetch",   step_index: 1, execution_id: "E" },
-  { phase: "active", note_id: "fetch",   step_index: 2, execution_id: "E" },
-  { phase: "exit",   note_id: "fetch",   step_index: 3, execution_id: "E", payload: {/*...*/} },
-
-  { phase: "enter",  note_id: "process", step_index: 4, execution_id: "E" },
-  { phase: "active", note_id: "process", step_index: 5, execution_id: "E" },
-  { phase: "exit",   note_id: "process", step_index: 6, execution_id: "E", payload: {/*...*/} },
-]
-```
-
----
-
 ## 11. Frozen Declaration（Normative）
 
 🔒 **Frozen**
