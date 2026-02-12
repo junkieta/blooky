@@ -17,7 +17,7 @@
 
 ### 中心となる概念
 
-**`Stream<A>` - イベントの流れ**  
+**`Stream<A>` - イベントの流れ**    
 未来に発生する一連のイベントを表現するデータ構造。`Stream`自体は値を持たず、「これから値が流れてくる可能性がある」という**可能性**や**設計図**を定義します。
 
 **`Prop<A>` - 確定した状態**  
@@ -222,7 +222,7 @@ jshtmlが発行するカスタムイベント：
 
 ### 中心となる概念
 
-**`FxNode` - 副作用ノード**  
+**`FxNote` - 副作用ノード**  
 実行可能な副作用の単位。sequence、parallel、call等の様々なタイプがあり、ツリー構造を形成。
 
 **`FxRef<T>` - コンテキスト参照**  
@@ -238,18 +238,18 @@ jshtmlが発行するカスタムイベント：
 | 関数 | 引数 | 説明 |
 |------|-----|------|
 | **`fx.none`** | `()` | 何もしない空ノード |
-| **`fx.sequence`** | `(steps: FxNode[])` | 順次実行 |
-| **`fx.parallel`** | `(steps: FxNode[])` | 並行実行（全て完了を待つ） |
-| **`fx.race`** | `(steps: FxNode[])` | 競合実行（最初の完了を採用） |
+| **`fx.sequence`** | `(steps: FxNote[])` | 順次実行 |
+| **`fx.parallel`** | `(steps: FxNote[])` | 並行実行（全て完了を待つ） |
+| **`fx.race`** | `(steps: FxNote[])` | 競合実行（最初の完了を採用） |
 | **`fx.wait`** | `({ ms?: FxRef<number>, until?: FxRef<Prop<boolean>> })` | 待機処理 |
 | **`fx.call`** | `(fn: FxRef<Function>, options?: CallOptions)` | 関数呼び出し |
-| **`fx.condition`** | `(if: FxRef<boolean>, then: FxNode, else?: FxNode)` | 条件分岐 |
-| **`fx.switch`** | `(by: FxRef<any>, cases: Map<any, FxNode>, default?: FxNode)` | 多分岐 |
-| **`fx.loop`** | `(while: FxRef<boolean>, body: FxNode)` | ループ実行 |
+| **`fx.condition`** | `(if: FxRef<boolean>, then: FxNote, else?: FxNote)` | 条件分岐 |
+| **`fx.switch`** | `(by: FxRef<any>, cases: Map<any, FxNote>, default?: FxNote)` | 多分岐 |
+| **`fx.loop`** | `(while: FxRef<boolean>, body: FxNote)` | ループ実行 |
 | **`fx.collapse`** | `(value: any, dripper: FxRef<DripperStream>)` | Streamへの値送信 |
 | **`fx.yield`** | `({ for: FxRef<string>, value?: any })` | サブフロー実行 |
 | **`fx.return`** | `(value?: FxRef<any>)` | サブフローからの返却 |
-| **`fx.context`** | `(ctx: object, child: FxNode, id?: string)` | コンテキスト定義 |
+| **`fx.context`** | `(ctx: object, child: FxNote, id?: string)` | コンテキスト定義 |
 
 #### CallOptions
 
@@ -270,9 +270,9 @@ interface CallOptions {
 |------|------------|------|
 | **`ref`** | `<T>(key: string) => FxRef<T>` | コンテキストキーへの参照を生成 |
 | **`isFxRef`** | `(v: unknown) => v is FxRef<any>` | FxRef判定 |
-| **`prepare`** | `(node: FxNode, context: AppContext, parent?: ExecContext) => PreparedFx` | 実行準備（コンパイル） |
+| **`prepare`** | `(node: FxNote, context: AppContext, parent?: ExecContext) => PreparedFx` | 実行準備（コンパイル） |
 | **`execute`** | `(prepared: PreparedFx) => ExecutionHandle` | 準備済みフローを実行 |
-| **`query`** | `(node: FxNode, app?: AppContext, ctx?: ExecContext) => ExecutionHandle` | prepare→executeのショートハンド |
+| **`query`** | `(node: FxNote, app?: AppContext, ctx?: ExecContext) => ExecutionHandle` | prepare→executeのショートハンド |
 | **`createCancelToken`** | `(parent?: CancelToken) => CancelToken` | キャンセルトークン生成 |
 
 ---
@@ -284,8 +284,8 @@ interface ExecContext {
   resolve: (v: FxRef<any>) => Prop<any>;     // 参照解決
   cancelToken: CancelToken;                   // キャンセル制御
   middlewares?: FxMiddleware[];               // ミドルウェア
-  onNodeEnter?: (node: FxNode) => void;      // ノード開始フック
-  onNodeExit?: (node: FxNode, reason?: any, error?: any) => void; // ノード終了フック
+  onNodeEnter?: (node: FxNote) => void;      // ノード開始フック
+  onNodeExit?: (node: FxNote, reason?: any, error?: any) => void; // ノード終了フック
 }
 ```
 
@@ -332,7 +332,7 @@ const loggingMiddleware: FxMiddleware = async (ctx, next) => {
 ### 中心となる概念
 
 **`EffectElement` - 副作用要素基底クラス**  
-全てのfx要素の基底となる抽象クラス。`toFxNode()`メソッドでFxNodeに変換。
+全てのfx要素の基底となる抽象クラス。`toFxNote()`メソッドでFxNoteに変換。
 
 **コンテキスト継承**  
 `fx-context`要素によるコンテキストのスコープ管理と継承。
@@ -583,8 +583,8 @@ type DripEffect<A> = {
   effects: Map<Prop<any>, any>;
 }
 
-// FxNode
-type FxNode = {
+// FxNote
+type FxNote = {
   type: string;
   id?: string;
   catcher?: FxRef<Function>;

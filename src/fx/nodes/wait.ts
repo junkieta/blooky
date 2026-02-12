@@ -1,10 +1,10 @@
 // src/fx/nodes/wait.ts
-import type { FxRef, FxNode, ExecutionContext, ExecutionStep } from '../types';
+import type { FxRef, FxNote, ExecutionContext, ExecutionStep } from '../types';
 import { NodeDefinition } from '../NodeDefinition';
 import { when, type PromisedProp } from '../../blooky-fp';
 import { Prop } from '../../blooky-types';
 
-type ThisNode = Extract<FxNode, { type: 'wait' }>;
+type ThisNode = Extract<FxNote, { type: 'wait' }>;
 
 export class WaitNodeDefinition extends NodeDefinition<'wait'> {
   public readonly type = 'wait';

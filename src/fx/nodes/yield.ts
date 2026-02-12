@@ -1,11 +1,11 @@
 // src/fx/nodes/yield.ts
-import type { FxNode, FxRef, ExecutionContext, FxYieldNode, FxContextNode, ExecutionStep } from '../types';
+import type { FxNote, FxRef, ExecutionContext, FxYieldNode, FxContextNode, ExecutionStep } from '../types';
 import { NodeDefinition } from '../NodeDefinition';
 import { execute, isFxRef, prepare } from '../../blooky-fx';
 import { RETURN_VALUE } from './return';
 import { blooky } from '../../blooky-fp';
 
-type ThisNode = Extract<FxNode, { type: 'yield' }>;
+type ThisNode = Extract<FxNote, { type: 'yield' }>;
 
 export class YieldNodeDefinition extends NodeDefinition<'yield'> {
   public readonly type = 'yield';
@@ -27,8 +27,8 @@ export class YieldNodeDefinition extends NodeDefinition<'yield'> {
       throw blooky.error("flow", {
         code: "NOT_FOUND_YIELD_TARGET",
         message: targetNode
-          ? `fx-yield: The target FxNode must be a 'context' node.`
-          : `fx-yield: The target FxNode is not found.`,
+          ? `fx-yield: The target FxNote must be a 'context' node.`
+          : `fx-yield: The target FxNote is not found.`,
         nodeType: "yield",
         currentContext: JSON.stringify(appContext),
         requiredContext: isFxRef(node.for) ? (node.for as FxRef<any>).key : String(node.for)

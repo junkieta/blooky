@@ -1,8 +1,8 @@
 // src/fx/nodes/none.ts
-import type { ExecutionContext, FxNode, ExecutionStep } from '../types';
+import type { ExecutionContext, FxNote, ExecutionStep } from '../types';
 import { NodeDefinition } from '../NodeDefinition';
 
-type ThisNode = Extract<FxNode, { type: 'none' }>;
+type ThisNode = Extract<FxNote, { type: 'none' }>;
 
 export class NoneNodeDefinition extends NodeDefinition<'none'> {
   public readonly type = 'none';

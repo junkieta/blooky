@@ -1,8 +1,8 @@
 // src/fx/nodes/call.ts
-import type { FxNode, FxRef, ExecutionContext, ExecutionStep } from '../types';
+import type { FxNote, FxRef, ExecutionContext, ExecutionStep } from '../types';
 import { NodeDefinition } from '../NodeDefinition';
 
-type ThisNode = Extract<FxNode, { type: 'call' }>;
+type ThisNode = Extract<FxNote, { type: 'call' }>;
 
 export class CallNodeDefinition extends NodeDefinition<'call'> {
   public readonly type = 'call';

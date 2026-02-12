@@ -1,12 +1,12 @@
 import { jshtml, mutations, prime } from "./blooky-fv";
 import { filter, hold, isChainedProp, isDripperStream, isStream, isVertex, map, vertex } from "./blooky-fp";
 import { EffectElementTagNameMap as DefaultEffectElementTagNameMap, EffectElement, FxEffectElement as ConcreteEffectElementConstructor, fxdom } from "./blooky-fxdom";
-import { FxNode, FxMiddleware, ExecContext } from "./fx/types";
+import { FxNote, FxMiddleware, ExecContext } from "./fx/types";
 import { DebugController } from "./fx/debugger";
 
-const FxNodeMap = new WeakMap<FxNode, EffectElement>();
+const FxNoteMap = new WeakMap<FxNote, EffectElement>();
 const FxElementStates = new WeakMap<EffectElement, CustomStateSet>();
-const getFxElement = (n: FxNode) : EffectElement | undefined => FxNodeMap.get(n);
+const getFxElement = (n: FxNote) : EffectElement | undefined => FxNoteMap.get(n);
 
 // fx要素の可視化用スタイルシート
 const devtoolsCSSPath = ["./blooky-devtools-nested.css","./blooky-devtools-theme.css"];
@@ -137,10 +137,10 @@ Object.entries(EffectElementTagNameMap).forEach(([tag,fxClass])=>{
         shadow.append(document.createElement("slot"));
     }
 
-    toFxNode(): FxNode {
-      const result = super.toFxNode() as FxNode;
-      FxNodeMap.set(result, this);
-      console.log('[toFxNode]', this.tagName, '→ FxNode mapped');
+    toFxNote(): FxNote {
+      const result = super.toFxNote() as FxNote;
+      FxNoteMap.set(result, this);
+      console.log('[toFxNote]', this.tagName, '→ FxNote mapped');
       return result;
     }
   };

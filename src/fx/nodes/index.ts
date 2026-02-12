@@ -1,5 +1,5 @@
 // src/fx/nodes/index.ts
-import type { FxNodeType, INodeDefinition } from '../types';
+import type { FxNoteType, INodeDefinition } from '../types';
 import { NoneNodeDefinition } from "./none";
 import { SequenceNodeDefinition } from "./sequence";
 import { ParallelNodeDefinition } from "./parallel";
@@ -28,9 +28,9 @@ export const allNodeDefinitions = [
   new CollapseNodeDefinition(),
   new YieldNodeDefinition(),
   new ReturnNodeDefinition()
-].map(def => [def.type, def] as [FxNodeType, INodeDefinition<any>]);
+].map(def => [def.type, def] as [FxNoteType, INodeDefinition<any>]);
 
-export const nodeDefinitionMap = new Map<FxNodeType, INodeDefinition<any>>(allNodeDefinitions);
+export const nodeDefinitionMap = new Map<FxNoteType, INodeDefinition<any>>(allNodeDefinitions);
 
 export {
   NoneNodeDefinition,
