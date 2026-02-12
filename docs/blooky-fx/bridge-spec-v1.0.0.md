@@ -336,9 +336,9 @@ interface BridgeProfile {
 
 ### C.2 Same-Tick Conflict Prohibition
 
-* 同一 Tick 内で同一 Prop に異なる値を適用してはならない（MUST NOT）
-* Bridge は競合解決規則を提供しない
-* 競合は設計エラーとして早期に検出されるべきである
+* 同一 Tick 内で同一 Prop への異値更新が存在する場合、Bridge はそれを conflict として扱い Tick failure を確定しなければならない（MUST）。
+* Bridge は当該 Tick を commit してはならない（MUST NOT）。
+* Bridge は conflict 解決規則（優先順位・last-write-wins 等）を提供してはならない（MUST NOT）。
 
 ---
 
