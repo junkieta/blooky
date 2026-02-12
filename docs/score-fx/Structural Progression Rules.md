@@ -30,9 +30,7 @@ Runner は各ノートに対して、少なくとも以下の状態遷移を扱�
 
 1. Semantics が `result(value)` を yield し、Runner がそれを受理した
 2. Semantics が `terminate(value?)` を yield し、（本仕様が定義するスコープで）Performance が終端した
-3. Runner が本章の構造規則に従って「完了した」と判定した
-
-   * 例：sequence の親が、子ノートをすべて完了させた
+3. 構造ノート（sequence/parallel/race/loop/condition/switch）は **本章 3 節に従って完了**と判定される
 
 > 注：`terminate` は Performance-wide（Performance 全体の終端）であり、個別ノート完了の一般手段ではない。
 
@@ -157,7 +155,8 @@ loop は “反復する構造” を提供するが、反復条件はプロフ�
 
 **選択決定値の取得**
 
-* 選択決定値の取得方法はプロファイルに委ねる（MUST）。
+* `condition` / `switch` は `note.data` に **選択決定値を得るための参照（opaque）**を保持しなければならない（MUST）。
+* Runner はこの参照を **Profile-defined resolver** で解決して選択決定値を得る（MUST）。
   典型例：
 
   * 直前ノートの `result` を入力として使う
@@ -209,4 +208,3 @@ Runner は `terminate` を受け取ったら、以後の subnote スケジュー
 * effect の適用単位（Bridge の責務）
 * Semantics の内部意味論（blooky-fx registry の責務）
 * DevTools/UI の投影
-

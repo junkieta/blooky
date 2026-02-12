@@ -5,7 +5,7 @@ export type Prop<A> = () => A;
 export type PropEffect<A> = [Prop<A>, A];
 
 export type StreamBase<A, T> = {
-  next: Set<MappedStream<any> | FilterStream<A>>;
+  next: Set<MappedStream<A,any> | FilterStream<A>>;
   lazyNext: Set<MergedStream<A>>;
 } & T;
 
@@ -13,13 +13,13 @@ export type DripperStream<A> = StreamBase<A, { isDripper: true }>;
 
 export type MergedStream<A> = StreamBase<A, { reduceFn: (a: A, b: A) => A }>;
 
-export type MappedStream<A> = StreamBase<A, { mapFn: <B>(v: B) => A }>;
+export type MappedStream<A,B> = StreamBase<B, { mapFn: (v: A) => B }>;
 
 export type FilterStream<A> = StreamBase<A, { filterFn: (v: A) => boolean }>;
 
 export type Stream<A> =
   | DripperStream<A>
-  | MappedStream<A>
+  | MappedStream<any,A>
   | MergedStream<A>
   | FilterStream<A>;
 

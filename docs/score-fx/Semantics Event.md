@@ -15,9 +15,11 @@ Runner は本節の規則に従ってこれらのイベントを解釈しなけ�
 ### 1.2 型定義（参考）
 
 ```ts
+export type ConditionRef = unknown; // opaque reference
+
 export type SemanticEvent =
   | { type: "result"; value: unknown }
-  | { type: "suspend"; until: Prop<boolean> }
+  | { type: "suspend"; until: ConditionRef }
   | { type: "effect"; ref: unknown }
   | { type: "terminate"; value?: unknown };
 ```
@@ -91,14 +93,14 @@ SemanticEvent は、Runner に対して任意の subnote を選択・順序変�
 ### 規則
 
 1. Semantics は、1 つのノート評価試行に対して `suspend` を高々 1 回 yield してよい（MAY）。
-2. `until` は `Prop<boolean>` でなければならない（MUST）。
+2. `until` は **ConditionRef（opaque）** でなければならない（MUST）。
 3. `suspend` は値の確定を意味しない（MUST）。
 
 ### Runner の義務
 
 1. Runner は `suspend` を受け取ったら、当該ノート評価を **中断（suspended）**状態に遷移させなければならない（MUST）。
 2. Runner は対応する step（例：`phase="suspend"`）を emit/record し、`until` を保持しなければならない（MUST）。
-3. `until` が true になったら Runner は評価を再開し、再開 step（例：`phase="resume"`）を emit/record してから継続しなければならない（MUST）。
+3. `until` が成立したと判断したら Runner は評価を再開し、再開 step（例：`phase="resume"`）を emit/record してから継続しなければならない（MUST）。
 
 ---
 
@@ -140,4 +142,3 @@ Semantics は Runner 境界をまたいで例外（throw）を漏らしてはな
 内部エラーがある場合は、仕様が定める **値としての失敗表現**に落とし込むか、`terminate` を用いて制御された終端として表現しなければならない（MUST）。
 
 ---
-

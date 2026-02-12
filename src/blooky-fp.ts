@@ -3,7 +3,6 @@
  * 関数型リアクティブプログラミングをTypeScriptで行うためのライブラリ。
  */
 import { 
-  BlookyError, BlookyErrorCauseMap,
   DripEffect, DripperStream, FilterStream, FlowingState,
   MappedStream, MergedStream, Prop, PropEffect, Stream, Vertex 
 } from "./blooky-types";
@@ -152,22 +151,34 @@ const filter = <A>(f:Predicate<A>) => (s:Stream<A>) : FilterStream<A> => {
     return _s;
 }
 
+
+// 1) 関数版：入力型 A が束縛される（推論が効く）
+function map<A, B>(f: (v: A) => B): (s: Stream<A>) => MappedStream<A, B>;
+
+// 2) Prop 版：入力型は捨ててよい（anyでOK）、出力Bは Prop から取れる
+function map<B>(p: Prop<B>): (s: Stream<any>) => MappedStream<any, B>;
+
+// 3) 定数版：同上
+function map<B>(value: B): (s: Stream<any>) => MappedStream<any, B>;
+
 /**
  * Streamの値を別の値に変換する。
  * @param fn - 変換関数、Prop、または固定値
  * @returns Streamを受け取りMappedStreamを返す関数
  */
-const map = <A,B>(f:((v:B)=>A)|Prop<A>|A) => (s:Stream<B>) : MappedStream<A> => {
-    const _s: MappedStream<A> = {
-        mapFn: typeof f === "function" ? f as <B>(v:B)=>A : () => f,
-        next: new Set(),
-        lazyNext: new Set()
-    };
-    s.next.add(_s);
-    STREAM_CLEANERS.set(_s, () => s.next.delete(_s));
-    cleanupRegistry.register(_s, new WeakRef(_s));
-    return _s;
-};
+function map<A,B>(f:((v:A)=>B)|Prop<B>|B) {
+    return (s:Stream<A>) : MappedStream<A,B> => {
+        const _s: MappedStream<A,B> = {
+            mapFn: typeof f === "function" ? f as (v:A)=>B : () => f,
+            next: new Set(),
+            lazyNext: new Set()
+        };
+        s.next.add(_s);
+        STREAM_CLEANERS.set(_s, () => s.next.delete(_s));
+        cleanupRegistry.register(_s, new WeakRef(_s));
+        return _s;
+    }
+}
 
 /**
  * Prop<A>の値に応じて、異なるStreamを選択的に合流させる。
@@ -299,8 +310,9 @@ const remap = <A,B>(f:(v:A,p?:A)=>B) => (p:Prop<A>) : Prop<B> =>
 const lift = <A>(f: (values: any[]) => A) => (props: Prop<any>[]) : Prop<A> => {
   type reservation = [number, any];
   const valueFn = () => f(props.map(p => p()));
-  const streams = props.flatMap((p, i) => PROP_FROM.has(p) ? map((v) => [[i, v]] as reservation[])(PROP_FROM.get(p)!) : []);
-  const mergedStream = merge<[number,Stream<any>][]>(streams, (a, b) => a.concat(b));
+  const streams : MappedStream<any,reservation[]>[] = 
+    props.flatMap((p, i) => PROP_FROM.has(p) ? map((v) => [[i, v]] as reservation[])(PROP_FROM.get(p)!) : []);
+  const mergedStream = merge<reservation[]>(streams, (a, b) => a.concat(b));
   const transformed = map((updates: reservation[]) => {
     const map = new Map(updates);
     return f(props.map((p, i) => map.has(i) ? map.get(i)! : p()));
@@ -310,74 +322,6 @@ const lift = <A>(f: (values: any[]) => A) => (props: Prop<any>[]) : Prop<A> => {
   });
   return hold(valueFn())(transformed);
 };
-
-const NotThen = Symbol("NotThen");
-type PromisedProp<T> = PromiseLike<T> & Prop<T|typeof NotThen>
-
-/**
- * Propが特定の条件を満たすまで待機するPromiseLike Propを生成する。条件を満たすと自動的に解決される。
- * 条件を満たす度、thenを呼びなおせば新しいPromiseを取得できる。
- * @param predicate - 条件（関数、正規表現、または値）
- * @returns 条件を満たすまで待機するPromisedProp
- */
-const when = <A>(predicate: Predicate<A>) => (p: Prop<A>): PromisedProp<A> => {
-    const f = toPredicate(predicate);
-    type ThenOrNotThen = A|typeof NotThen;
-    let thenOrNotThen : ThenOrNotThen = f(p()) ? p() : NotThen;
-    const _p = (()=>thenOrNotThen) as PromisedProp<A>;
-
-    if(!PROP_FROM.has(p)) {
-        const promise = thenOrNotThen !== NotThen
-            ? Promise.resolve(thenOrNotThen as A)
-            : new Promise<A>(()=>{});
-        _p.then = promise.then.bind(promise);
-        return _p;
-    }
-    
-    const source = PROP_FROM.get(p)!;
-    const _s = filter(f)(source);
-    STREAM_PROP_RELATIONS.set(_s,[_p]);
-    cleanupRegistry.register(_p,new WeakRef(_s));
-
-    const resolvers: ((v:ThenOrNotThen)=>void)[] = [(v:ThenOrNotThen)=>thenOrNotThen=v];
-    const callResolvers = (v:ThenOrNotThen) => {
-        if(v !== NotThen) {
-            resolvers.forEach((f)=>f(v));
-            resolvers.length = 1;
-        } else {
-            resolvers[0](v);
-        }
-    };
-    PROP_UPDATE.set(_p, callResolvers);
-    _p.then = (f:(v:A)=>any) => new Promise<A>((r)=>resolvers.push(r as (v:ThenOrNotThen)=>void)).then(f);
-    return _p;
-};
-
-/**
- * 既存オブジェクトのプロパティをblookyのデータフローと同期させる。
- * 返されたPropの更新は、元のオブジェクトのプロパティにも同期される。
- * @param obj - 対象オブジェクト
- * @param key - プロパティ名
- * @returns [Dripper, Prop]のタプル
- */
-function proxy<T, K extends keyof T>(obj: T, key: K): [DripperStream<T[K]>, Prop<T[K]>] {
-  const desc = Object.getOwnPropertyDescriptor(obj, key);
-  if(!desc)
-    throw new Error(`Property "${String(key)}" does not exist.`);
-  if(!desc.set && !desc.writable)
-    throw new Error(`Property "${String(key)}" is not writable.`);
-
-  const getter: Prop<T[K]> = () => desc.get ? desc.get.call(obj) : obj[key];
-  const setter = desc.set
-    ? desc.set.bind(obj)
-    : (newValue: T[K]) => obj[key] = newValue;
-
-  PROP_UPDATE.set(getter, setter);
-  const dripper = stream<T[K]>();
-  PROP_FROM.set(getter, dripper);
-  STREAM_PROP_RELATIONS.set(dripper, [getter]);
-  return [dripper, getter];
-}
 
 // 内部実装用の関数群
 const streamToFlowingState = <A>(v:A) => (s:Stream<A>) : FlowingState => {
@@ -434,59 +378,19 @@ const collapse = (effect: DripEffect<any>) => {
     effect.effects.forEach((v,k) => PROP_UPDATE.get(k)!(v));
 }
 
-
-/**
- * blooky全体で共有されるユーティリティとエラーストリーム。
- * エラーストリームは、blooky内部で発生したエラーをカテゴリ別に流すDripper。
- */
-const blooky = {
-    /**
-     * カテゴリ別のエラーストリーム。アプリケーションでエラーハンドリングを行う際に使用。
-     */
-    errorStream : {
-      'dev-config': stream<BlookyError<'dev-config'>>(),
-      'structure': stream<BlookyError<'structure'>>(),
-      'constraint': stream<BlookyError<'constraint'>>(),
-      'flow': stream<BlookyError<'flow'>>(),
-      'user': stream<BlookyError<'user'>>()
-    } as { [key in keyof BlookyErrorCauseMap]: DripperStream<BlookyError<keyof BlookyErrorCauseMap>> },
-
-    /**
-     * 構造化されたエラーを生成します。
-     * 
-     * @param category - エラーカテゴリ
-     * @param cause - エラー詳細
-     * @returns BlookyError
-     */
-    error: <T extends keyof BlookyErrorCauseMap>(
-        category: T,
-        cause: {
-            code: string
-            message: string
-        } & BlookyErrorCauseMap[T]
-    ): BlookyError<T> => {
-        return Object.assign(new Error(cause.message, { cause }), { category }) as BlookyError<T>;
-    }
-};
-
 export {
     // Core
     drip, collapse, stream,
     // Stream operators
     merge, junction, map, filter,
     // Prop creators
-    hold, accum, lift, remap, when,
+    hold, accum, lift, remap,
     // Utilities
-    proxy, pipe, clear, disconnect, vertex,
+    pipe, clear, disconnect, vertex,
     // Type guards
     isStream, isDripperStream as isDripper, isDripperStream, isChainedProp, isVertex,
-    // Shared
-    blooky,
-    // Symbol
-    NotThen
 };
 
 export type {
-    PromisedProp,
     Stream, Prop, DripperStream as Dripper, DripEffect
 };

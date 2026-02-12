@@ -39,6 +39,8 @@
 * 実行の主権は `Runner` にある
 * `Semantics` は **解釈（Interpretation）を行うが、実行は行わない**
 * 通信は `SemanticEvent` を介した一方向のみ
+* Runner は score-fx プロトコルに従い、
+進行を管理し PerformanceStep を生成する唯一の主体である。
 
 ### 1.2 Non-goals
 
@@ -157,7 +159,8 @@ Registry は **宣言的な辞書**であり、
 #### 4.2.1 One-way Contract
 
 * Semantics は `SemanticEvent` を **yield するだけ**である
-* Runner はその Event を **解釈し、事実（PerformanceStep）に変換する唯一の主体**である
+* Runner はその Event を解釈し、
+進行規則に従って PerformanceStep を生成する唯一の主体である。
 * Semantics は Runner の判断結果を観測してはならない
 
 #### 4.2.2 非直接実行原則
@@ -266,7 +269,7 @@ Semantics は：
 
 #### 4.5.1 `yield` の規範
 
-* `yield` は **子 Performance への主権委譲**を表す
+* yield は、進行が子 Performance に移ることを Runner に通知する。/ 進行の主権自体は常に Runner にある。
 * 子 Performance の成否・cancel・値を解釈してはならない（MUST NOT）
 * `yield` は suspend を発行するのみである
 
