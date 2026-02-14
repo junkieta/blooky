@@ -64,7 +64,8 @@ Clock は Tick を生成する時間源である。
 
 Effect Map は、Tick 内で確定される Prop 更新の集合である。
 
-* 概念的には `Map<Prop<any>, any>` と等価
+* 概念的には Prop → value の部分写像
+* 表現は Map<Prop<any>, any> でも Array<[Prop<any>, any]>でもよい（MAY）
 * Effect Map は **値の集合**であり、実行命令ではない
 * 内部構造・列挙順序・保持形式は意味を持たない
 
@@ -185,9 +186,8 @@ Bridge Profile が 1 effect から複数の更新（0..N）を返す場合でも
 
 Bridge は `phase:"cancel"` を受理した execution について、以下を満たさなければならない（MUST）:
 
-1. `phase:"cancel"` の Step を Tick 対象として予約してはならない（MUST NOT）。
-2. cancel step_index より後に到着した Step は commit 対象に含めてはならない（MUST NOT）。
-3. cancel は Effect Map を変更してはならない（MUST NOT）。
+1. cancel 以後（cancel step_index より後）の Step は commit 対象に含めてはならない（MUST NOT）。。
+2. cancel は 通常 Effect Map を変更しない（SHOULD NOT）。ただし cancel step に effect を載せる Profile を採用する場合は Profile が明示する（MUST）。
 
 Bridge は以下を行ってよい（MAY）:
 
@@ -235,6 +235,67 @@ Observer は Tick を Atomic Commit として扱わなければならない（MU
 * Observer の失敗は FRP commit の失敗を意味する
 * score-fx の StepRecord は既に確定しており、
   Observer の失敗によって過去の Step が取り消されることはない（MUST NOT）
+
+この Strict Policy は bridge の設計選択であり、score-fx 依存ではない。
+
+---
+
+### 5.4 Error Model（Normative）
+
+Bridge は、Tick の失敗を submit() の reject として表現する。
+ただし、Bridge が「停止級（fatal）」とみなす失敗は reject 経路として扱ってはならない（MUST NOT）。
+
+```ts
+class ConflictError extends Error {
+  readonly name = "ConflictError";
+  constructor(
+    readonly conflicts: Array<{ prop: Prop<any>; values: any[] }>
+  ) {
+    super("Conflict in CommitPlan");
+  }
+}
+
+/**
+ * Observer（Strict）内の例外により Tick が失敗したことを表す。
+ * ObserverError は recoverable failure として submit() reject 経路に載る（MUST）。
+ */
+class ObserverError extends Error {
+  readonly name = "ObserverError";
+  constructor(
+    readonly cause: unknown
+  ) {
+    super("Observer failed");
+  }
+}
+
+/**
+ * commit 実行中に発生した停止級（fatal）エラー。
+ * これは recoverable failure ではなく、Runtime/FRP の整合性違反を意味する。
+ *
+ * Bridge/Runtime は、この例外を submit() reject 経路として扱ってはならない（MUST NOT）。
+ * 実装はプロセス停止・再起動要求などの致命的処理を行うべきである（SHOULD）。
+ */
+class CommitExecutionError extends Error {
+  readonly name = "CommitExecutionError";
+  constructor(
+    readonly cause: unknown
+  ) {
+    super("Commit execution failed");
+  }
+}
+
+/**
+ * submit() が reject で返しうる recoverable error の閉集合。
+ */
+type SubmitError = ConflictError | ObserverError;
+```
+
+#### 規範
+
+* Bridge の submit() の reject は SubmitError を返さなければならない（MUST）。
+* ConflictError は同一 Tick 内の同一 Prop への異値更新を表す（MUST）。
+* ObserverError は Strict Observer の例外により Tick が失敗したことを表す（MUST）。
+* CommitExecutionError は停止級（fatal）であり、submit() reject 経路に載せてはならない（MUST NOT）。
 
 ---
 
@@ -385,19 +446,16 @@ function mergeUpdatesIntoEffectMapStrict(
 * Conflict は Tick failure
 * StepRecord は決して巻き戻らない
 
----
+# Appendix E: Tick Lifecycle & Observer Boundary（Normative）
 
-# Appendix E: Tick Lifecycle & Observer Hook Contract（Normative）
-
-本 Appendix は、Bridge v1.0.0 における **Tick の観測境界および Observer の契約**を明確化するものである。
-
-本 Appendix は本仕様の一部であり、Normative である。
+本 Appendix は、Bridge v1.0.0 における **Tick の確定順序および Observer 境界**を規定する。
+本 Appendix は **Normative** である。
 
 ---
 
 ## E.1 Tick Identity and Ordering
 
-Bridge は各 Tick に対して、以下を提供しなければならない（MUST）：
+Bridge は各 Tick に対して以下を提供しなければならない（MUST）：
 
 * `tick_index: number`
   単調増加する順序キー。
@@ -410,152 +468,132 @@ Bridge は各 Tick に対して、以下を提供しなければならない（M
 * `execution_id?: string`
   利用可能な場合に提供してよい（MAY）。
 
-**Normative note:**
+### 規範
 
 * `timestamp` は telemetry 用に提供してよい（MAY）。
 * `timestamp` を順序決定に使用してはならない（MUST NOT）。
-* DevTools 等の観測系は `tick_index` を順序基準として扱わなければならない（MUST）。
+* 観測系（DevTools 等）は `tick_index` を順序基準として扱わなければならない（MUST）。
 
 ---
 
-## E.2 Tick Lifecycle Phases（Observational Boundary）
+## E.2 Tick Processing Order（Normative）
 
-Bridge は、以下の論理的フェーズ境界を持つ：
+Bridge は Tick を以下の順序で処理しなければならない（MUST）：
 
 1. **Reservation Phase**
-   effect が Tick に割り当てられる段階。
+   StepRecord から effect を抽出し、Tick に割り当てる。
 
-2. **Commit Phase**
-   Effect Map が確定し、Atomic Commit が実行される段階。
+2. **Normalization Phase**
+   Effect Map を構築し、重複除去・conflict 検証を行う。
 
-3. **Failure Phase**
-   Commit 中に例外が発生し、Tick が失敗と確定する段階。
+3. **CommitPlan Confirmation Phase**
+   conflict が存在しないことを確認し、CommitPlan を確定する。
+   CommitPlan が確定できない場合、Tick は failure と確定しなければならない（MUST）。
 
-4. **Notification Phase**
-   観測者（Monitoring Observer）へ結果が通知される段階。
+4. **Strict Observer Phase（Pre-Commit）**
+   CommitPlan に基づく Effect Map を Strict Observer に通知する。
+   Strict Observer 内で例外が発生した場合、Tick は failure と確定しなければならない（MUST）。
+   この場合、commit は実行してはならない（MUST NOT）。
 
-Bridge 実装は内部でさらに細分化してよい（MAY）が、
-外部に公開される観測境界は上記の論理区分に従う。
+5. **Commit Phase**
+   CommitPlan を atomic commit する。
+   commit 実行中に例外が発生した場合、それは整合性違反であり、通常の submit reject 経路として扱ってはならない（MUST NOT）。
 
-Observer は Reservation Phase 内部の中間状態を観測してはならない（MUST NOT）。
-
----
-
-## E.3 Observer Categories
-
-Bridge は Observer を次の2種類に分類する。
-
-### E.3.1 Commit Observer（Strict）
-
-Commit Observer は、Atomic Commit の一部を構成する観測者である。
-
-* Commit Observer 内で例外が発生した場合、
-  Tick 全体は失敗とみなされなければならない（MUST）。
-* 当該 Tick に予約された処理は reject されなければならない（MUST）。
-* これは §5.3 Strict Observer Policy を構成する。
-
-Commit Observer は意味論に関与する観測者であり、
-FRP Commit や内部整合性に影響する。
+この順序を変更してはならない（MUST NOT）。
 
 ---
 
-### E.3.2 Monitoring Observer（Non-strict）
+## E.3 Observer Model（Normative）
 
-Monitoring Observer は、観測・可視化・ログ・DevTools 連携のための観測者である。
+Bridge v1.0.0 において、Observer は以下の単一カテゴリとして定義される。
 
-* Monitoring Observer は Tick の結果を観測してよい（MAY）。
-* Monitoring Observer 内の例外は、
-  Commit の成功／失敗を変更してはならない（MUST NOT）。
-* 実装は Monitoring Observer の例外を隔離してよい（MAY）。
+### Strict Observer
 
-Monitoring Observer は意味論を追加してはならない（MUST NOT）。
+Strict Observer は Tick の commit 意味論の一部を構成する観測者である。
 
----
+* Strict Observer は CommitPlan Confirmation Phase の後、Commit Phase の前に呼び出される（MUST）。
+* Strict Observer 内で例外が発生した場合、Tick は failure として確定しなければならない（MUST）。
+* Strict Observer failure の場合、commit を実行してはならない（MUST NOT）。
+* Strict Observer failure は submit() の reject 経路として伝播されなければならない（MUST）。
 
-## E.4 Observer Invocation Semantics
-
-Bridge は少なくとも以下のタイミングで Observer を呼び出さなければならない（MUST）：
-
-1. Tick Commit 成功後
-2. Tick Failure 確定時
-
-Commit Observer は Commit Phase 内で呼び出される。
-
-Monitoring Observer は Notification Phase で呼び出される。
-
-Notification Phase は Commit Phase の後に実行されなければならない（MUST）。
+Strict Observer は状態生成権限を持たない（MUST NOT modify plan）。
 
 ---
 
-## E.5 Tick Result Contract
+## E.4 Observational Guarantees（Normative）
 
-Tick は以下のいずれかの結果を持つ：
+Bridge は以下を保証しなければならない（MUST）：
 
-* `result: "success"`
-* `result: "failure"`
+* Strict Observer は常に「commit 予定として確定した CommitPlan」に基づく更新集合のみを受け取る。
+* conflict が存在する場合、Observer は呼び出されない（MUST NOT）。
+* Strict Observer は Tick 内の中間状態を観測してはならない（MUST NOT）。
+* Strict Observer は部分適用された状態を観測してはならない（MUST NOT）。
 
-Failure の場合、Bridge はエラー集合を提供してよい（MAY）。
+---
+
+## E.5 Failure Semantics（Normative）
 
 Tick Failure は以下を意味する：
 
-* Atomic Commit は成功していない
-* 当該 Tick に関連付けられた Promise は reject される
+* CommitPlan は commit されていない。
+* 当該 Tick に関連付けられた submit() の Promise は reject される。
+* score-fx の StepRecord は変更されない（MUST NOT rollback）。
 
-Tick Failure は過去の StepRecord を取り消してはならない（MUST NOT）。
+Failure の原因は次のいずれかである：
 
----
+1. Conflict 検出
+2. Strict Observer 内例外
 
-## E.6 Relationship to DOM / Adapter Layer
-
-Bridge は DOM イベント、CustomEvent、dispatchEvent 等の UI 投影機構を規定しない。
-
-DOM への通知は Adapter 層の責務である。
-
-Adapter は Tick の success / failure を：
-
-* Promise resolve/reject
-* DOM event dispatch
-* FRP stream emission
-
-等に投影してよい（MAY）。
-
-これらの投影は Monitoring Observer の一形態とみなされる。
+commit 実行中の例外は recoverable failure ではない。
 
 ---
 
-## E.7 DevTools Integration Boundary
+## E.6 Post-Commit Notification（Explicitly Out of Scope）
 
-DevTools は Monitoring Observer として実装されるべきである（SHOULD）。
+Bridge v1.0.0 は post-commit 通知を規定しない（MUST NOT require）。
 
-DevTools は：
+実装は commit 後に Monitoring Observer を提供してよい（MAY）が：
+
+* それは Bridge の意味論に影響してはならない（MUST NOT）。
+* Strict Observer と混同してはならない（MUST NOT）。
+* Commit 成功／失敗の決定に影響してはならない（MUST NOT）。
+
+Monitoring / DevTools / DOM Adapter は Bridge の外部投影層である。
+
+---
+
+## E.7 DevTools Integration Boundary（Normative）
+
+DevTools は Strict Observer として実装してはならない（MUST NOT）。
+
+DevTools は commit 意味論に影響を与えてはならない（MUST NOT）。
+
+DevTools は Monitoring Observer として実装してよい（MAY）。
+
+DevTools は以下に依存してよい（MAY）：
 
 * `tick_index`
 * `tick_id`
 * `execution_id`
 * `result`
-* `effects_summary`
 
-を用いて可視化してよい（MAY）。
+DevTools は以下に依存してはならない（MUST NOT）：
 
-DevTools は：
-
-* Effect Map の順序
+* Effect Map の内部順序
 * 内部 merge 手順
 * 中間状態
 
-に依存してはならない（MUST NOT）。
-
 ---
 
-# Appendix E — Summary
+# Appendix E — Summary（Revised）
 
 本 Appendix により：
 
-* Timeline 主権は Bridge に固定される
-* Strict Policy は維持される
-* DevTools は安全に hook できる
-* DOM Adapter は Bridge の結果を再投影できる
-* Ordering は常に `tick_index` が唯一の基準となる
+* 通知は **pre-commit のみ**である
+* Observer failure は Tick failure である
+* commit 中例外は停止級である
+* post-commit 通知は仕様外である
+* Timeline の順序基準は常に `tick_index` である
 
 ---
 

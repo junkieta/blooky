@@ -8,6 +8,7 @@ export type StreamBase<A, T> = {
 } & T;
 
 export type DripperStream<A> = StreamBase<A, { isDripper: true }>;
+export type Dripper<A> = DripperStream<A>;
 
 export type MergedStream<A> = StreamBase<A, { reduceFn: (a: A, b: A) => A }>;
 
@@ -33,22 +34,6 @@ export type Vertex = {
 
 export type PropPlan<A> = [Prop<A>, A];
 export type DripPlan = PropPlan<any>[];
-
-export type BlendConflict = {
-  prop: Prop<any>;
-  values: any[];
-};
-
-export type BlendOptions = {
-  // 値が同一と見なせるか（デフォルト Object.is）
-  equals?: (a: any, b: any) => boolean;
-  // 競合時の解決規則。未指定なら conflict 扱い。
-  resolve?: (prev: any, next: any, prop: Prop<any>) => any;
-};
-
-export type BlendResult =
-  | { ok: true; plan: DripPlan }
-  | { ok: false; conflicts: BlendConflict[] };
 
 // Informative / internal
 export type FlowingState = [PropPlan<unknown>[], [MergedStream<any>, any][]];
