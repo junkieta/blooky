@@ -248,7 +248,7 @@ Bridge は、Tick の失敗を submit() の reject として表現する。
 class ConflictError extends Error {
   readonly name = "ConflictError";
   constructor(
-    readonly conflicts: Array<{ prop: Prop<any>; values: any[] }>
+    readonly conflicts: Set<Prop<any>>
   ) {
     super("Conflict in CommitPlan");
   }
@@ -427,7 +427,7 @@ function mergeUpdatesIntoEffectMapStrict(
   for (const [p, v] of updates) {
     if (!map.has(p)) { map.set(p, v); continue; }
     if (Object.is(map.get(p), v)) continue;
-    throw new BridgeConflictError("Conflict in same Tick");
+    throw new ConflictError("Conflict in same Tick");
   }
 }
 ```
