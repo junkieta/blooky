@@ -1,318 +1,234 @@
-import { blooky } from "../blooky-fp";
-import { resolveValue } from "../blooky-fx";
-import { nodeDefinitionMap } from "../fx/nodes";
+import type {
+  FxNote,
+  AppContext,
+  ExecContext,
+  PreparedFx,
+  ExecutionHandle,
+  ExecutionStep,
+  CancelToken,
+  FxRef
+} from "../fx/types";
 import { RETURN_VALUE } from "../fx/nodes/return";
-import { CancelToken, CancelReason, FxNote, AppContext, ExecContext, PreparedFx, FxRef, ExecutionHandle, ExecutionContext, ExecutionStep } from "../fx/types";
+import type { Registry, PerfCtx } from "./registry";
+import type { RunnerProfile } from "./profile";
+import { RunnerFSM } from "./fsm";
+import { dispatchEvent, Terminated, Cancelled } from "./dispatcher";
+import { FxRefSymbol } from "../fx/types";
+import { Prop } from "../blooky-types";
 
 const NotResolved = Symbol.for("NotResolved");
 
-// ─── CancelToken 生成 ───
-// src/blooky-fx.ts
-
 function createCancelToken(parent?: CancelToken): CancelToken {
   let isCancelled = false;
-  let cancelReason: CancelReason | undefined;
-  
+  let cancelReason: any;
   return {
     parent,
-    cancel: (reason: CancelReason = 'user') => { 
+    cancel: (reason: any = "user") => {
       isCancelled = true;
       cancelReason = reason;
     },
-    cancelled: () => isCancelled || (parent ? parent.cancelled() : false),
+    cancelled: () => isCancelled || !!parent?.cancelled(),
     get reason() {
       if (isCancelled) return cancelReason;
-      if (parent?.cancelled()) return parent.reason;
-      return undefined;
-    }
-  }
-}
-// ─── prepare: 実行準備 ───
-
-function prepare(
-  flow: FxNote,
-  initialAppContext: AppContext,
-  parentExecContext?: Partial<ExecContext>
-): PreparedFx {
-
-  // id所持ノードの結果、および特殊な戻り値を格納するレコード
-  const localRecord: { [key:string|symbol]: unknown } = {
-    // $で始まる特殊なコンテキストキーの初期化
-    $_: "$_" in initialAppContext ? initialAppContext.$_ : NotResolved,
-    [RETURN_VALUE]: RETURN_VALUE in initialAppContext ? initialAppContext[RETURN_VALUE] : NotResolved
-  };
-  const nodes = flattenFxNote(flow);
-  // idを持つノードのために、ローカルレコードにエントリーを予約する
-  nodes.filter((n)=>n.id).forEach((n) => localRecord["#"+n.id!] = n.type === "context" ? n : NotResolved);
-  
-  // 受け取り済みのコンテキストにidレコードの参照を紐づけたProxyコンテキストを生成
-  const appContext = createProxyContext(initialAppContext, localRecord);
-
-  const cancelToken = createCancelToken();
-  const executionId = `exec-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-  
-  const execContext: ExecContext = {
-    resolve: (v: FxRef<any>) => resolveValue(v)(appContext),
-    ...parentExecContext,
-    cancelToken,
-    executionId
-  };
-  
-  return {
-    rootNode: flow,
-    execContext,
-    appContext,
-  };
-}
-
-// ─── execute: 実行開始 ───
-function execute(preparedFx: PreparedFx): ExecutionHandle {
-  const { rootNode, execContext, appContext } = preparedFx;
-  console.log('[fx] execute: starting', { rootNode, executionId: execContext.executionId });  
-  
-  // ExecutionContext 生成ヘルパー
-  const createExecutionContext = (node: FxNote, parentId: string): ExecutionContext => {
-    const executionId = `${parentId}:${node.type}`;
-    
-    return {
-      node,
-      appContext,
-      executionId,
-      resolve: (ref) => execContext.resolve(ref),
-      executeChild: (child) => {
-        const childCtx = createExecutionContext(child, executionId);
-        return executeNode(childCtx);
-      },
-      debugController: execContext.debugController,
-      cancelToken: execContext.cancelToken,
-      middlewares: execContext.middlewares,
-      onStep: execContext.onStep
-    };
-  };
-  
-  // ノードの実行（generator を駆動）
-  const executeNode = async function*(
-    ctx: ExecutionContext
-  ): AsyncGenerator<ExecutionStep, any, any> {
-    const definition = nodeDefinitionMap.get(ctx.node.type);
-    if (!definition) {
-      throw blooky.error("flow", {
-        code: 'UNKNOWN_NODE_TYPE',
-        message: `Unknown node type: ${ctx.node.type}`,
-        nodeType: ctx.node.type,
-        suggestions: ['Check that all node types are registered']
-      });
-    }
-    
-    console.log('[fx] executeNode: start', ctx.node.type, ctx.executionId);
-    
-    const generator = definition.execute(ctx as any);
-    let finalValue: any; //  最終的な戻り値を保存
-    
-    try {
-      for await (const step of generator) {
-        console.log('[fx] executeNode: yielding step', ctx.node.type, step.phase);
-        
-        // キャンセルチェック
-        if (ctx.cancelToken.cancelled()) {
-          const reason = ctx.cancelToken.reason;
-          console.log('[fx] executeNode: cancelled', { reason, nodeType: ctx.node.type });
-          
-          // fx-return によるキャンセルは正常終了として扱う
-          if (reason === 'return') {
-            console.log('[fx] executeNode: normal completion via fx-return');
-            return; // エラーを throw しない
-          }
-          
-          // その他のキャンセルはエラー
-          throw new Error(`Execution cancelled: ${reason}`);
-        }
-        
-        // デバッガに通知
-        if (ctx.debugController) {
-          await ctx.debugController.beforeStep(ctx.node, step, ctx.executionId);
-        }
-        
-        // ミドルウェア実行
-        if (ctx.middlewares) {
-          for (const middleware of ctx.middlewares) {
-            await middleware({ step, node: ctx.node, executionId: ctx.executionId }, async () => {});
-          }
-        }
-        
-        // onStep コールバック
-        if (ctx.onStep) {
-          ctx.onStep(step);
-        }
-        
-        // 外側に yield
-        yield step;
-        
-        // デバッガに通知
-        if (ctx.debugController) {
-          ctx.debugController.afterStep(ctx.node, step, ctx.executionId);
-        }
-
-      }
-
-      // 🆕 generator の return 値を取得
-      const finalResult = await generator.next();
-      finalValue = finalResult.value;
-
-    } catch (error) {
-      console.error('[fx] executeNode: error', ctx.node.type, {
-        error,
-        errorName: error?.constructor?.name,
-        errorMessage: error?.message,
-        cancelReason: ctx.cancelToken.reason
-      });
-      
-      // キャンセルエラーで、理由が 'return' なら再throw しない
-      if (error?.message?.includes('Execution cancelled') && ctx.cancelToken.reason === 'return') {
-        console.log('[fx] executeNode: suppressing cancel error (return)');
-        return; // 正常終了
-      }
-      
-      // エラーハンドリング
-      let catcher = ctx.node.catcher;
-      
-      if (catcher && typeof catcher !== "function") {
-        catcher = ctx.resolve(catcher);
-      }
-      
-      if (typeof catcher === "function") {
-        try {
-          const maybeResolved = await (catcher.length === 0 ? (catcher as ()=>any)() : catcher);
-          
-          if (typeof maybeResolved === "function") {
-            console.warn(`[fx] Action failed, but was handled by catcher.`);
-            return await maybeResolved(error);
-          } else {
-            console.warn(`[fx] Action failed, recovered with provided value.`);
-            return maybeResolved;
-          }
-        } catch (handlerErr) {
-          console.error(`[fx] Error while invoking catcher:`, handlerErr);
-          throw handlerErr;
-        }
-      } else {
-        throw error;
-      }
-    }
-    
-    console.log('[fx] executeNode: complete', ctx.node.type);
-    
-    // id があれば appContext に保存
-    if (ctx.node.id && finalValue !== undefined) {
-      const key = "#" + ctx.node.id;
-      console.log('[fx] executeNode: saving result to appContext', { key, finalValue });
-      ctx.appContext[key] = finalValue;
-    }
-
-    return finalValue;
-
-  };
-
-  // ルートノードの実行を開始
-  const rootCtx = createExecutionContext(rootNode, execContext.executionId || 'root');
-  const rootGenerator = executeNode(rootCtx);
-
-  console.log('[fx] execute: root generator created');  
-  // 非同期で実行を進める
-  const done = (async () => {
-    console.log('[fx] execute: starting iteration');
-    let lastStep;
-    let stepCount = 0;
-    for await (const step of rootGenerator) {
-      stepCount++;
-      console.log(`[fx] execute: step ${stepCount}`, step.phase, step.visual?.label);
-      
-      // appContext の変化を追跡
-      if (step.phase === 'defined') {
-        console.log('[fx] execute: appContext updated', Object.keys(appContext));
-      }
-      
-      lastStep = step;
-    }
-    
-    console.log('[fx] execute: completed', { stepCount, lastStep, appContext: Object.keys(appContext) });
-    
-    if (rootNode.id && lastStep?.data?.result !== undefined) {
-      console.log('[fx] executeNode: saving result to appContext', { key: rootNode.id, finalValue: lastStep.data.result });
-      appContext["#" + rootNode.id] = lastStep.data.result;
-    }
-    
-    return appContext;
-  })();
-  
-  return {
-    cancel: () => {
-      console.log('[fx] execute: cancelled');
-      execContext.cancelToken.cancel()
+      return parent?.reason;
     },
-    done
   };
 }
 
-// ─── query: prepare + execute のショートハンド ───
-const query = (node: FxNote, app?: AppContext, ctx?: Partial<ExecContext>) => 
-  execute(prepare(node, app || {}, ctx));
-
-
-/**
- * FxNoteツリーを展開して、全てのノードのリストを生成する。
- * @param n FxNote
- * @returns FxNoteの配列
- */
-const flattenFxNote = (n:FxNote): FxNote[] => {
-  const children = nodeDefinitionMap.get(n.type)!.getSubNotes(n);
-  return children
-    ? [n, ...children.flatMap(flattenFxNote)]
-    : [n];
-}
-
-/**
- * アプリケーションコンテキスト（appContext）とIDレコード（idRecord）を結合し、
- * IDレコードへの書き込みを許可するProxyコンテキストを生成するヘルパー関数。
- * @param appContext 元のアプリケーションコンテキスト
- * @param idRecord idを持つノードの結果を格納するレコード
- * @returns ProxyされたAppContext
- */
-const createProxyContext = (appContext: AppContext, idRecord: { [key:string|symbol]: unknown }): AppContext => {
-  return new Proxy(appContext, {
+const createProxyContext = (appContext: AppContext, idRecord: Record<string | symbol, any>): AppContext =>
+  new Proxy(appContext, {
     get(target, key) {
-      // idRecordにキーが存在すればそちらを優先
-      if (key in idRecord) {
-        return idRecord[key];
-      }
+      if (key in idRecord) return idRecord[key as any];
       return Reflect.get(target, key);
     },
-    // id参照の更新のみを受け付ける
-    set(_,key,value) {
+    set(_, key, value) {
       if (key in idRecord) {
-        idRecord[key] = value;
+        idRecord[key as any] = value;
         return true;
       }
-      // それ以外への書き込みは許可しない
       return false;
     },
     has(target, key) {
       return key in idRecord || Reflect.has(target, key);
     },
     ownKeys(target) {
-      // 重複を防ぐために一度Set化してから配列化
-      return [...new Set([...Reflect.ownKeys(target), ...Object.keys(idRecord)])];
+      return [...new Set([...Reflect.ownKeys(target), ...Reflect.ownKeys(idRecord)])];
     },
     getOwnPropertyDescriptor(target, key) {
-      if(key in idRecord)
-        return {
-          value: idRecord[key],
-          enumerable: true,
-          writable: true,
-          configurable: true
-        }
+      if (key in idRecord) {
+        return { value: idRecord[key as any], enumerable: true, writable: true, configurable: true };
+      }
       return Reflect.getOwnPropertyDescriptor(target, key);
-    },    
+    },
   });
+
+/**
+ * 最低限のデフォルト resolver（resolveValue を切り離すため）
+ * - FxRefKey: appContext[key]
+ * - Prop: callable をそのまま
+ * - value: 定数
+ */
+const defaultResolve = <T>(ref: FxRef<T>, appContext: AppContext): Prop<T> => {
+  // Prop<T> は callable を想定
+  if (typeof ref === "function") return ref as any;
+
+  // FxRefKey
+  if (ref && typeof ref === "object" && (ref as any)[FxRefSymbol] === true && typeof (ref as any).key === "string") {
+    const k = (ref as any).key;
+    return (() => (appContext as any)[k]) as any;
+  }
+
+  // constant
+  return (() => ref as T) as any;
+};
+
+export function prepare(flow: FxNote, initialAppContext: AppContext, parent?: Partial<ExecContext>): PreparedFx {
+  const localRecord: Record<string | symbol, any> = {
+    $_: "$_" in (initialAppContext as any) ? (initialAppContext as any).$_ : NotResolved,
+    [RETURN_VALUE]: RETURN_VALUE in (initialAppContext as any) ? (initialAppContext as any)[RETURN_VALUE] : NotResolved,
+  };
+
+  flatten(flow).forEach((n) => {
+    if (!n.id) return;
+    localRecord["#" + n.id] = NotResolved;
+  });
+
+  const appContext = createProxyContext(initialAppContext, localRecord);
+  const cancelToken = createCancelToken(parent?.cancelToken);
+
+  const execContext: ExecContext = {
+    resolve:
+      parent?.resolve ??
+      (<T,>(ref: FxRef<T>) => defaultResolve(ref, appContext)),
+    cancelToken,
+    executionId: parent?.executionId ?? `exec-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    onStep: parent?.onStep,
+    middlewares: parent?.middlewares,
+    debugController: parent?.debugController,
+  };
+
+  return { rootNode: flow, execContext, appContext };
 }
 
+export function execute(args: {
+  prepared: PreparedFx;
+  registry: Registry;
+  profile: RunnerProfile;
+}): ExecutionHandle {
+  const { prepared, registry, profile } = args;
+  const { rootNode, execContext, appContext } = prepared;
+
+  const emit = (step: ExecutionStep) => {
+    execContext.onStep?.(step);
+  };
+
+  const run = async (
+    note: FxNote,
+    parentId: string,
+    appCtx: Record<string | symbol, any>
+  ): Promise<unknown> => {
+    const ctx: PerfCtx = { note, appContext: appCtx, executionId: `${parentId}:${note.type}` };
+
+    if (execContext.cancelToken.cancelled()) {
+      throw new Cancelled(execContext.cancelToken.reason ?? "user");
+    }
+
+    const fsm = new RunnerFSM();
+    emit({ phase: "enter", node: note, data: { executionId: ctx.executionId } });
+    fsm.onEnter();
+
+    const struct = registry.structures.get(note.type);
+    if (struct) {
+      const value = await struct(note, ctx, {
+        runChild: (child, overrideAppContext) => run(child, ctx.executionId, overrideAppContext ?? ctx.appContext),
+        profile,
+        cancelToken: execContext.cancelToken,
+        emit,
+      });
+
+      emit({ phase: "exit", node: note, data: { result: value } });
+      if (note.id) (ctx.appContext as any)["#" + note.id] = value;
+      return value;
+    }
+
+    const sem = registry.semantics.get(note.type);
+    if (!sem) throw new Error(`No semantics for ${note.type}`);
+
+    let final: unknown = undefined;
+
+    for (const ev of sem(note, ctx)) {
+      fsm.onEvent(ev);
+
+      const r = await dispatchEvent(ev, {
+        profile,
+        ctx,
+        cancelToken: execContext.cancelToken,
+        emit,
+      });
+
+      if (ev.type === "suspend") {
+        fsm.onResume();
+      }
+
+      if (r.kind === "result") {
+        if (ev.type !== "result") {
+          // effect-only 完了など、Semanticsがresultを出していない場合だけ合成
+          fsm.onEvent({ type: "result", value: r.value });
+        }
+        final = r.value;
+        break;
+      }
+    }
+
+    emit({ phase: "exit", node: note, data: { result: final } });
+    if (note.id) (ctx.appContext as any)["#" + note.id] = final;
+    return final;
+  };
+
+  const done = (async () => {
+    let finalValue: unknown = undefined;
+
+    try {
+      finalValue = await run(rootNode, execContext.executionId || "root", appContext);
+    } catch (e) {
+      if (e instanceof Terminated) {
+        finalValue = e.value;
+      } else {
+        throw e;
+      }
+    }
+
+    (appContext as any)[RETURN_VALUE] = finalValue;
+    if (rootNode.id) (appContext as any)["#" + rootNode.id] = finalValue;
+    return appContext;
+  })();
+
+  return {
+    cancel: () => execContext.cancelToken.cancel("user"),
+    done,
+  };
+}
+
+function flatten(n: FxNote): FxNote[] {
+  switch (n.type) {
+    case "sequence":
+    case "parallel":
+    case "race":
+      return [n, ...n.steps.flatMap(flatten)];
+
+    case "loop":
+      return [n, ...flatten(n.body)];
+
+    case "condition":
+      return [n, ...flatten(n.then), ...(n.else ? flatten(n.else) : [])];
+
+    case "switch":
+      return [n, ...[...n.cases.values()].flatMap(flatten), ...(n.default ? flatten(n.default) : [])];
+
+    case "context":
+      return [n, ...flatten(n.child)];
+
+    default:
+      return [n];
+  }
+}
