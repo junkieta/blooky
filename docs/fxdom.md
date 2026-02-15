@@ -1,6 +1,6 @@
 # fxdom Element Specification v1.0.0
 
-**Status:** 📝 Draft (pre-freeze)
+**Status:** 🔒 Final / Frozen
 **Scope:** DOM-based Score Description (fxdom → FxScore)
 **Depends on (Normative):** score-fx Protocol Specification v1.0.0
 **Related:** blooky-fx Bridge v1.0.0 (out of scope), DevTools Projection (out of scope)
@@ -354,6 +354,13 @@ fxdom はその意味論（実行方法・待機方法・再開条件）を定�
 * `slot="default"` : 既定分岐
 * その他の `slot="<token>"` : ケースラベル（token の集合）
 
+**Normative clarification（非要求）**：
+
+* fxdom は `slot` の **Shadow DOM 割り当て機構**（slotting）の存在を **要求しない**（MUST NOT require）。
+  すなわち、ShadowRoot や actual slot assignment を伴わない文書でも、`slot` はケースラベルとして解釈されうる。
+* ただし、`slot` を採用した意図（「ラベル割当」というメンタルモデル）を否定しない。
+  本仕様が規範化するのは **“要求しない”** という点のみである。
+
 ### DOM constraints
 
 * `by` は必須（MUST）
@@ -667,6 +674,17 @@ fxdom 実装が v1.0.0 に適合するためには、少なくとも次を満た
 
 ---
 
+## 10. Frozen Declaration（Normative）
+
+🔒 **Frozen**
+
+* v1.0.0 は fxdom の基準点である。
+* 後方互換を壊す変更は禁止（MUST NOT）。
+* 既存の Normative 規範を変更する場合は v1.1+ で行う（MUST）。
+* v1.0.0 のまま許されるのは、意味を変えない明確化・誤字修正・Informative 追記のみである（MAY）。
+
+---
+
 ## Appendix A. Examples (Informative)
 
 ### A.1 switch (basic form)
@@ -720,5 +738,4 @@ fxdom 実装が v1.0.0 に適合するためには、少なくとも次を満た
 
 ---
 
-# END OF fxdom Element Specification v1.0.0 (Draft)
-  
+# END OF fxdom Element Specification v1.0.0

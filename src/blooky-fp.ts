@@ -393,12 +393,7 @@ const conflict = (plan: DripPlan): Set<Prop<any>> => {
  * 更新計画に基づいて値をPropに反映させる
  * @param plan 
  */
-const commit = (plan: DripPlan) => {
-    // conflict()を呼んでもいいが、最適化しておく
-    const seen = new Set<Prop<any>>();
-    for (const [p] of plan) if(seen.has(p)) throw new Error("DripPlan must not contain conflict");
-    plan.forEach(([p,v]) => PROP_UPDATE.get(p)!(v));
-}
+const commit = (plan: DripPlan) => plan.forEach(([p,v]) => PROP_UPDATE.get(p)!(v));
 
 export {
     // Core

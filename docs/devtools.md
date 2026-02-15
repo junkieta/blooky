@@ -79,38 +79,54 @@ DevTools は実行意味論に影響してはならない（MUST NOT）。
 
 ---
 
-## 3. Tick Monitoring Contract（Normative）
+# 3. Tick Monitoring Contract（Revised / Normative）
 
-### 3.1 Observed Payload
+## 3.1 Observed Payload（Normative）
 
-DevTools は Bridge が提供する以下の情報を観測してよい（MAY）：
+DevTools は、Bridge/Adapter が提供する以下の情報を観測してよい（MAY）：
 
 * `tick_index`
 * `tick_id`
 * `execution_id`（存在する場合）
-* `result: "success" | "failure"`
 * `effects_summary`
+  （当該 Tick で **commit 予定**の更新集合に関する summary。
+   summary の生成方式・粒度は実装依存でよい。）
 
-DevTools は Effect Map の内部順序や中間状態に依存してはならない（MUST NOT）。
+DevTools は以下に依存してはならない（MUST NOT）：
+
+* Effect Map の内部順序
+* 内部 merge 手順
+* 中間状態
+
+**Normative note**：
+本仕様は Tick の success/failure（結果通知）を要求しない。
+結果通知が必要な場合は Adapter 層の拡張として定義されうるが、
+DevTools v1.0.0 の依存関係には含めない。
 
 ---
 
-### 3.2 Lifecycle Boundary
+## 3.2 Lifecycle Boundary（Normative）
 
-DevTools が観測できるのは以下のみ：
+DevTools が観測できるのは、次の条件を満たす Tick に限られる：
 
-* Tick Commit 成功後
-* Tick Failure 確定時
+* conflict が存在しないことが確定している
+* commit 予定の更新集合（Effect Map / ObservedPlan 相当）が確定している
+* commit 実行前（pre-commit）
 
-Reservation / Merge 等の内部段階を観測してはならない（MUST NOT）。
+DevTools は以下を観測してはならない（MUST NOT）：
+
+* Reservation / merge / conflict 検証の途中状態
+* commit 実行中の状態
+
+Bridge v1.0.0 は post-commit 通知を要求しない（MUST NOT require）。
 
 ---
 
-### 3.3 Ordering
+## 3.3 Ordering（Unchanged / Normative）
 
 DevTools は表示順を `tick_index` に基づいて整列しなければならない（MUST）。
 
-timestamp を順序決定に使用してはならない（MUST NOT）。
+`timestamp` を順序決定に使用してはならない（MUST NOT）。
 
 ---
 
@@ -193,25 +209,29 @@ done は「戻り値確定の通知口」として扱われる。
 
 ---
 
-## 8. Failure Handling
+# 8. Failure Handling（Normative）
 
 DevTools 内の例外は：
 
-* Commit 成否を変更してはならない（MUST NOT）
+* commit 成否を変更してはならない（MUST NOT）
+* commit 実行を中断させてはならない（MUST NOT）
 * 可能であれば隔離されるべきである（SHOULD）
 
-Tick failure は Bridge が確定させる。
+**Normative note**：
+Tick failure の確定および error の生成は Bridge/Runtime の責務である。
+DevTools は failure を自ら確定させてはならない（MUST NOT）。
 
 ---
 
-## 9. Conformance
+# 9. Conformance（Minor Clarification）
 
 実装が v1.0.0 準拠であるためには：
 
-1. Bridge Appendix E に従属する
-2. tick_index を順序基準とする
+1. Bridge Appendix E（pre-commit Monitoring 境界）に従属する
+2. `tick_index` を唯一の順序基準とする
 3. Injection による意味論変更を行わない
 4. DevTools 無効時に挙動が一致する
+5. commit 成否に影響を与えない
 
 ---
 
@@ -220,10 +240,10 @@ Tick failure は Bridge が確定させる。
 blooky-devtools v1.0.0 は、
 
 * Timeline 主権を Bridge に固定し
-* Strict Policy を維持し
-* DevTools を安全な Monitoring Observer として定義し
-* done を最小化し
-* 将来拡張（Bus / Fact 正規化）を可能にする
+* DevTools を pre-commit の Monitoring Observer として定義し
+* DevTools の失敗を commit 成否から隔離し
+* Injection による意味論変更を禁止し
+* 将来拡張（可観測バス／Fact 正規化）を可能にする
 
 最小核の固定である。
 

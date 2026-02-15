@@ -277,22 +277,35 @@ Clock Prop は参照してよい（MAY）が、外部から更新してはなら
 
 # 7. Observer Boundary（Normative）
 
-本仕様における Observer は fx bridge における Commit Observer に相当する。
-
-Observer は CommitPlan 確定後、commit 実行前に通知される。
+Observer は、CommitPlan 確定後かつ commit 実行前に通知される観測者である。
 
 Observer は：
 
-* CommitPlan 由来の ObservedPlan を受け取る（MUST）。
+* CommitPlan 由来の ObservedPlan（CommitPlan の subset view）を受け取る（MUST）。
 * plan を編集してはならない（MUST NOT）。
 * commit 制御に介入してはならない（MUST NOT）。
 
-Observer 内で例外が発生した場合：
+## 7.1 Invocation Timing（Normative）
 
-* Runtime は当該 Tick を failure として扱い、commit を実行してはならない（MUST）。
-* submit の Promise は `ObserverError` で reject されなければならない（MUST）。
+Runtime は以下の順序を守らなければならない（MUST）：
 
-Observer は projection 機構であり、状態生成権限を持たない。
+1. DripPlan を合成する。
+2. Conflict 検証を行う。
+3. CommitPlan を確定する。
+4. ObservedPlan を生成し Observer に通知する（MAY）。
+5. CommitPlan を atomic commit する。
+
+Observer が受け取る ObservedPlan は、常に「commit 予定として確定した CommitPlan」に基づくものでなければならない（MUST）。
+
+## 7.2 Isolation Policy（Normative）
+
+Observer は Monitoring 機構であり、Runtime の commit 成否を左右してはならない。
+
+* Observer 内で例外が発生しても、Runtime は commit を中止してはならない（MUST NOT）。
+* Observer 内例外により、submit() の Promise を reject してはならない（MUST NOT）。
+* 実装は、Observer 内例外をログ・収集・隔離してよい（MAY）。
+
+Observer の失敗は recoverable error として submit() の reject 経路に載せてはならない（MUST NOT）。
 
 ---
 
