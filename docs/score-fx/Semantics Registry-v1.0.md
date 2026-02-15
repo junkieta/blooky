@@ -1,4 +1,4 @@
-# blooky-fx Semantics Registry Specification v1.0
+# Semantics Registry Specification v1.0
 
 **— Standard Semantics for score-fx —**
 
@@ -11,8 +11,7 @@
 
 ## 0. Positioning and Intent
 
-**blooky-fx** はフレームワークではない。
-**blooky-fx は、score-fx プロトコル上で使用される「意味論の辞書（Semantics Registry）」である。**
+**本仕様は、score-fx プロトコル上で使用される「意味論の辞書（Semantics Registry）」である。**
 
 本仕様は、score-fx が提供する **AST + Interpreter モデル**に対し、
 
@@ -23,6 +22,15 @@
 を **標準化された形で定義**する。
 
 本書は **設計判断の最終結果のみ**を規定する。
+本Registryは、score-fx を中心とする以下の現行仕様群で共有される語彙層として扱う：
+
+* score-fx
+* fxdom
+* bridge
+* devtools
+* blooky-fp
+* blooky-fv
+* runtime submission contract
 代替案・歴史的経緯・移行議論は含まない。
 
 ---
@@ -44,7 +52,7 @@
 
 ### 1.2 Non-goals
 
-blooky-fx は以下を **一切規定しない**：
+本Registryは以下を **一切規定しない**：
 
 * Runner の実装
 * Timeline / DevTools / UI
@@ -83,7 +91,7 @@ Runner はそれを **解釈し、PerformanceStep に変換する唯一の主体
 
 ### 3.1 Minimal Event Set
 
-blooky-fx v1.0 において、Semantics が使用できる `SemanticEvent` は
+本仕様 v1.0 において、Semantics が使用できる `SemanticEvent` は
 **score-fx Protocol Specification v1.0.0 により定義された最小集合に限定**される。
 
 本仕様は、SemanticEvent の構造や拡張を定義しない。
@@ -106,7 +114,7 @@ Semantics は再開の瞬間を知らず、知る必要もない。
 `suspend(condition)` に渡される `condition` は
 Runner にとって評価可能な **不透明参照（Opaque Reference）**である。
 
-* score-fx / blooky-fx は構造を規定しない
+* score-fx / 本Registry は構造を規定しない
 * 評価方法は Runner 実装または上位層の合意に委ねられる
 
 ### 3.4 Semantics Classification（Informative）
@@ -114,7 +122,7 @@ Runner にとって評価可能な **不透明参照（Opaque Reference）**で�
 本節は **説明目的（informative）**であり、
 **規範的な分類は Section 4 に定義される。**
 
-blooky-fx が提供する Semantics は、責務により以下の 3 種に分類される：
+本Registryが提供する Semantics は、責務により以下の 3 種に分類される：
 
 * Structural Semantics（構造・制御）
 * Execution / Boundary Semantics（実行・境界）
@@ -128,7 +136,7 @@ blooky-fx が提供する Semantics は、責務により以下の 3 種に分�
 
 #### 4.1.1 定義
 
-**blooky-fx Semantics Registry** とは、
+**Semantics Registry** とは、
 score-fx プロトコル上で使用される **`FxNote.kind` とその意味論（Semantics）の対応表**を定義する **意味辞書**である。
 
 Registry は以下を **唯一の責務**とする：
@@ -189,7 +197,7 @@ Performance は、その譜面に対する *解釈* である。
 同一の FxScore から異なる Performance が生まれることは、
 設計上自然であり、望ましい。
 
-blooky-fx / score-fx は、
+Semantics Registry / score-fx は、
 **単一の実行結果を規範化することを目的としない。**
 その代わりに、
 **構造が正しく提示され、解釈可能であること**を唯一の価値基準とする。
@@ -198,7 +206,7 @@ blooky-fx / score-fx は、
 
 ### 4.3 SemanticEvent の使用制約
 
-blooky-fx v1.0 において、Semantics が使用できる `SemanticEvent` は
+本仕様 v1.0 において、Semantics が使用できる `SemanticEvent` は
 **本仕様（Section 4.4）により規定される標準語彙に基づいて制限される。**
 
 Semantics は：
@@ -210,7 +218,7 @@ Semantics は：
 
 ### 4.4 Standard Semantics Vocabulary（v1.0）
 
-以下は **blooky-fx v1.0 における標準語彙の完全かつ唯一の一覧**である。
+以下は **Semantics Registry v1.0 における標準語彙の完全かつ唯一の一覧**である。
 
 この集合は **closed set** であり、
 本バージョンにおいて **追加・削除・再分類は行われない**。
@@ -278,7 +286,7 @@ Semantics は：
 * `return` は **現在の Performance を終了させる唯一の標準手段**である
 * `return` は `terminate` Event に正規化される
 * `return` の使用制約（例：spawn 文脈のみ有効等）は
-  **blooky-fx 規範として定義可能**であるが、score-fx プロトコル自体は中立である
+  **本Registry規範として定義可能**であるが、score-fx プロトコル自体は中立である
 
 ---
 
@@ -323,20 +331,56 @@ throw による制御は **明確に禁止**される。
 
 ---
 
+### 4.8 Event Delivery and Runner Obligations（Normative）
+
+#### 4.8.1 配送順序と完全性
+
+1. Semantics は 0 個以上の `SemanticEvent` を yield してよい（MAY）。
+2. Runner は、Semantics が生成した順序どおりにイベントを処理しなければならない（MUST）。
+3. Runner は、イベントを並べ替え・欠落・重複させてはならない（MUST NOT）。
+
+#### 4.8.2 `result(value)` の Runner 義務
+
+- Runner は `result.value` を PerformanceStep / ExecutionStep の該当フィールドへ確実に反映しなければならない（MUST）。
+- 同一ノート評価で `result` が受理された後、当該評価に追加イベントが存在してはならない（MUST NOT）。
+
+#### 4.8.3 `effect(ref)` の Runner 義務
+
+- Runner は `effect` を即時実行命令として扱ってはならない（MUST NOT）。
+- Runner は `effect.ref` を後段で集約可能な形で記録しなければならない（MUST）。
+
+#### 4.8.4 `suspend(until)` の Runner 義務
+
+- Runner は `suspend` を受け取ったら、当該評価を suspended へ遷移させなければならない（MUST）。
+- Runner は `phase:"suspend"` 相当の step を記録し、`until` を保持しなければならない（MUST）。
+- `until` 成立時、Runner は `phase:"resume"` 相当の step を記録して継続しなければならない（MUST）。
+
+#### 4.8.5 `terminate(value?)` の Runner 義務
+
+- Runner は `terminate` 受理後、以後の subnote スケジューリングを停止し、Performance を終端状態へ遷移させなければならない（MUST）。
+- Runner は終端 step（`exit` または `cancel`）を記録し、`value` があれば保持しなければならない（MUST）。
+- `terminate` を yield した評価で追加イベントを発行してはならない（MUST NOT）。
+
+#### 4.8.6 排他と例外境界
+
+- 同一ノート評価（および同一 Performance）で `result` と `terminate` を同時に発行してはならない（MUST NOT）。
+- Semantics は Runner 境界をまたいで例外（throw）を漏らしてはならない（MUST NOT）。
+
+---
+
 ## 5. Compatibility, Versioning & Stability
 
 ### 5.1 Version Meaning
 
-* 本仕様は **blooky-fx Semantics Registry v1.0** の最終定義である
-* 既存の blooky-fx v2.1.2-p1 とは **互換性を前提としない**
-* 本仕様は **score-fx 系列への正式な再定義**である
+* 本仕様は **Semantics Registry v1.0** の最終定義である
+* 本仕様は **score-fx 系列の語彙規範**である
 
 ---
 
 ### 5.2 Responsibility Boundary Declaration
 
 * **score-fx v1.0** は *実行プロトコル* を定義する
-* **blooky-fx v1.0** は *意味論の辞書（Semantics Registry）* を定義する
+* **Semantics Registry v1.0** は *意味論の辞書* を定義する
 * 本仕様は **実装を含まない**
 
 ---
@@ -356,7 +400,7 @@ throw による制御は **明確に禁止**される。
 ## 6. Closing Statement
 
 
-blooky-fx は、
+Semantics Registry は、
 
 * 実行エンジンではなく
 * UI フレームワークでもなく
@@ -365,13 +409,9 @@ blooky-fx は、
 **score-fx プロトコル上で共有される「意味の辞書」**である。
 
 この再定義により、
-blooky-fx は **拡張可能で、肥大しない中核**として固定された。
+Semantics Registry は **拡張可能で、肥大しない中核**として固定された。
 
 ---
 
-
-# 🔒 blooky-fx Semantics Registry v1.0 — Frozen
-
-
-
+# 🔒 Semantics Registry v1.0 — Frozen
 
