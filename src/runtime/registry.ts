@@ -17,7 +17,11 @@ export type PerfCtx = {
 
 export type Semantics = (note: FxNote, ctx: PerfCtx) => Generator<SemanticEvent, void, void>;
 
-export type RunChild = (n: FxNote, overrideAppContext?: Record<string | symbol, any>) => Promise<unknown>;
+export type RunChild = (
+  n: FxNote,
+  overrideAppContext?: Record<string | symbol, any>,
+  overrideCancelToken?: CancelToken
+) => Promise<unknown>;
 
 export type StepSink = (step: ExecutionStep) => void;
 

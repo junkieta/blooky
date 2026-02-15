@@ -1,6 +1,6 @@
 import type { SemanticEvent } from "./registry";
 
-type Phase = "enter" | "running" | "suspended" | "completed" | "terminated";
+type Phase = "enter" | "running" | "suspended" | "completed" | "terminated" | "cancelled";
 
 export class RunnerFSM {
   private phase: Phase = "enter";
@@ -13,7 +13,7 @@ export class RunnerFSM {
   }
 
   onEvent(ev: SemanticEvent) {
-    if (this.phase === "completed" || this.phase === "terminated") {
+    if (this.phase === "completed" || this.phase === "terminated" || this.phase === "cancelled") {
       throw new Error(`FSM violation: event after end (${ev.type})`);
     }
 
@@ -53,5 +53,12 @@ export class RunnerFSM {
   onResume() {
     if (this.phase !== "suspended") throw new Error("FSM violation: resume without suspend");
     this.phase = "running";
+  }
+
+  onCancel() {
+    if (this.phase === "completed" || this.phase === "terminated" || this.phase === "cancelled") {
+      throw new Error("FSM violation: cancel after end");
+    }
+    this.phase = "cancelled";
   }
 }

@@ -1,6 +1,7 @@
 import { Prop } from "../blooky-types";
 import type { FxNote, FxRef, CancelToken } from "../fx/types";
 import type { PerfCtx } from "./registry";
+import { RETURN_VALUE } from "../fx/nodes/return";
 
 export type EffectOutcome =
   | { kind: "none" }
@@ -59,7 +60,7 @@ export const createDefaultProfile = (deps: {
         poll();
       });
 
-    // 最小実装：waitのみ（yield等はホスト拡張に委ねる）
+    // default suspend handlers
     if (until?.kind === "wait") {
       if (until.ms !== undefined) {
         const ms = Number(resolveRef(until.ms as any, ctx));
@@ -78,6 +79,36 @@ export const createDefaultProfile = (deps: {
           if (ok) return;
           await sleep(16);
         }
+      }
+      return;
+    }
+
+    // default yield boundary:
+    // resolve target context and run its child flow in-place, then resume.
+    if (until?.kind === "yield") {
+      const target = resolveRef(until.for as any, ctx) as any;
+      if (!target || target.type !== "context" || !target.child) {
+        console.warn("[score-fx/profile] Invalid yield target, skipping:", until, ctx.executionId);
+        return;
+      }
+
+      const yieldedValue = until.value === undefined ? undefined : resolveRef(until.value as any, ctx);
+      const prevDollar = (ctx.appContext as any).$_;
+      const prevReturn = (ctx.appContext as any)[RETURN_VALUE];
+
+      (ctx.appContext as any).$_ = yieldedValue;
+      try {
+        const fx = await import("../blooky-fx");
+        const prepared = fx.prepare(target.child, ctx.appContext as any, {
+          resolve: deps.resolve,
+          cancelToken,
+          executionId: `${ctx.executionId}:yield`,
+        });
+        const handle = fx.execute(prepared);
+        await handle.done;
+      } finally {
+        (ctx.appContext as any).$_ = prevDollar;
+        (ctx.appContext as any)[RETURN_VALUE] = prevReturn;
       }
       return;
     }

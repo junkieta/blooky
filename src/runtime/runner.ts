@@ -18,6 +18,11 @@ import { Prop } from "../blooky-types";
 
 const NotResolved = Symbol.for("NotResolved");
 
+const isCancelledError = (e: unknown): e is Error =>
+  e instanceof Error && e.message.startsWith("cancelled:");
+
+const cancelledReasonFromError = (e: Error) => e.message.slice("cancelled:".length) || "user";
+
 function createCancelToken(parent?: CancelToken): CancelToken {
   let isCancelled = false;
   let cancelReason: any;
@@ -125,71 +130,108 @@ export function execute(args: {
   const run = async (
     note: FxNote,
     parentId: string,
-    appCtx: Record<string | symbol, any>
+    appCtx: Record<string | symbol, any>,
+    cancelToken: CancelToken
   ): Promise<unknown> => {
     const ctx: PerfCtx = { note, appContext: appCtx, executionId: `${parentId}:${note.type}` };
-
-    if (execContext.cancelToken.cancelled()) {
-      throw new Cancelled(execContext.cancelToken.reason ?? "user");
-    }
 
     const fsm = new RunnerFSM();
     emit({ phase: "enter", node: note, data: { executionId: ctx.executionId } });
     fsm.onEnter();
 
-    const struct = registry.structures.get(note.type);
-    if (struct) {
-      const value = await struct(note, ctx, {
-        runChild: (child, overrideAppContext) => run(child, ctx.executionId, overrideAppContext ?? ctx.appContext),
-        profile,
-        cancelToken: execContext.cancelToken,
-        emit,
-      });
-
-      emit({ phase: "exit", node: note, data: { result: value } });
-      if (note.id) (ctx.appContext as any)["#" + note.id] = value;
-      return value;
-    }
-
-    const sem = registry.semantics.get(note.type);
-    if (!sem) throw new Error(`No semantics for ${note.type}`);
-
-    let final: unknown = undefined;
-
-    for (const ev of sem(note, ctx)) {
-      fsm.onEvent(ev);
-
-      const r = await dispatchEvent(ev, {
-        profile,
-        ctx,
-        cancelToken: execContext.cancelToken,
-        emit,
-      });
-
-      if (ev.type === "suspend") {
-        fsm.onResume();
+    try {
+      if (cancelToken.cancelled()) {
+        throw new Cancelled(cancelToken.reason ?? "user");
       }
 
-      if (r.kind === "result") {
-        if (ev.type !== "result") {
-          // effect-only 完了など、Semanticsがresultを出していない場合だけ合成
-          fsm.onEvent({ type: "result", value: r.value });
+      const struct = registry.structures.get(note.type);
+      if (struct) {
+        const value = await struct(note, ctx, {
+          runChild: (child, overrideAppContext, overrideCancelToken) =>
+            run(
+              child,
+              ctx.executionId,
+              overrideAppContext ?? ctx.appContext,
+              overrideCancelToken ?? cancelToken
+            ),
+          profile,
+          cancelToken,
+          emit,
+        });
+
+        emit({ phase: "exit", node: note, data: { result: value } });
+        if (note.id) (ctx.appContext as any)["#" + note.id] = value;
+        return value;
+      }
+
+      const sem = registry.semantics.get(note.type);
+      if (!sem) throw new Error(`No semantics for ${note.type}`);
+
+      let final: unknown = undefined;
+      let hasFinal = false;
+      let pendingResult: { has: boolean; value: unknown } = { has: false, value: undefined };
+
+      for (const ev of sem(note, ctx)) {
+        fsm.onEvent(ev);
+
+        const r = await dispatchEvent(ev, {
+          profile,
+          ctx,
+          cancelToken,
+          emit,
+        });
+
+        if (ev.type === "suspend") {
+          fsm.onResume();
         }
-        final = r.value;
-        break;
-      }
-    }
 
-    emit({ phase: "exit", node: note, data: { result: final } });
-    if (note.id) (ctx.appContext as any)["#" + note.id] = final;
-    return final;
+        if (r.kind === "result") {
+          if (ev.type === "result") {
+            final = r.value;
+            hasFinal = true;
+            break;
+          }
+          pendingResult = { has: true, value: r.value };
+        }
+      }
+
+      if (!hasFinal && pendingResult.has) {
+        fsm.onEvent({ type: "result", value: pendingResult.value });
+        final = pendingResult.value;
+      }
+
+      emit({ phase: "exit", node: note, data: { result: final } });
+      if (note.id) (ctx.appContext as any)["#" + note.id] = final;
+      return final;
+    } catch (e) {
+      if (e instanceof Terminated) {
+        emit({ phase: "exit", node: note, data: { terminated: true, value: e.value } });
+        if (note.id) (ctx.appContext as any)["#" + note.id] = e.value;
+        throw e;
+      }
+
+      if (e instanceof Cancelled) {
+        fsm.onCancel();
+        emit({ phase: "cancel", node: note, data: { reason: e.reason } });
+        throw e;
+      }
+
+      if (isCancelledError(e)) {
+        const reason = cancelledReasonFromError(e);
+        fsm.onCancel();
+        emit({ phase: "cancel", node: note, data: { reason } });
+        throw new Cancelled(reason);
+      }
+
+      throw e;
+    }
   };
 
   const done = (async () => {
     let finalValue: unknown = undefined;
 
     try {
-      finalValue = await run(rootNode, execContext.executionId || "root", appContext);
+      finalValue = await run(rootNode, execContext.executionId || "root", appContext, execContext.cancelToken);
     } catch (e) {
       if (e instanceof Terminated) {
         finalValue = e.value;

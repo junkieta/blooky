@@ -1,5 +1,5 @@
 import type { Registry, Semantics, StructureRunner } from "./registry";
-import type { FxNote } from "../fx/types";
+import type { FxNote, CancelToken } from "../fx/types";
 
 const semNone: Semantics = function* () {};
 
@@ -43,8 +43,34 @@ const runParallel: StructureRunner = async (note, _ctx, deps) => {
 
 const runRace: StructureRunner = async (note, _ctx, deps) => {
   if (note.type !== "race") return undefined;
-  // loser cancel を入れるならここ（今回は最小）
-  return Promise.race(note.steps.map((n) => deps.runChild(n)));
+
+  const childTokens = note.steps.map(() => createChildCancelToken(deps.cancelToken));
+  let settled = false;
+
+  const wrapped = note.steps.map((child, i) =>
+    deps
+      .runChild(child, undefined, childTokens[i])
+      .then((v) => {
+        if (!settled) {
+          settled = true;
+          childTokens.forEach((t, j) => {
+            if (j !== i) t.cancel("race");
+          });
+        }
+        return v;
+      })
+      .catch((e) => {
+        if (!settled) {
+          settled = true;
+          childTokens.forEach((t, j) => {
+            if (j !== i) t.cancel("race");
+          });
+        }
+        throw e;
+      })
+  );
+
+  return Promise.race(wrapped);
 };
 
 const runLoop: StructureRunner = async (note, ctx, deps) => {
@@ -91,6 +117,23 @@ const runContext: StructureRunner = async (note, ctx, deps) => {
   const scoped = overlayContext(ctx.appContext, note.context);
   return deps.runChild(note.child, scoped);
 };
+
+function createChildCancelToken(parent?: CancelToken): CancelToken {
+  let cancelled = false;
+  let reason: any;
+  return {
+    parent,
+    cancel: (r: any = "user") => {
+      cancelled = true;
+      reason = r;
+    },
+    cancelled: () => cancelled || !!parent?.cancelled(),
+    get reason() {
+      if (cancelled) return reason;
+      return parent?.reason;
+    },
+  };
+}
 
 export const registerDefault = (reg: Registry) => {
   reg.semantics.set("none", semNone);
