@@ -1,7 +1,6 @@
 // src/fx/types.d.ts
 
 import { Prop, DripperStream } from "../blooky-types";
-import { PromisedProp } from "../blooky-fp";
 
 // ─── 実行ステップの定義 ───
 /**
@@ -11,15 +10,6 @@ export type ExecutionStep = {
   phase: string;           // 'init' | 'running' | 'waiting' | 'completed' など
   node: FxNote;           // 現在のノード
   data?: any;             // フェーズ固有のデータ
-  
-  // devtools 向け情報（オプショナル）
-  visual?: {
-    label?: string;       // UI に表示するラベル
-    description?: string; // 詳細説明
-    color?: string;       // 色（CSS color値）
-    icon?: string;        // アイコン
-    progress?: number;    // 0-1 の進捗
-  };
 };
 
 // ─── FxRef: 実行時解決される値への参照 ───
@@ -114,7 +104,7 @@ export type FxParallelNode = FxNoteBase<"parallel", { steps: FxNote[] }>;
 export type FxRaceNode = FxNoteBase<"race", { steps: FxNote[] }>;
 export type FxWaitNode = FxNoteBase<"wait", { 
   ms?: FxRef<number>; 
-  until?: FxRef<Prop<boolean> | PromisedProp<any>>; 
+  until?: FxRef<Prop<boolean>>; 
 }>;
 export type FxLoopNode = FxNoteBase<"loop", { 
   cond: FxRef<boolean>; 
