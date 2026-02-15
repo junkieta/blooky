@@ -1,100 +1,182 @@
-import { stream, drip, hold, collapse } from "../blooky-fp";
-import { DripEffect, Prop } from "../blooky-types";
+import { stream, drip, hold, commit, conflict } from "../blooky-fp";
+import { FVRuntime, ObservedDripPlan } from "../blooky-fv";
+import { DripPlan, Prop } from "../blooky-types";
 
-type ClockEffect = DripEffect<number> & { unbind: (p:Prop<unknown>)=>void }
-type Clock = Prop<number> & {
-    observe: (f:(effect:ClockEffect)=>void) => (p: Prop<unknown>) => ()=>void
-    unobserve: (f:(effect:ClockEffect)=>void) => (p?: Prop<unknown>) => void
-};
-
+type Clock = Prop<number> & FVRuntime;
+type FatalHandler = (error: CommitExecutionError) => void;
 
 const beat$ = stream<number>();
-const scheduler = globalThis.requestAnimationFrame || 
-  ((f:(t:number)=>void) => setTimeout(()=>f(performance.now()), Math.ceil(1000/60)));
+const scheduler =
+  globalThis.requestAnimationFrame ||
+  ((f: (t: number) => void) =>
+    setTimeout(() => f(performance.now()), Math.ceil(1000 / 60)));
+
+class ConflictError extends Error {
+  readonly name = "ConflictError";
+  constructor(readonly conflicts: Set<Prop<any>>) {
+    super("Conflict in CommitPlan");
+  }
+}
+
+class CommitExecutionError extends Error {
+  readonly name = "CommitExecutionError";
+  constructor(readonly cause: unknown) {
+    super("Commit execution failed");
+  }
+}
 
 type Reservation = {
-  effect: DripEffect<any>
-  resolve: (v:DripEffect<number>)=>void
-  reject: (v:Error[])=>void
-}
+  plan: DripPlan;
+  resolve: (v: DripPlan) => void;
+  reject: (v: unknown) => void;
+};
+
 const tickQueue: Reservation[] = [];
+let fatalState: CommitExecutionError | null = null;
+
+const clockObservers = new Map<
+  (plan: ObservedDripPlan) => void,
+  Set<Prop<unknown>>
+>();
 
 let clockRunning: number | NodeJS.Timeout = 0;
+let fatalHandler: FatalHandler = (error) => {
+  // Host-defined fatal path (default behavior)
+  // Node.js: terminate process if available.
+  const maybeProcess = (globalThis as any).process;
+  if (maybeProcess && typeof maybeProcess.exit === "function") {
+    console.error("fatal: commit execution failed", error);
+    maybeProcess.exit(1);
+    return;
+  }
+  // Browser/other hosts: surface the error explicitly.
+  console.error("fatal: commit execution failed", error);
+};
+
+const enterFatalState = (error: CommitExecutionError) => {
+  fatalState = error;
+  tickQueue.length = 0;
+  clockRunning = 0;
+  fatalHandler(error);
+};
+
+const buildCommitIntent = (t: number, reservations: Reservation[]): DripPlan => {
+  // clock派生 (beat$) + submitされたplans を合成
+  // ※ここで必要なら "clock由来の派生plan" を追加する（仕様上は runtime の責務）
+  return drip(t)(beat$).concat(...reservations.map(({ plan }) => plan));
+};
+
+const notifyClockObservers = (commitIntent: DripPlan): Error[] => {
+  const errors: Error[] = [];
+  // commitIntent は conflict-free を前提に Map 化（subset）
+  clockObservers.forEach((props, f) => {
+    // subset: props に含まれるものだけ抜く
+    const subset = commitIntent.filter(([p]) => props.has(p));
+    if (!subset.length) return;
+
+    try {
+      const maybePromise = (f as (plan: ObservedDripPlan) => unknown)(
+        new Map(subset) as any
+      );
+      // Observer async failure is isolated from submit/commit result.
+      if (
+        maybePromise &&
+        typeof (maybePromise as any).then === "function" &&
+        typeof (maybePromise as any).catch === "function"
+      ) {
+        (maybePromise as Promise<unknown>).catch((err) => {
+          console.error("clockObserver: async thrown error", err);
+        });
+      }
+    } catch (err) {
+      errors.push(err as Error);
+    }
+  });
+  return errors;
+};
+
 const advanceClock = () => {
-    if(!clockRunning) clockRunning = scheduler((t:number) => {
-        if(!tickQueue.length && !clockObservers.size) return;
-        clockRunning = 0;
-        const reservations = tickQueue.splice(0).reverse();
-        const clockEffect = drip(t)(beat$);
-        const errors = notifyClockObservers(clockEffect)(reservations);
-        collapse(clockEffect);
-        if(!errors.length) {
-            reservations.forEach((r) => r.resolve(clockEffect));
-        } else {
-            reservations.forEach((r) => r.reject(errors));
-        }
-//        reservations.forEach((r) => r.resolve(clockEffect));
-        advanceClock();
-    });
-}
+  if (clockRunning) return;
 
-const tick = (effect:DripEffect<any>) => 
-    new Promise((resolve,reject) => {
-        tickQueue.push({ effect, resolve, reject });
-        advanceClock();
-    });
+  clockRunning = scheduler((t: number) => {
+    clockRunning = 0;
+    if (fatalState) return;
 
-const clockObservers = new Map<(effect: ClockEffect) => void, Set<Prop<unknown>>>();
+    if (!tickQueue.length && !clockObservers.size) return;
 
+    const reservations = tickQueue.splice(0);
 
-const clock = Object.assign(hold(0)(beat$), {
+    // 1) CommitPlan (= commit-intent) を確定
+    const commitIntent = buildCommitIntent(t, reservations);
 
-    observe: (f:(effect:ClockEffect)=>void) => (p: Prop<unknown>) => {
-        if(!clockObservers.has(f)) 
-            clockObservers.set(f, new Set([p]));
-        else
-            clockObservers.get(f)!.add(p);
-        return clock.unobserve(f).bind(null, p);
-    },
-
-    unobserve: (f:(effect:ClockEffect)=>void) => (p?: Prop<unknown>) => {
-        if(!clockObservers.has(f)) return;
-        if(!p) {
-            clockObservers.delete(f)
-        } else {
-            const props = clockObservers.get(f)!;
-            props.delete(p);
-            if(!props.size)
-                clockObservers.delete(f);
-        }
+    // 2) conflict を事前検出（conflict があれば commit も observer も呼ばない）
+    const conflicts = conflict(commitIntent);
+    if (conflicts.size) {
+      const err = new ConflictError(conflicts);
+      reservations.forEach(({ reject }) => reject(err));
+      // 次tickへ（予約は失敗確定）
+      advanceClock();
+      return;
     }
 
-}) as Clock;
+    // 3) ObservedPlan（subset view）を通知（pre-commit）
+    const obsErrors = notifyClockObservers(commitIntent);
+    if (obsErrors.length) {
+      console.error("clockObserver: thrown errors", ...obsErrors);
+      // 隔離方針：observer例外は commit 成否に影響させない
+    }
 
-const notifyClockObservers = (effect: DripEffect<any>) => (reservations: Reservation[]) : Error[] => {
-    const propEffects = effect.effects;
-    reservations.forEach((r) => {
-        r.effect.effects.forEach((v,p) => {
-            if(!propEffects.has(p))
-                propEffects.set(p,v);
-        });
-    });
+    // 4) commit（本来 throw しない前提。throw したら停止級）
+    try {
+      commit(commitIntent);
+    } catch (err) {
+      const fatal = new CommitExecutionError(err);
+      // fatal は submit reject 経路に載せず、停止経路へ移行。
+      enterFatalState(fatal); return;
+    }
 
-    const errors: Error[] = [];
-    clockObservers.forEach((props,f) => {
-        const m = new Map(propEffects.entries().filter(([p])=>props.has(p)));
-        if(m.size) {
-            try {
-                f(Object.assign({}, effect, {
-                    effects: m,
-                    unbind: clock.unobserve(f)
-                }));
-            } catch(err) {
-                errors.push(err);
-            }
-        }
-    });
-    return errors;
-}
+    // 5) resolve（commit 成功）
+    reservations.forEach(({ resolve }) => resolve(commitIntent));
 
-export const time = { tick, clock };
+    advanceClock();
+  });
+};
+
+const tick = (plan: DripPlan) => {
+  if (fatalState) throw fatalState;
+  return new Promise<DripPlan>((resolve, reject) => {
+    tickQueue.push({ plan, resolve, reject });
+    advanceClock();
+  });
+};
+
+export const clock: Clock = Object.assign<Prop<number>, FVRuntime>(hold(0)(beat$), {
+  observe(f: (plan: ObservedDripPlan) => void) {
+    return (p: Prop<any>) => {
+      if (!clockObservers.has(f)) clockObservers.set(f, new Set([p]));
+      else clockObservers.get(f)!.add(p);
+      return clock.unobserve(f).bind(null, p);
+    };
+  },
+
+  unobserve(f: (plan: ObservedDripPlan) => void) {
+    return (p?: Prop<unknown>) => {
+      if (!clockObservers.has(f)) return;
+      if (!p) {
+        clockObservers.delete(f);
+      } else {
+        const props = clockObservers.get(f)!;
+        props.delete(p);
+        if (!props.size) clockObservers.delete(f);
+      }
+    };
+  },
+
+  submit: tick,
+});
+
+export const setFatalHandler = (handler: FatalHandler) => {
+  fatalHandler = handler;
+};
+
+export const time = { tick, clock, setFatalHandler };

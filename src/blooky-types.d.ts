@@ -2,14 +2,13 @@
 
 export type Prop<A> = () => A;
 
-export type PropEffect<A> = [Prop<A>, A];
-
 export type StreamBase<A, T> = {
   next: Set<MappedStream<A,any> | FilterStream<A>>;
   lazyNext: Set<MergedStream<A>>;
 } & T;
 
 export type DripperStream<A> = StreamBase<A, { isDripper: true }>;
+export type Dripper<A> = DripperStream<A>;
 
 export type MergedStream<A> = StreamBase<A, { reduceFn: (a: A, b: A) => A }>;
 
@@ -23,11 +22,6 @@ export type Stream<A> =
   | MergedStream<A>
   | FilterStream<A>;
 
-export type DripEffect<A> = {
-  value: A;
-  dripper: DripperStream<A>;
-  effects: Map<Prop<any>, any>;
-};
 
 // Informative / Introspection
 export type Vertex = {
@@ -37,5 +31,9 @@ export type Vertex = {
   props: Prop<any>[];
 };
 
+
+export type PropPlan<A> = [Prop<A>, A];
+export type DripPlan = PropPlan<any>[];
+
 // Informative / internal
-export type FlowingState = [PropEffect<unknown>[], [MergedStream<any>, any][]];
+export type FlowingState = [PropPlan<unknown>[], [MergedStream<any>, any][]];

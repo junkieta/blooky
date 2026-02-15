@@ -3,8 +3,8 @@
  * 関数型リアクティブプログラミングをTypeScriptで行うためのライブラリ。
  */
 import { 
-  DripEffect, DripperStream, FilterStream, FlowingState,
-  MappedStream, MergedStream, Prop, PropEffect, Stream, Vertex 
+  DripPlan, DripperStream, FilterStream, FlowingState,
+  MappedStream, MergedStream, Prop, PropPlan, Stream, Vertex 
 } from "./blooky-types";
 
 /**
@@ -152,20 +152,16 @@ const filter = <A>(f:Predicate<A>) => (s:Stream<A>) : FilterStream<A> => {
 }
 
 
-// 1) 関数版：入力型 A が束縛される（推論が効く）
-function map<A, B>(f: (v: A) => B): (s: Stream<A>) => MappedStream<A, B>;
-
-// 2) Prop 版：入力型は捨ててよい（anyでOK）、出力Bは Prop から取れる
-function map<B>(p: Prop<B>): (s: Stream<any>) => MappedStream<any, B>;
-
-// 3) 定数版：同上
-function map<B>(value: B): (s: Stream<any>) => MappedStream<any, B>;
 
 /**
  * Streamの値を別の値に変換する。
  * @param fn - 変換関数、Prop、または固定値
  * @returns Streamを受け取りMappedStreamを返す関数
  */
+function map<A, B>(f: (v: A) => B): (s: Stream<A>) => MappedStream<A, B>;
+function map<A, B>(p: Prop<B>): (s: Stream<A>) => MappedStream<A, B>;
+function map<A, B>(value: B): (s: Stream<A>) => MappedStream<A, B>;
+
 function map<A,B>(f:((v:A)=>B)|Prop<B>|B) {
     return (s:Stream<A>) : MappedStream<A,B> => {
         const _s: MappedStream<A,B> = {
@@ -297,7 +293,7 @@ const hold = <A>(v:A) => (s:Stream<A>): Prop<A> => {
  * @param fn - 変換関数
  * @returns Propを受け取り新しいPropを返す関数
  */
-const remap = <A,B>(f:(v:A,p?:A)=>B) => (p:Prop<A>) : Prop<B> => 
+const remap = <A,B>(f:(v:A)=>B) => (p:Prop<A>) : Prop<B> => 
     PROP_FROM.has(p)
         ? hold(f(p()))(map(f)(PROP_FROM.get(p)!))
         : ()=>f(p());
@@ -328,24 +324,34 @@ const streamToFlowingState = <A>(v:A) => (s:Stream<A>) : FlowingState => {
     const waiting = [...s.lazyNext].map((s) => [s,v] as [MergedStream<A>,A]);
     if(!STREAM_PROP_RELATIONS.has(s)) return [[], waiting];
     const p = STREAM_PROP_RELATIONS.get(s)!;
-    const effect: PropEffect<A>[] = p.map((prop)=>([prop,v]));
-    return [effect,waiting];
+    const plan: PropPlan<A>[] = p.map((prop)=>([prop,v]));
+    return [plan,waiting];
 }
 
 const concatTuple = <T extends any[][]>(a: T, b: T): T => a.map((x, i) => x.concat(b[i])) as T;
 
-const flow = <A>(v:A, allowPromise: boolean) => (s:Stream<A>) : FlowingState => {
-    if(v instanceof Promise && !allowPromise)
-        throw new Error("Asynchronous function was used in a synchronous stream.");
-    const state = streamToFlowingState(v)(s);
-    const next = [...s.next].filter((s)=> !("filterFn" in s) || s.filterFn(v));
-    return next.length
-        ? next.map((_s) => flow("mapFn" in _s ? _s.mapFn(v) : v, allowPromise)(_s)).reduce(concatTuple, state)
-        : state;
-}
+const assertSyncValue = (v: any) => {
+  if (v instanceof Promise) throw new Error("Promise is prohibited in blooky-fp v1.0.0");
+};
 
-const flowLazy = <A>(v:A, allowPromise = false) => (s:Stream<A>) : FlowingState => {
-    const r = flow(v, allowPromise)(s);
+const flow = <A>(v:A) => {
+    assertSyncValue(v);
+    return (s:Stream<A>) : FlowingState => {
+        const state = streamToFlowingState(v)(s);
+        const next = [...s.next].filter((s)=> !("filterFn" in s) || s.filterFn(v));
+        return next.length
+            ? next.map((_s) => {
+                if(!("mapFn" in _s)) return flow(v)(_s);
+                const _v = _s.mapFn(v); // 型推論はanyだが、_v は B (MappedStream<A,B>のB)
+                assertSyncValue(_v);
+                return flow(_v)(_s);
+            }).reduce(concatTuple, state)
+            : state;
+    }
+};
+
+const flowLazy = <A>(v:A) => (s:Stream<A>) : FlowingState => {
+    const r = flow(v)(s);
     const [updates,waiting] = r;
     if(!waiting.length) return r;
     const m = waiting.reduce((m,[s,v])=> {
@@ -359,28 +365,39 @@ const flowLazy = <A>(v:A, allowPromise = false) => (s:Stream<A>) : FlowingState 
 }
 
 /**
- * Dripperに値を流し込むための「効果(Effect)」を生成。値の更新は、この関数の結果を引数として collapse() を呼ぶことで生じる。
+ * Dripperへの値注入によって生じるProp値の更新計画を返す
  * Data Flow:
  * ```
- * value + Dripper ──drip()──> DripEffect<A> ──collapse()──> 実行
+ * value + Dripper ──drip()──> DripPlan ──commit(plan)──> 実行
  * ```
  * 
  * @param value - 流し込む値
- * @returns Dripperを受け取りDripEffect<A>を返す関数
+ * @returns Dripperを受け取りDripPlanを返す関数
  */
-const drip = <A>(value:A) => (dripper:DripperStream<A>) : DripEffect<A> => {
-    const effects = new Map(flowLazy(value, false)(dripper)[0]);
-    effects.forEach((v,k)=>{if(k() === v) effects.delete(k)});
-    return { dripper, value, effects };
+const drip = <A>(value:A) => (dripper:DripperStream<A>) : DripPlan => flowLazy(value)(dripper)[0];
+
+/**
+ * DripPlanの競合を収集する
+ * @param plan 
+ * @param equals 
+ * @returns 
+ */
+const conflict = (plan: DripPlan): Set<Prop<any>> => {
+  const seen = new Set<Prop<any>>();
+  const dup  = new Set<Prop<any>>();
+  for (const [p] of plan) (seen.has(p) ? dup : seen).add(p);
+  return dup;
 };
 
-const collapse = (effect: DripEffect<any>) => {
-    effect.effects.forEach((v,k) => PROP_UPDATE.get(k)!(v));
-}
+/**
+ * 更新計画に基づいて値をPropに反映させる
+ * @param plan 
+ */
+const commit = (plan: DripPlan) => plan.forEach(([p,v]) => PROP_UPDATE.get(p)!(v));
 
 export {
     // Core
-    drip, collapse, stream,
+    drip, conflict, commit, stream,
     // Stream operators
     merge, junction, map, filter,
     // Prop creators
@@ -392,5 +409,5 @@ export {
 };
 
 export type {
-    Stream, Prop, DripperStream as Dripper, DripEffect
+    Stream, Prop, DripperStream as Dripper, DripPlan
 };
