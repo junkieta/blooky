@@ -3,6 +3,7 @@ import { FVRuntime, ObservedDripPlan } from "../blooky-fv";
 import { DripPlan, Prop } from "../blooky-types";
 
 type Clock = Prop<number> & FVRuntime;
+type FatalHandler = (error: CommitExecutionError) => void;
 
 const beat$ = stream<number>();
 const scheduler =
@@ -31,6 +32,7 @@ type Reservation = {
 };
 
 const tickQueue: Reservation[] = [];
+let fatalState: CommitExecutionError | null = null;
 
 const clockObservers = new Map<
   (plan: ObservedDripPlan) => void,
@@ -38,6 +40,25 @@ const clockObservers = new Map<
 >();
 
 let clockRunning: number | NodeJS.Timeout = 0;
+let fatalHandler: FatalHandler = (error) => {
+  // Host-defined fatal path (default behavior)
+  // Node.js: terminate process if available.
+  const maybeProcess = (globalThis as any).process;
+  if (maybeProcess && typeof maybeProcess.exit === "function") {
+    console.error("fatal: commit execution failed", error);
+    maybeProcess.exit(1);
+    return;
+  }
+  // Browser/other hosts: surface the error explicitly.
+  console.error("fatal: commit execution failed", error);
+};
+
+const enterFatalState = (error: CommitExecutionError) => {
+  fatalState = error;
+  tickQueue.length = 0;
+  clockRunning = 0;
+  fatalHandler(error);
+};
 
 const buildCommitIntent = (t: number, reservations: Reservation[]): DripPlan => {
   // clock派生 (beat$) + submitされたplans を合成
@@ -54,7 +75,19 @@ const notifyClockObservers = (commitIntent: DripPlan): Error[] => {
     if (!subset.length) return;
 
     try {
-      f(new Map(subset) as any);
+      const maybePromise = (f as (plan: ObservedDripPlan) => unknown)(
+        new Map(subset) as any
+      );
+      // Observer async failure is isolated from submit/commit result.
+      if (
+        maybePromise &&
+        typeof (maybePromise as any).then === "function" &&
+        typeof (maybePromise as any).catch === "function"
+      ) {
+        (maybePromise as Promise<unknown>).catch((err) => {
+          console.error("clockObserver: async thrown error", err);
+        });
+      }
     } catch (err) {
       errors.push(err as Error);
     }
@@ -67,6 +100,7 @@ const advanceClock = () => {
 
   clockRunning = scheduler((t: number) => {
     clockRunning = 0;
+    if (fatalState) return;
 
     if (!tickQueue.length && !clockObservers.size) return;
 
@@ -97,9 +131,8 @@ const advanceClock = () => {
       commit(commitIntent);
     } catch (err) {
       const fatal = new CommitExecutionError(err);
-      reservations.forEach(({ reject }) => reject(fatal));
-      // 停止級：通常のreject経路として扱わない、という方針なら再throwして落とす
-      throw fatal;
+      // fatal は submit reject 経路に載せず、停止経路へ移行。
+      enterFatalState(fatal); return;
     }
 
     // 5) resolve（commit 成功）
@@ -109,11 +142,13 @@ const advanceClock = () => {
   });
 };
 
-const tick = (plan: DripPlan) =>
-  new Promise<DripPlan>((resolve, reject) => {
+const tick = (plan: DripPlan) => {
+  if (fatalState) throw fatalState;
+  return new Promise<DripPlan>((resolve, reject) => {
     tickQueue.push({ plan, resolve, reject });
     advanceClock();
   });
+};
 
 export const clock: Clock = Object.assign<Prop<number>, FVRuntime>(hold(0)(beat$), {
   observe(f: (plan: ObservedDripPlan) => void) {
@@ -140,4 +175,8 @@ export const clock: Clock = Object.assign<Prop<number>, FVRuntime>(hold(0)(beat$
   submit: tick,
 });
 
-export const time = { tick, clock };
+export const setFatalHandler = (handler: FatalHandler) => {
+  fatalHandler = handler;
+};
+
+export const time = { tick, clock, setFatalHandler };

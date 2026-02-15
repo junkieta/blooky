@@ -166,6 +166,10 @@ CommitPlan は単一の状態遷移である。
 
 ## 3.2 Deduplication Rule（Optional）
 
+前提（Normative Clarification）:
+各入力 DripPlan は blooky-fp v1.0.0 の一意性制約（同一 Prop の重複禁止）を満たしていなければならない（MUST）。
+本節で扱う重複は、同一 Tick 内で複数 DripPlan を合成した結果として発生する重複に限る。
+
 同一 Prop に対する複数更新が存在する場合：
 
 * 値が同値であれば削除してよい（MAY）
@@ -228,7 +232,7 @@ submit は以下を実行しなければならない（MUST）：
 4. CommitPlan を確定する。
 5. CommitPlan を Atomic Commit する。
 6. Commit 成功時に Promise を resolve する。
-7. Conflict または Observer 失敗時に Promise を `SubmitError` で reject する。
+7. Conflict 発生時に限り Promise を `SubmitError` で reject する。
 
 ---
 
@@ -254,11 +258,15 @@ commit 実行中に例外が発生した場合、それは：
 
 Runtime はこの例外を recoverable failure として扱ってはならない（MUST NOT）。
 
-実装は以下を行ってよい（MAY）：
+実装は以下を行わなければならない（MUST）：
 
 * 致命的エラーとして処理する
-* プロセス停止とする
-* システム再起動を要求する
+* Tick 処理を停止する（通常処理へ復帰しない）
+
+実装は以下を行ってよい（MAY）：
+
+* プロセス停止
+* システム再起動要求
 
 commit 実行中の例外は通常の submit reject 経路として扱ってはならない（MUST NOT）。
 
@@ -304,6 +312,9 @@ Observer は Monitoring 機構であり、Runtime の commit 成否を左右し�
 * Observer 内で例外が発生しても、Runtime は commit を中止してはならない（MUST NOT）。
 * Observer 内例外により、submit() の Promise を reject してはならない（MUST NOT）。
 * 実装は、Observer 内例外をログ・収集・隔離してよい（MAY）。
+* Runtime は Observer を同期観測境界として扱わなければならない（MUST）。
+* Observer の戻り値を await してはならない（MUST NOT）。
+* Promise rejection 等の非同期失敗は診断目的で収集してよいが、submit()/commit 成否に影響させてはならない（MUST NOT）。
 
 Observer の失敗は recoverable error として submit() の reject 経路に載せてはならない（MUST NOT）。
 

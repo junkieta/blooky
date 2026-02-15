@@ -231,6 +231,9 @@ Observer 内で例外が発生しても、Tick の commit 成否を変更して�
 * Observer 内例外により Tick failure を確定してはならない（MUST NOT）。
 * Observer 内例外により submit() を reject してはならない（MUST NOT）。
 * 実装は例外を隔離し、ログ・収集してよい（MAY）。
+* Bridge は Observer を同期観測境界として扱わなければならない（MUST）。
+* Observer の戻り値を await してはならない（MUST NOT）。
+* Promise rejection 等の非同期失敗は診断目的で収集してよいが、submit()/commit 成否に影響させてはならない（MUST NOT）。
 
 **Normative note**：
 
@@ -290,6 +293,8 @@ type SubmitError = ConflictError;
 * ConflictError は同一 Tick 内の同一 Prop への異値更新を表す（MUST）。
 * ObserverError は診断用であり、submit() reject 経路に載せてはならない（MUST NOT）。
 * CommitExecutionError は停止級（fatal）であり、submit() reject 経路に載せてはならない（MUST NOT）。
+* CommitExecutionError 発生時、Bridge/Runtime は通常処理へ復帰してはならない（MUST NOT）。
+* Bridge/Runtime は Tick 処理を即時停止し、fatal 経路（ホスト定義）へ移行しなければならない（MUST）。
 
 ---
 
@@ -385,9 +390,9 @@ interface BridgeProfile {
 
 ### C.1 Observer Failure Policy（Strict）
 
-* Observer 内で例外が発生した場合、Tick は失敗として扱う
-* 例外は握り潰されず、呼び出し元に伝播する
-* Tick 成功として継続してはならない
+* Observer 内で例外が発生しても、Tick failure を確定してはならない（MUST NOT）。
+* Observer 内例外により submit() を reject してはならない（MUST NOT）。
+* 実装は Observer 例外を隔離し、ログ・収集してよい（MAY）。
 
 ### C.2 Same-Tick Conflict Prohibition
 
@@ -521,6 +526,7 @@ Monitoring Observer 内で例外が発生しても、Tick の commit 成否を�
 * Monitoring Observer 内例外により、Tick failure を確定してはならない（MUST NOT）。
 * Monitoring Observer 内例外により、submit() を reject してはならない（MUST NOT）。
 * 実装は例外を隔離し、ログ・収集してよい（MAY）。
+* Monitoring Observer は同期観測として扱われ、Bridge は戻り値を await してはならない（MUST NOT）。
 
 ---
 

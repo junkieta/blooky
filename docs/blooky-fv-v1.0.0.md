@@ -4,7 +4,7 @@
 **Status:** 🔒 Final / Frozen  
 **Depends on:**
 - blooky-fp v1.0.0
-- blooky-fx Bridge v1.0.0
+- blooky-bridge v1.0.0
 
 **Scope:** FRP → DOM Projection Adapter, Event → Runtime Adapter
 
@@ -101,7 +101,8 @@ export interface FVRuntime {
   /**
    * plan を予約し、commit 完了を Promise で返す。
    * resolve: commit 成功（commit済み）
-   * reject: conflict または commit failure
+   * reject: conflict（recoverable failure）のみ
+   * fatal は submit の reject 経路で扱わない
    */
   submit(plan: DripPlan): Promise<DripPlan>
 
@@ -124,7 +125,8 @@ export interface FVRuntime {
 #### 規範
 
 - `submit` は commit 完了時に resolve しなければならない（MUST）
-- `submit` は conflict や commit failure の場合 reject しなければならない（MUST）
+- `submit` は conflict の場合に限り reject しなければならない（MUST）
+- fatal（CommitExecutionError 相当）を submit reject 経路で扱ってはならない（MUST NOT）
 - `observe` は Prop 単位で購読を登録しなければならない（MUST）
 - `observe` の返り値は購読解除関数（unobserver）を返す関数でなければならない（MUST）
 - `unobserve` は購読解除を行わなければならない（MUST）
@@ -179,7 +181,7 @@ fv は、各 Prop について対応する unobserver を保持してよい（MA
 fv は fx bridge による atomic commit モデルを破壊してはならない（MUST NOT）。
 
 - ObservedPlan の 各通知は **単一の commit の結果**として扱わなければならない（MUST）
-- fv は ObservedPlan 内の更新を++段階的に適用**してはならない（MUST NOT）
+- fv は ObservedPlan 内の更新を段階的に適用してはならない（MUST NOT）
 
 ---
 

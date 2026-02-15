@@ -1,7 +1,7 @@
 # blooky-devtools Specification v1.0.0
 
 **Subtitle:** Monitoring & Projection Contract for blooky-bridge
-**Status:** Draft (Freeze Candidate)
+**Status:** 🔒 Final / Frozen
 **Depends on:**
 
 * score-fx Protocol Specification v1.0.0
@@ -102,6 +102,8 @@ DevTools は以下に依存してはならない（MUST NOT）：
 本仕様は Tick の success/failure（結果通知）を要求しない。
 結果通知が必要な場合は Adapter 層の拡張として定義されうるが、
 DevTools v1.0.0 の依存関係には含めない。
+また、停止級（fatal）は Bridge/Runtime の停止経路で扱われるものであり、
+DevTools の通知語彙として recoverable failure と同列に扱ってはならない（MUST NOT）。
 
 ---
 
@@ -215,11 +217,16 @@ DevTools 内の例外は：
 
 * commit 成否を変更してはならない（MUST NOT）
 * commit 実行を中断させてはならない（MUST NOT）
+* submit() の resolve/reject を変更してはならない（MUST NOT）
 * 可能であれば隔離されるべきである（SHOULD）
+* DevTools Observer は同期観測として扱われ、戻り値を await してはならない（MUST NOT）
+* Promise rejection 等の非同期失敗は診断として収集してよいが、commit/submit 成否に影響させてはならない（MUST NOT）
 
 **Normative note**：
 Tick failure の確定および error の生成は Bridge/Runtime の責務である。
 DevTools は failure を自ら確定させてはならない（MUST NOT）。
+CommitExecutionError 相当の停止級（fatal）も同様に Bridge/Runtime の責務であり、
+DevTools はこれを通常の submit() reject として扱ってはならない（MUST NOT）。
 
 ---
 
@@ -232,6 +239,17 @@ DevTools は failure を自ら確定させてはならない（MUST NOT）。
 3. Injection による意味論変更を行わない
 4. DevTools 無効時に挙動が一致する
 5. commit 成否に影響を与えない
+
+---
+
+# 10. Frozen Declaration（Normative）
+
+🔒 **Frozen**
+
+* v1.0.0 は blooky-devtools の基準点である。
+* 後方互換を壊す変更は禁止（MUST NOT）。
+* 意味論変更は v1.1+ で行う（MUST）。
+* v1.0.0 のまま許されるのは、意味を変えない明確化・誤字修正・Informative 追記のみ（MAY）。
 
 ---
 
