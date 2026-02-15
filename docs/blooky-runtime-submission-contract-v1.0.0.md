@@ -5,7 +5,7 @@
 **Depends on:**
 
 * blooky-fp v1.0.0
-* blooky-fx Bridge v1.0.0（Atomic Commit / Conflict Prohibition）
+* blooky-bridge v1.0.0（Atomic Commit / Conflict Prohibition）
 
 ---
 
@@ -63,7 +63,7 @@ ObservedPlan は commit に供される更新集合の viewである。
 ## 1.3 Error Model Reference（Normative）
 
 Runtime の submit() が reject で返す error の型・意味は、
-**blooky-fx Bridge Specification v1.0.0 / §5.4 Error Model** に従わなければならない（MUST）。
+**blooky-bridge Specification v1.0.0 / §5.4 Error Model** に従わなければならない（MUST）。
 
 Runtime は submit() の reject において `SubmitError` 以外を返してはならない（MUST NOT）。
 
@@ -171,7 +171,7 @@ CommitPlan は単一の状態遷移である。
 * 値が同値であれば削除してよい（MAY）
 * 異なる値であれば conflict である（MUST）
 * Runtime は conflict を 事前検出して reject する（MAY）。
-* ただし、Tick failure の最終確定規則は blooky-fx Bridge v1.0.0 に従わなければならない（MUST）。
+* ただし、Tick failure の最終確定規則は blooky-bridge v1.0.0 に従わなければならない（MUST）。
 
 Runtime は conflict を 事前検出して reject しなければならない（MUST）。
 Bridge は conflict が到達した場合 commit してはならない（MUST NOT）。

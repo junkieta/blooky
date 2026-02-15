@@ -1,11 +1,11 @@
 # blooky-devtools Specification v1.0.0
 
-**Subtitle:** Monitoring & Projection Contract for blooky-fx Bridge
+**Subtitle:** Monitoring & Projection Contract for blooky-bridge
 **Status:** Draft (Freeze Candidate)
 **Depends on:**
 
 * score-fx Protocol Specification v1.0.0
-* blooky-fx Bridge Specification v1.0.0 (including Appendix E)
+* blooky-bridge Specification v1.0.0 (including Appendix E)
   **Scope:** Monitoring / Projection / Dev-only Injection
   **Non-goal:** Execution control, Timeline ownership, Ordering semantics
 
@@ -43,7 +43,7 @@ MUST / MUST NOT / SHOULD / SHOULD NOT / MAY は RFC 2119 に従う。
 
 ### 2.1 Bridge Subordination
 
-DevTools は Bridge Specification v1.0.0 Appendix E に従属する（MUST）。
+DevTools は blooky-bridge Specification v1.0.0 Appendix E に従属する（MUST）。
 
 * `tick_index` は唯一の順序基準である
 * DevTools は順序キーを生成してはならない（MUST NOT）

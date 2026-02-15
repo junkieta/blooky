@@ -1,4 +1,4 @@
-# blooky-fx Bridge Specification v1.0.0
+# blooky-bridge Specification v1.0.0
 
 **Subtitle:** Execution ↔ FRP Bridge, Clock & Atomic Commit Model
 **Status:** 🔒 Final / Frozen
@@ -591,6 +591,6 @@ DevTools は以下に依存してはならない（MUST NOT）：
 
 ---
 
-🔒 **blooky-fx Bridge Specification v1.0.0 — Final / Frozen**
+🔒 **blooky-bridge Specification v1.0.0 — Final / Frozen**
 
 ---

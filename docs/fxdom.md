@@ -3,7 +3,7 @@
 **Status:** 🔒 Final / Frozen
 **Scope:** DOM-based Score Description (fxdom → FxScore)
 **Depends on (Normative):** score-fx Protocol Specification v1.0.0
-**Related:** blooky-fx Bridge v1.0.0 (out of scope), DevTools Projection (out of scope)
+**Related:** blooky-bridge v1.0.0 (out of scope), DevTools Projection (out of scope)
 
 ---
 
