@@ -160,23 +160,6 @@ EffectElementTagNameMap["fx-switch"] = class extends (EffectElementTagNameMap["f
   }
 }
 
-// collapseはターゲットのStreamのグラフと紐づける
-EffectElementTagNameMap["fx-collapse"] = class extends (EffectElementTagNameMap["fx-collapse"] as typeof ConcreteEffectElementConstructor) {
-  constructor() {
-    super();
-    this.addEventListener("changestate", (e) => {
-      const state = (e as CustomEvent<string>).detail;
-      if(state !== "running") return;
-      const streamKey = (e.currentTarget as HTMLElement).getAttribute("dripper")!; 
-      if(!streamKey) return;
-      const nodeElement = document.getElementById(`node-${streamKey}`); 
-      if(!nodeElement) return;
-      nodeElement.classList.add('is-emitting');
-      setTimeout(() => nodeElement.classList.remove('is-emitting'), 1500);
-    });
-  }
-}
-
 // effectはルートでテーマ変数とデバッグコントローラを設定
 EffectElementTagNameMap["fx-effect"] = class extends (
   EffectElementTagNameMap["fx-effect"] as typeof ConcreteEffectElementConstructor

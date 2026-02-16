@@ -127,15 +127,12 @@ export type FxCallNode = FxNoteBase<"call", {
   action: FxRef<(v: any) => unknown>; 
   arg?: FxRef<any>; 
   context?: FxRef<any>; 
-}>;
-export type FxCollapseNode = FxNoteBase<"collapse", { 
-  dripper: FxRef<DripperStream<any>>; 
-  value: FxRef<any>; 
-  promise?: FxRef<"deny" | "allow" | "await">; 
+  done?: FxRef<DripperStream<any>>;
 }>;
 export type FxYieldNode = FxNoteBase<"yield", { 
   for: FxRef<FxContextNode>; 
-  value: FxRef<any>; 
+  value?: FxRef<any>;
+  done?: FxRef<DripperStream<any>>;
 }>;
 export type FxContextNode = FxNoteBase<"context", { 
   context: AppContext; 
@@ -155,7 +152,6 @@ export type FxNote =
   | FxConditionNode
   | FxSwitchNode
   | FxCallNode
-  | FxCollapseNode
   | FxYieldNode
   | FxContextNode
   | FxReturnNode;

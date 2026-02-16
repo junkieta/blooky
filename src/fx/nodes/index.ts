@@ -10,7 +10,6 @@ import { ConditionNodeDefinition } from "./condition";
 import { SwitchNodeDefinition } from "./switch";
 import { ContextNodeDefinition } from './context';
 import { CallNodeDefinition } from "./call";
-import { CollapseNodeDefinition } from "./collapse";
 import { YieldNodeDefinition } from "./yield";
 import { ReturnNodeDefinition } from "./return";
 
@@ -25,7 +24,6 @@ export const allNodeDefinitions = [
   new ContextNodeDefinition(),
   new SwitchNodeDefinition(),
   new CallNodeDefinition(),
-  new CollapseNodeDefinition(),
   new YieldNodeDefinition(),
   new ReturnNodeDefinition()
 ].map(def => [def.type, def] as [FxNoteType, INodeDefinition<any>]);
@@ -43,7 +41,6 @@ export {
   SwitchNodeDefinition,
   ContextNodeDefinition,
   CallNodeDefinition,
-  CollapseNodeDefinition,
   YieldNodeDefinition,
   ReturnNodeDefinition, 
 }

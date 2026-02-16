@@ -1,10 +1,16 @@
-import { Prop } from "../blooky-types";
-import type { FxNote, FxRef, CancelToken } from "../fx/types";
+import { DripperStream, Prop } from "../blooky-types";
+import { drip } from "../blooky-fp";
+import type { FxNote, FxRef, CancelToken, ExecContext } from "../fx/types";
 import type { PerfCtx } from "./registry";
 import { RETURN_VALUE } from "../fx/nodes/return";
+import { time } from "./time";
 
 export type EffectOutcome =
   | { kind: "none" }
+  | { kind: "result"; value: unknown };
+
+export type SuspendOutcome =
+  | { kind: "continue" }
   | { kind: "result"; value: unknown };
 
 export interface RunnerProfile {
@@ -15,7 +21,7 @@ export interface RunnerProfile {
     ctx: PerfCtx
   ): FxNote | null;
 
-  awaitSuspend(until: unknown, ctx: PerfCtx, cancelToken: CancelToken): Promise<void>;
+  awaitSuspend(until: unknown, ctx: PerfCtx, cancelToken: CancelToken): Promise<SuspendOutcome>;
 
   projectEffect(ref: unknown, ctx: PerfCtx): unknown;
 
@@ -25,8 +31,24 @@ export interface RunnerProfile {
 const isPromiseLike = (v: any): v is Promise<unknown> =>
   !!v && typeof v.then === "function";
 
+const bindDone = async (
+  doneRef: FxRef<DripperStream<any>> | undefined,
+  value: unknown,
+  ctx: PerfCtx,
+  resolveRef: <T>(ref: FxRef<T>, ctx: PerfCtx) => T
+) => {
+  if (doneRef === undefined) return;
+  const dripper = resolveRef(doneRef, ctx);
+  await time.tick(drip(value)(dripper));
+};
+
 export const createDefaultProfile = (deps: {
   resolve: <T>(ref: FxRef<T>) => Prop<T>;
+  runSubflow: (
+    flow: FxNote,
+    appContext: Record<string | symbol, any>,
+    parent: Partial<ExecContext>
+  ) => Promise<Record<string | symbol, any>>;
 }): RunnerProfile => {
   const resolveRef = <T>(ref: FxRef<T>, _ctx: PerfCtx): T => deps.resolve(ref)() as T;
 
@@ -64,7 +86,8 @@ export const createDefaultProfile = (deps: {
     if (until?.kind === "wait") {
       if (until.ms !== undefined) {
         const ms = Number(resolveRef(until.ms as any, ctx));
-        return sleep(ms);
+        await sleep(ms);
+        return { kind: "continue" };
       }
       if (until.until !== undefined) {
         const condAny = resolveRef(until.until as any, ctx) as any;
@@ -76,11 +99,11 @@ export const createDefaultProfile = (deps: {
               : typeof condAny === "boolean"
                 ? condAny
                 : false;
-          if (ok) return;
+          if (ok) return { kind: "continue" };
           await sleep(16);
         }
       }
-      return;
+      return { kind: "continue" };
     }
 
     // default yield boundary:
@@ -89,7 +112,7 @@ export const createDefaultProfile = (deps: {
       const target = resolveRef(until.for as any, ctx) as any;
       if (!target || target.type !== "context" || !target.child) {
         console.warn("[score-fx/profile] Invalid yield target, skipping:", until, ctx.executionId);
-        return;
+        return { kind: "continue" };
       }
 
       const yieldedValue = until.value === undefined ? undefined : resolveRef(until.value as any, ctx);
@@ -98,23 +121,23 @@ export const createDefaultProfile = (deps: {
 
       (ctx.appContext as any).$_ = yieldedValue;
       try {
-        const fx = await import("../blooky-fx");
-        const prepared = fx.prepare(target.child, ctx.appContext as any, {
+        const nextContext = await deps.runSubflow(target.child, ctx.appContext as any, {
           resolve: deps.resolve,
           cancelToken,
           executionId: `${ctx.executionId}:yield`,
         });
-        const handle = fx.execute(prepared);
-        await handle.done;
+        const result = (nextContext as any)[RETURN_VALUE];
+        await bindDone(until.done, result, ctx, resolveRef);
+        return { kind: "result", value: result };
       } finally {
         (ctx.appContext as any).$_ = prevDollar;
         (ctx.appContext as any)[RETURN_VALUE] = prevReturn;
       }
-      return;
     }
 
     // 未知tokenは“待てない”ので、いったん警告＋即復帰（置換フェーズ用）
     console.warn("[score-fx/profile] Unknown suspend token, skipping:", until, ctx.executionId);
+    return { kind: "continue" };
   };
 
   const projectEffect = (ref: unknown) => ref;
@@ -130,9 +153,13 @@ export const createDefaultProfile = (deps: {
     try {
       const out = fn.call(thisArg, arg);
       const value = isPromiseLike(out) ? await out : out;
-      return { kind: "result", value: { ok: true, value } };
+      const result = { ok: true, value };
+      await bindDone(e.done, value, ctx, resolveRef);
+      return { kind: "result", value: result };
     } catch (error) {
-      return { kind: "result", value: { ok: false, error } };
+      const result = { ok: false, error };
+      await bindDone(e.done, result, ctx, resolveRef);
+      return { kind: "result", value: result };
     }
   };
 

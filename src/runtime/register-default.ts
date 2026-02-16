@@ -18,14 +18,13 @@ const semWait: Semantics = function* (note) {
 
 const semYield: Semantics = function* (note) {
   if (note.type !== "yield") return;
-  yield { type: "suspend", until: { kind: "yield", for: note.for, value: note.value } };
-  yield { type: "result", value: undefined };
+  yield { type: "suspend", until: { kind: "yield", for: note.for, value: note.value, done: note.done } };
 };
 
 const semCall: Semantics = function* (note) {
   if (note.type !== "call") return;
   // effect-only：applyEffectがresultを返しうる（runnerがFSMへresult合成）
-  yield { type: "effect", ref: { kind: "call", action: note.action, arg: note.arg, context: note.context } };
+  yield { type: "effect", ref: { kind: "call", action: note.action, arg: note.arg, context: note.context, done: note.done } };
 };
 
 const runSequence: StructureRunner = async (note, _ctx, deps) => {

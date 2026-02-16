@@ -6,8 +6,9 @@ import {
   fx, 
   ref,
 } from "./blooky-fx";
-import { CollapseObservationType, Dripper } from "./blooky-types";
 import { FxNote, ExecContext, PreparedFx, ExecutionHandle, AppContext, FxRef, ExecutionStep } from "./fx/types";
+
+type FxIgniteType = "none" | "quantum" | "visual" | "sequential" | "immediate";
 
 // ---- 抽象基底クラス ----
 
@@ -132,7 +133,7 @@ class FxWaitElement extends EffectElement {
 class FxCallElement extends EffectElement {
 
   /** @inheritdoc */
-  static [JSHTML_ATTR_HANDLER] = { fn: attrValueToContextKey, arg: attrValueToContextKey }
+  static [JSHTML_ATTR_HANDLER] = { fn: attrValueToContextKey, arg: attrValueToContextKey, done: attrValueToContextKey }
 
   toFxNote(): FxNote {
     const fnAttr = this.getAttribute("fn");
@@ -165,6 +166,7 @@ class FxCallElement extends EffectElement {
     
     return fx.call(ref(fnAttr), {
       arg: arg,
+      done: this.hasAttribute("done") ? ref(this.getAttribute("done")!) : undefined,
       // catcher属性があれば、エラーハンドラとしてコンテキスト参照を設定
       catcher: this.hasAttribute("catcher") ? ref(this.getAttribute("catcher")!) : undefined,
       id: this.id,
@@ -360,51 +362,12 @@ class FxLoopElement extends EffectElement {
 }
 
 /**
- * Dripper（ストリーム）からの値の取得 (fx.collapse) を表すカスタム要素。
- * ストリームから値を取得し、フローを再開する。
- */
-class FxCollapseElement extends EffectElement {
-  /** @inheritdoc */
-  static [JSHTML_ATTR_HANDLER] = { dripper: attrValueToContextKey, value: attrValueToContextKey }
-  
-  toFxNote(): FxNote {
-    const streamKey = this.getAttribute("dripper");
-    if (!streamKey) return fx.none();
-
-    const valueKey = this.getAttribute("value");
-    // value属性がある場合、そのコンテキストキーの値をストリームに流す
-    if(valueKey) return fx.collapse(ref<any>(valueKey), ref<Dripper<any>>(streamKey));
-
-    // それ以外の場合、textContentを値として扱う
-    let data: any;
-    const raw = this.textContent.trim();
-    if(raw.length > 0) {
-      try {
-        data = JSON.parse(raw);
-      } catch(e) {
-        // JSONパースエラーは structure エラーとして報告
-        throw blooky.error("structure", {
-          code: "INVALID_JSON_COLLAPSE_VALUE",
-          expected: "JSON",
-          message: `Invalid JSON content provided in <fx-collapse> body.`,
-          actual: raw,
-          suggestions: ["Ensure the element body contains valid JSON, or use the 'value' attribute for context reference."],
-        });
-      }
-    }
-    
-    return fx.collapse(data, ref<Dripper<typeof data>>(streamKey));
-  }
-}
-
-
-/**
  * 実行コンテキストへの値の反映 (fx.yield) を表すカスタム要素。
  * 現在の実行コンテキストに値を反映させ、外部からの制御を待つ。
  */
 class FxYieldElement extends EffectElement {
   /** @inheritdoc */
-  static [JSHTML_ATTR_HANDLER] = { for: attrValueToContextKey }
+  static [JSHTML_ATTR_HANDLER] = { for: attrValueToContextKey, done: attrValueToContextKey }
   
   toFxNote(): FxNote {
     const id = this.id;
@@ -444,7 +407,12 @@ class FxYieldElement extends EffectElement {
       }
     }
     
-    return fx.yield({ for: ref<string>(forAttr), value, id });
+    return fx.yield({
+      for: ref<string>(forAttr),
+      value,
+      done: this.hasAttribute("done") ? ref(this.getAttribute("done")!) : undefined,
+      id
+    });
   }
 }
 
@@ -655,7 +623,7 @@ class FxEffectElement extends FxContextElement {
     return this._handle;
   }
 
-  protected igniteFx(type: CollapseObservationType | "none") {
+  protected igniteFx(type: FxIgniteType) {
     console.log('[fxdom] FxEffectElement: igniteFx', type);
     
     this.prepare();
@@ -710,7 +678,7 @@ class FxEffectElement extends FxContextElement {
     console.log('[fxdom] FxEffectElement: connectedCallback');
     
     const igniteValue = this.hasAttribute("ignite") 
-      ? this.getAttribute("ignite") as CollapseObservationType | "none"
+      ? this.getAttribute("ignite") as FxIgniteType
       : "none";
     
     console.log('[fxdom] FxEffectElement: ignite value', igniteValue);
@@ -731,7 +699,7 @@ class FxEffectElement extends FxContextElement {
     if (name === "ignite") {
       this._handle?.cancel();
       if (newValue && newValue !== "none") {
-        this.igniteFx(newValue as CollapseObservationType);
+        this.igniteFx(newValue as FxIgniteType);
       }
     }
     
@@ -781,11 +749,10 @@ const EffectElementTagNameMap = {
   "fx-if":  FxIfElement,
   "fx-switch":  FxSwitchElement,
   "fx-loop":  FxLoopElement,
-  "fx-collapse":  FxCollapseElement,
   "fx-yield": FxYieldElement,
   "fx-context":  FxContextElement,
   "fx-effect":  FxEffectElement,
   "fx-return": FxReturnElement
 }
 
-export {FxCallElement,FxWaitElement,FxEffectElement,FxCollapseElement,FxIfElement,FxIncludeElement,FxParallelElement,FxRaceElement,FxLoopElement,FxSequenceElement,FxSwitchElement,FxContextElement,FxReturnElement,fxdom,EffectElementTagNameMap};
+export {FxCallElement,FxWaitElement,FxEffectElement,FxIfElement,FxIncludeElement,FxParallelElement,FxRaceElement,FxLoopElement,FxSequenceElement,FxSwitchElement,FxContextElement,FxReturnElement,fxdom,EffectElementTagNameMap};

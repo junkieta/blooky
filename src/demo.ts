@@ -32,7 +32,7 @@ const EffectRenderer = prime(({
   "fx-effect": [
     {
       "fx-context": [
-        { "fx-collapse": jshtml.$({ dripper: confirmQuestionActivated$, value: "$_" }) },
+        { "fx-call": jshtml.$({ fn: "identity", arg: "$_", done: confirmQuestionActivated$ }) },
         { "fx-wait": jshtml.$({ until: $confirmAnswerResolved }) },
         { "fx-return": jshtml.$({ value: $selectedConfirmAnswer }) }
       ],
@@ -44,16 +44,16 @@ const EffectRenderer = prime(({
       "fx-switch": [
         {
           "fx-sequence": [
-            { "fx-collapse": '"Saving..."', $: { dripper: statusMessageStream$ } },
+            { "fx-call": '"Saving..."', $: { fn: "identity", done: statusMessageStream$ } },
             { "fx-wait": jshtml.$({ ms: 1500 }) },
-            { "fx-collapse": jshtml.$({ dripper: statusMessageStream$, value: $finalMessage }) },
+            { "fx-call": jshtml.$({ fn: "identity", arg: $finalMessage, done: statusMessageStream$ }) },
             { "fx-call": '"save complete"', $: { fn: "log" } },
           ],
           $: { slot: "yes" }
         },
         {
-          "fx-collapse": '"Save cancelled."',
-          $: { slot: "default", "dripper": statusMessageStream$ }
+          "fx-call": '"Save cancelled."',
+          $: { slot: "default", fn: "identity", done: statusMessageStream$ }
         }
       ],
       $: { by: "#confirmResult" }
@@ -127,6 +127,7 @@ const context = {
   $selectedConfirmAnswer,
   $confirmAnswerResolved,
   $confirmQuestionDialogbox,
+  identity: (v: unknown) => v,
   log: (s: unknown) => console.log(s),
 };
 

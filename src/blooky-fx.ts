@@ -17,7 +17,24 @@ export const prepare = (
 };
 
 export const execute = (prepared: PreparedFx): ExecutionHandle => {
-  const profile = createDefaultProfile({ resolve: prepared.execContext.resolve });
+  const runSubflow = async (
+    flow: FxNote,
+    appContext: Record<string | symbol, any>,
+    parent: Partial<ExecContext>
+  ): Promise<Record<string | symbol, any>> => {
+    const childPrepared = prepareImpl(flow, appContext, parent);
+    const childProfile = createDefaultProfile({
+      resolve: childPrepared.execContext.resolve,
+      runSubflow,
+    });
+    const childHandle = executeImpl({ prepared: childPrepared, registry, profile: childProfile });
+    return childHandle.done as Promise<Record<string | symbol, any>>;
+  };
+
+  const profile = createDefaultProfile({
+    resolve: prepared.execContext.resolve,
+    runSubflow,
+  });
   return executeImpl({ prepared, registry, profile });
 };
 
