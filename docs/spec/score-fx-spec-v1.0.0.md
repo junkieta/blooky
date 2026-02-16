@@ -194,6 +194,9 @@ Runner は Step を観測者に通知してよい（MAY）。
 
 ## 7. SemanticEvent Vocabulary（Normative）
 
+Normative reference: score-fx は Event 語彙の閉集合を定義する。kind 別語彙対応、Event 配送義務、throw 禁止の具体化は docs/score-fx/Semantics Registry-v1.0.md を参照する。
+
+
 SemanticEvent は Semantics → Runner の **一方向通知**である。
 SemanticEvent は **制御命令ではない**（MUST NOT interpret as control command）。
 
@@ -348,3 +351,5 @@ score-fx は以下を規定しない（MUST NOT imply）：
 ---
 
 # END OF score-fx Protocol Specification v1.0.0
+
+

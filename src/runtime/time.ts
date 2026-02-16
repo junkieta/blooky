@@ -11,8 +11,12 @@ const scheduler =
   ((f: (t: number) => void) =>
     setTimeout(() => f(performance.now()), Math.ceil(1000 / 60)));
 
-class ConflictError extends Error {
-  readonly name = "ConflictError";
+export class SubmitError extends Error {
+  name = "SubmitError";
+}
+
+export class SubmitConflictError extends SubmitError {
+  name = "SubmitConflictError";
   constructor(readonly conflicts: Set<Prop<any>>) {
     super("Conflict in CommitPlan");
   }
@@ -112,7 +116,7 @@ const advanceClock = () => {
     // 2) conflict を事前検出（conflict があれば commit も observer も呼ばない）
     const conflicts = conflict(commitIntent);
     if (conflicts.size) {
-      const err = new ConflictError(conflicts);
+      const err = new SubmitConflictError(conflicts);
       reservations.forEach(({ reject }) => reject(err));
       // 次tickへ（予約は失敗確定）
       advanceClock();
