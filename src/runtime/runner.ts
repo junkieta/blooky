@@ -8,7 +8,7 @@ import type {
   CancelToken,
   FxRef
 } from "../fx/types";
-import { RETURN_VALUE } from "../fx/nodes/return";
+import { RETURN_VALUE } from "../fx/return";
 import type { Registry, PerfCtx } from "./registry";
 import type { RunnerProfile } from "./profile";
 import { RunnerFSM } from "./fsm";
@@ -112,7 +112,7 @@ export function prepare(flow: FxNote, initialAppContext: AppContext, parent?: Pa
     debugController: parent?.debugController,
   };
 
-  return { rootNode: flow, execContext, appContext };
+  return { rootNote: flow, execContext, appContext };
 }
 
 export function execute(args: {
@@ -121,7 +121,7 @@ export function execute(args: {
   profile: RunnerProfile;
 }): ExecutionHandle {
   const { prepared, registry, profile } = args;
-  const { rootNode, execContext, appContext } = prepared;
+  const { rootNote, execContext, appContext } = prepared;
 
   const emit = (step: ExecutionStep) => {
     const onStep = execContext.onStep;
@@ -147,7 +147,7 @@ export function execute(args: {
     const ctx: PerfCtx = { note, appContext: appCtx, executionId: `${parentId}:${note.type}` };
 
     const fsm = new RunnerFSM();
-    emit({ phase: "enter", node: note, data: { executionId: ctx.executionId } });
+    emit({ phase: "enter", note: note, data: { executionId: ctx.executionId } });
     fsm.onEnter();
 
     try {
@@ -170,7 +170,7 @@ export function execute(args: {
           emit,
         });
 
-        emit({ phase: "exit", node: note, data: { result: value } });
+        emit({ phase: "exit", note: note, data: { result: value } });
         if (note.id) (ctx.appContext as any)["#" + note.id] = value;
         return value;
       }
@@ -202,26 +202,26 @@ export function execute(args: {
         }
       }
 
-      emit({ phase: "exit", node: note, data: { result: final } });
+      emit({ phase: "exit", note: note, data: { result: final } });
       if (note.id) (ctx.appContext as any)["#" + note.id] = final;
       return final;
     } catch (e) {
       if (e instanceof Terminated) {
-        emit({ phase: "exit", node: note, data: { result: e.value, terminated: true } });
+        emit({ phase: "exit", note: note, data: { result: e.value, terminated: true } });
         if (note.id) (ctx.appContext as any)["#" + note.id] = e.value;
         throw e;
       }
 
       if (e instanceof Cancelled) {
         fsm.onCancel();
-        emit({ phase: "cancel", node: note, data: { reason: e.reason } });
+        emit({ phase: "cancel", note: note, data: { reason: e.reason } });
         throw e;
       }
 
       if (isCancelledError(e)) {
         const reason = cancelledReasonFromError(e);
         fsm.onCancel();
-        emit({ phase: "cancel", node: note, data: { reason } });
+        emit({ phase: "cancel", note: note, data: { reason } });
         throw new Cancelled(reason);
       }
 
@@ -233,7 +233,7 @@ export function execute(args: {
     let finalValue: unknown = undefined;
 
     try {
-      finalValue = await run(rootNode, execContext.executionId || "root", appContext, execContext.cancelToken);
+      finalValue = await run(rootNote, execContext.executionId || "root", appContext, execContext.cancelToken);
     } catch (e) {
       if (e instanceof Terminated) {
         finalValue = e.value;
@@ -243,7 +243,7 @@ export function execute(args: {
     }
 
     (appContext as any)[RETURN_VALUE] = finalValue;
-    if (rootNode.id) (appContext as any)["#" + rootNode.id] = finalValue;
+    if (rootNote.id) (appContext as any)["#" + rootNote.id] = finalValue;
     return appContext;
   })();
 

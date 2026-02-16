@@ -8,7 +8,7 @@ import { Prop, DripperStream } from "../blooky-types";
  */
 export type ExecutionStep = {
   phase: string;           // 'init' | 'running' | 'waiting' | 'completed' など
-  node: FxNote;           // 現在のノード
+  note: FxNote;           // 現在のノード
   data?: any;             // フェーズ固有のデータ
 };
 
@@ -45,7 +45,7 @@ export type CancelToken = {
 
 // ─── ExecutionContext: ノード実行時のコンテキスト ───
 export interface ExecutionContext {
-  node: FxNote;
+  Note: FxNote;
   appContext: AppContext;
   executionId: string;
   
@@ -66,25 +66,25 @@ export interface ExecutionContext {
 
 // ─── Middleware ───
 export type FxMiddleware = (
-  ctx: { step: ExecutionStep; node: FxNote; executionId: string },
+  ctx: { step: ExecutionStep; Note: FxNote; executionId: string },
   next: () => Promise<void>
 ) => Promise<void>;
 
-// ─── NodeDefinition Interface ───
-export interface INodeDefinition<T extends FxNote['type']> {
+// ─── NoteDefinition Interface ───
+export interface INoteDefinition<T extends FxNote['type']> {
   readonly type: T;
   
   /**
    * ノードを実行し、各段階を yield する
    */
   execute(
-    ctx: ExecutionContext & { node: Extract<FxNote, { type: T }> }
+    ctx: ExecutionContext & { Note: Extract<FxNote, { type: T }> }
   ): AsyncGenerator<ExecutionStep, any, any>;
   
   /**
    * ノードが持つ子ノードを返す（グラフ可視化用）
    */
-  getSubNotes?(node: Extract<FxNote, { type: T }>): FxNote[] | null;
+  getSubNotes?(Note: Extract<FxNote, { type: T }>): FxNote[] | null;
   
   /**
    * ファクトリ関数（fx.call(...) のような API）
@@ -99,62 +99,62 @@ type FxNoteBase<T extends string, P = {}> = P & {
   catcher?: FxRef<(error: Error) => unknown>;
 };
 
-export type FxNoneNode = FxNoteBase<"none">;
-export type FxSequenceNode = FxNoteBase<"sequence", { steps: FxNote[] }>;
-export type FxParallelNode = FxNoteBase<"parallel", { steps: FxNote[] }>;
-export type FxRaceNode = FxNoteBase<"race", { steps: FxNote[] }>;
-export type FxWaitNode = FxNoteBase<"wait", { 
+export type FxNoneNote = FxNoteBase<"none">;
+export type FxSequenceNote = FxNoteBase<"sequence", { steps: FxNote[] }>;
+export type FxParallelNote = FxNoteBase<"parallel", { steps: FxNote[] }>;
+export type FxRaceNote = FxNoteBase<"race", { steps: FxNote[] }>;
+export type FxWaitNote = FxNoteBase<"wait", { 
   ms?: FxRef<number>; 
   until?: FxRef<Prop<boolean>>; 
 }>;
-export type FxLoopNode = FxNoteBase<"loop", { 
+export type FxLoopNote = FxNoteBase<"loop", { 
   cond: FxRef<boolean>; 
   body: FxNote; 
   maxIterations?: number; 
   maxDuration?: number; 
 }>;
-export type FxConditionNode = FxNoteBase<"condition", { 
+export type FxConditionNote = FxNoteBase<"condition", { 
   if: FxRef<boolean>; 
   then: FxNote; 
   else?: FxNote; 
 }>;
-export type FxSwitchNode = FxNoteBase<"switch", { 
+export type FxSwitchNote = FxNoteBase<"switch", { 
   by: FxRef<string | number | symbol>; 
   cases: Map<string | number | symbol, FxNote>; 
   default?: FxNote; 
 }>;
-export type FxCallNode = FxNoteBase<"call", { 
+export type FxCallNote = FxNoteBase<"call", { 
   action: FxRef<(v: any) => unknown>; 
   arg?: FxRef<any>; 
   context?: FxRef<any>; 
   done?: FxRef<DripperStream<any>>;
 }>;
-export type FxYieldNode = FxNoteBase<"yield", { 
-  for: FxRef<FxContextNode>; 
+export type FxYieldNote = FxNoteBase<"yield", { 
+  for: FxRef<FxContextNote>; 
   value?: FxRef<any>;
   done?: FxRef<DripperStream<any>>;
 }>;
-export type FxContextNode = FxNoteBase<"context", { 
+export type FxContextNote = FxNoteBase<"context", { 
   context: AppContext; 
   child: FxNote; 
 }>;
-export type FxReturnNode = FxNoteBase<"return", { 
+export type FxReturnNote = FxNoteBase<"return", { 
   value: FxRef<any>; 
 }>;
 
 export type FxNote =
-  | FxNoneNode
-  | FxSequenceNode
-  | FxParallelNode
-  | FxRaceNode
-  | FxWaitNode
-  | FxLoopNode
-  | FxConditionNode
-  | FxSwitchNode
-  | FxCallNode
-  | FxYieldNode
-  | FxContextNode
-  | FxReturnNode;
+  | FxNoneNote
+  | FxSequenceNote
+  | FxParallelNote
+  | FxRaceNote
+  | FxWaitNote
+  | FxLoopNote
+  | FxConditionNote
+  | FxSwitchNote
+  | FxCallNote
+  | FxYieldNote
+  | FxContextNote
+  | FxReturnNote;
 
 export type FxNoteType = FxNote["type"];
 
@@ -170,7 +170,7 @@ export interface ExecContext {
 
 // ─── PreparedFx ───
 export interface PreparedFx {
-  readonly rootNode: FxNote;
+  readonly rootNote: FxNote;
   readonly execContext: ExecContext;
   readonly appContext: AppContext;
 }

@@ -44,35 +44,35 @@ export const dispatchEvent = async (ev: SemanticEvent, deps: DispatchDeps) => {
   switch (ev.type) {
     case "effect": {
       const projected = deps.profile.projectEffect(ev.ref, deps.ctx);
-      deps.emit({ phase: "effect", node: deps.ctx.note, data: projected });
+      deps.emit({ phase: "effect", note: deps.ctx.note, data: projected });
 
       const applied = await deps.profile.applyEffect(ev.ref, deps.ctx);
       if (applied.kind === "result") {
-        deps.emit({ phase: "result", node: deps.ctx.note, data: { value: applied.value } });
+        deps.emit({ phase: "result", note: deps.ctx.note, data: { value: applied.value } });
         return { kind: "result" as const, value: applied.value };
       }
       return { kind: "continue" as const };
     }
 
     case "suspend":
-      deps.emit({ phase: "suspend", node: deps.ctx.note, data: { until: ev.until } });
+      deps.emit({ phase: "suspend", note: deps.ctx.note, data: { until: ev.until } });
       const suspendOutcome = await deps.profile.awaitSuspend(ev.until, deps.ctx, deps.cancelToken);
-      deps.emit({ phase: "resume", node: deps.ctx.note, data: { until: ev.until } });
+      deps.emit({ phase: "resume", note: deps.ctx.note, data: { until: ev.until } });
       if (suspendOutcome.kind === "result") {
-        deps.emit({ phase: "result", node: deps.ctx.note, data: { value: suspendOutcome.value } });
+        deps.emit({ phase: "result", note: deps.ctx.note, data: { value: suspendOutcome.value } });
         return { kind: "result" as const, value: suspendOutcome.value };
       }
       return { kind: "continue" as const };
 
     case "result": {
       const v = resolveMaybe(deps.profile, ev.value, deps.ctx);
-      deps.emit({ phase: "result", node: deps.ctx.note, data: { value: v } });
+      deps.emit({ phase: "result", note: deps.ctx.note, data: { value: v } });
       return { kind: "result" as const, value: v };
     }
 
     case "terminate": {
       const v = resolveMaybe(deps.profile, ev.value, deps.ctx);
-      deps.emit({ phase: "terminate", node: deps.ctx.note, data: { value: v } });
+      deps.emit({ phase: "terminate", note: deps.ctx.note, data: { value: v } });
       throw new Terminated(v);
     }
   }

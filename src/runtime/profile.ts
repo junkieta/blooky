@@ -2,7 +2,7 @@ import { DripperStream, Prop } from "../blooky-types";
 import { drip } from "../blooky-fp";
 import type { FxNote, FxRef, CancelToken, ExecContext } from "../fx/types";
 import type { PerfCtx } from "./registry";
-import { RETURN_VALUE } from "../fx/nodes/return";
+import { RETURN_VALUE } from "../fx/return";
 import { time } from "./time";
 
 export type EffectOutcome =
