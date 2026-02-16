@@ -40,3 +40,5 @@ export const execute = (prepared: PreparedFx): ExecutionHandle => {
 
 export const query = (node: FxNote, app: AppContext = {}, ctx?: Partial<ExecContext>) =>
   execute(prepare(node, app, ctx));
+
+export const RETURN_VALUE = Symbol("RETURN_VALUE")
