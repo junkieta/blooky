@@ -1,6 +1,6 @@
 // src/fx/types.d.ts
 
-import { Prop, DripperStream } from "../blooky-types";
+import { Prop, DripperStream } from "./blooky-fp-types";
 
 // ─── 実行ステップの定義 ───
 /**

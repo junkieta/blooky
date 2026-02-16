@@ -1,4 +1,4 @@
-import type { FxNote, AppContext, ExecContext, PreparedFx, ExecutionHandle } from "./fx/types";
+import type { FxNote, AppContext, ExecContext, PreparedFx, ExecutionHandle } from "./blooky-fx-types";
 import { prepare as prepareImpl, execute as executeImpl } from "./runtime/runner";
 import { createRegistry } from "./runtime/registry";
 import { registerDefault } from "./runtime/register-default";

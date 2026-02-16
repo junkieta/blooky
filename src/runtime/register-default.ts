@@ -1,5 +1,5 @@
 import type { Registry, Semantics, StructureRunner } from "./registry";
-import type { FxNote, CancelToken } from "../fx/types";
+import type { FxNote, CancelToken } from "../blooky-fx-types";
 import { Cancelled } from "./dispatcher";
 
 const semNone: Semantics = function* () {};

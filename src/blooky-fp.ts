@@ -5,7 +5,7 @@
 import { 
   DripPlan, DripperStream, FilterStream, FlowingState,
   MappedStream, MergedStream, Prop, PropPlan, Stream, Vertex 
-} from "./blooky-types";
+} from "./blooky-fp-types";
 
 /**
  * ガベージコレクション用クリーナー関数

@@ -1,6 +1,6 @@
 import type { SemanticEvent, PerfCtx, StepSink } from "./registry";
 import type { RunnerProfile } from "./profile";
-import type { CancelToken } from "../fx/types";
+import type { CancelToken } from "../blooky-fx-types";
 
 export class Terminated extends Error {
   readonly name = "Terminated";

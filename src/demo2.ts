@@ -1,6 +1,6 @@
 import { stream, commit, accum } from "./blooky-fp";
 import { createFV } from "./blooky-fv";
-import type { Prop, Dripper, DripPlan } from "./blooky-types";
+import type { Prop, Dripper, DripPlan } from "./blooky-fp-types";
 import { clock } from "./runtime/time";
 
 function main() {

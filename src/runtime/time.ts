@@ -1,6 +1,6 @@
 import { stream, drip, hold, commit, conflict } from "../blooky-fp";
 import { FVRuntime, ObservedDripPlan } from "../blooky-fv";
-import { DripPlan, Prop } from "../blooky-types";
+import { DripPlan, Prop } from "../blooky-fp-types";
 
 type Clock = Prop<number> & FVRuntime;
 type FatalHandler = (error: CommitExecutionError) => void;

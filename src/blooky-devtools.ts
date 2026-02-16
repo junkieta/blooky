@@ -1,7 +1,7 @@
 import { jshtml, mutations, prime } from "./blooky-fv";
 import { filter, hold, isChainedProp, isDripperStream, isStream, isVertex, map, vertex } from "./blooky-fp";
 import { EffectElementTagNameMap as DefaultEffectElementTagNameMap, EffectElement, FxEffectElement as ConcreteEffectElementConstructor, fxdom } from "./blooky-fxdom";
-import { FxNote, FxMiddleware, ExecContext } from "./fx/types";
+import { FxNote, FxMiddleware, ExecContext } from "./blooky-fx-types";
 import { DebugController } from "./fx/debugger";
 
 const FxNoteMap = new WeakMap<FxNote, EffectElement>();
@@ -293,7 +293,7 @@ export const debugPanel = attachDevtoolsToEffects();
 
 // svg用のスタイル
 import "./blooky-devtools.css";
-import { DripperStream, DripEffect, MergedStream, Prop, Stream, Vertex } from "./blooky-types";
+import { DripperStream, DripEffect, MergedStream, Prop, Stream, Vertex } from "./blooky-fp-types";
 import { BlookyMutationEvent, JSHTMLNodeSource } from "./blooky-fv-types";
 
 // グラフ描画

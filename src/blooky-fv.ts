@@ -31,7 +31,7 @@ import type {
 } from "./blooky-fv-types";
 
 import { isDripper, drip, isChainedProp, stream } from "./blooky-fp";
-import type { Prop, Dripper, Stream, DripPlan } from "./blooky-types";
+import type { Prop, Dripper, Stream, DripPlan } from "./blooky-fp-types";
 
 /* ---------------------------------------------
  * FV Runtime Interface (Normative boundary)

@@ -6,7 +6,7 @@ import {
   fx, 
   ref,
 } from "./blooky-fx";
-import { FxNote, ExecContext, PreparedFx, ExecutionHandle, AppContext, FxRef, ExecutionStep } from "./fx/types";
+import { FxNote, ExecContext, PreparedFx, ExecutionHandle, AppContext, FxRef, ExecutionStep } from "./blooky-fx-types";
 
 type FxIgniteType = "none" | "quantum" | "visual" | "sequential" | "immediate";
 

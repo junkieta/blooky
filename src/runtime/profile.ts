@@ -1,6 +1,6 @@
-import { DripperStream, Prop } from "../blooky-types";
+import { DripperStream, Prop } from "../blooky-fp-types";
 import { drip } from "../blooky-fp";
-import type { FxNote, FxRef, CancelToken, ExecContext } from "../fx/types";
+import type { FxNote, FxRef, CancelToken, ExecContext } from "../blooky-fx-types";
 import type { PerfCtx } from "./registry";
 import { RETURN_VALUE } from "../blooky-fx";
 import { time } from "./time";

@@ -1,7 +1,7 @@
 // blooky-fv-types.d.ts
 
 import type { EmptyElementAttributeMapSource } from "./blooky-fv";
-import type { Prop, DripperStream, DripPlan } from "./blooky-types";
+import type { Prop, DripperStream, DripPlan } from "./blooky-fp-types";
 
 // ------------------------------------------------------------
 // 0) HTML attribute name list (for completion)

@@ -1,4 +1,4 @@
-import type { FxNote, CancelToken, ExecutionStep } from "../fx/types";
+import type { FxNote, CancelToken, ExecutionStep } from "../blooky-fx-types";
 import type { RunnerProfile } from "./profile";
 
 export type ConditionRef = unknown;

@@ -4,7 +4,7 @@ import { jshtml, prime } from "./blooky-fv";
 import { fxdom, EffectElementTagNameMap, dumpGraphDOT, debugPanel } from "./blooky-devtools";
 import { instance as viz_instance } from "@viz-js/viz";
 import { JSHTMLNodeSource } from "./blooky-fv-types";
-import { DripperStream, Prop } from "./blooky-types";
+import { DripperStream, Prop } from "./blooky-fp-types";
 
 // debuggerとしてdefine（自動的にデバッグパネルが表示される）
 fxdom.defineEffectElements(EffectElementTagNameMap);
