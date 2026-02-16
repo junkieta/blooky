@@ -1,5 +1,6 @@
 import type { Registry, Semantics, StructureRunner } from "./registry";
 import type { FxNote, CancelToken } from "../fx/types";
+import { Cancelled } from "./dispatcher";
 
 const semNone: Semantics = function* () {};
 
@@ -54,7 +55,7 @@ const runRace: StructureRunner = async (note, _ctx, deps) => {
         if (!settled) {
           settled = true;
           childTokens.forEach((t, j) => {
-            if (j !== i) t.cancel("race");
+            if (j !== i) t.cancel("race_loser");
           });
         }
         return v;
@@ -63,7 +64,7 @@ const runRace: StructureRunner = async (note, _ctx, deps) => {
         if (!settled) {
           settled = true;
           childTokens.forEach((t, j) => {
-            if (j !== i) t.cancel("race");
+            if (j !== i) t.cancel("race_loser");
           });
         }
         throw e;
@@ -80,7 +81,7 @@ const runLoop: StructureRunner = async (note, ctx, deps) => {
 
   while (deps.profile.resolveRef(note.cond as any, ctx)) {
     if (deps.cancelToken.cancelled()) {
-      throw new Error(`cancelled:${deps.cancelToken.reason ?? "user"}`);
+      throw new Cancelled(deps.cancelToken.reason ?? "user");
     }
     if (note.maxIterations !== undefined && i >= note.maxIterations) break;
     i += 1;

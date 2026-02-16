@@ -31,7 +31,8 @@ export type CancelReason =
   | 'user'      // ユーザーによる手動キャンセル
   | 'return'    // fx-return による正常終了
   | 'timeout'   // タイムアウト
-  | 'error';    // エラーによる中断
+  | 'error'    // エラーによる中断
+  | 'race_loser'; // race の敗者キャンセル
 
 // ─── CancelToken ───
 
