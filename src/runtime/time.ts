@@ -12,11 +12,11 @@ const scheduler =
     setTimeout(() => f(performance.now()), Math.ceil(1000 / 60)));
 
 export class SubmitError extends Error {
-  readonly name = "SubmitError";
+  name = "SubmitError";
 }
 
 export class SubmitConflictError extends SubmitError {
-  readonly name = "SubmitConflictError";
+  name = "SubmitConflictError";
   constructor(readonly conflicts: Set<Prop<any>>) {
     super("Conflict in CommitPlan");
   }

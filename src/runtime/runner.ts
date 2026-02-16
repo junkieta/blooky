@@ -124,7 +124,18 @@ export function execute(args: {
   const { rootNode, execContext, appContext } = prepared;
 
   const emit = (step: ExecutionStep) => {
-    execContext.onStep?.(step);
+    const onStep = execContext.onStep;
+    if (!onStep) return;
+    try {
+      const out = onStep(step);
+      if (out && typeof (out as any).then === "function" && typeof (out as any).catch === "function") {
+        (out as Promise<unknown>).catch((e) => {
+          console.error("[runner] onStep async error (isolated)", e);
+        });
+      }
+    } catch (e) {
+      console.error("[runner] onStep error (isolated)", e);
+    }
   };
 
   const run = async (
@@ -168,8 +179,6 @@ export function execute(args: {
       if (!sem) throw new Error(`No semantics for ${note.type}`);
 
       let final: unknown = undefined;
-      let hasFinal = false;
-      let pendingResult: { has: boolean; value: unknown } = { has: false, value: undefined };
 
       for (const ev of sem(note, ctx)) {
         fsm.onEvent(ev);
@@ -186,18 +195,11 @@ export function execute(args: {
         }
 
         if (r.kind === "result") {
-          if (ev.type === "result") {
-            final = r.value;
-            hasFinal = true;
-            break;
+          if (ev.type !== "result") {
+            fsm.onEvent({ type: "result", value: r.value });
           }
-          pendingResult = { has: true, value: r.value };
+          final = r.value;
         }
-      }
-
-      if (!hasFinal && pendingResult.has) {
-        fsm.onEvent({ type: "result", value: pendingResult.value });
-        final = pendingResult.value;
       }
 
       emit({ phase: "exit", node: note, data: { result: final } });
@@ -205,7 +207,7 @@ export function execute(args: {
       return final;
     } catch (e) {
       if (e instanceof Terminated) {
-        emit({ phase: "exit", node: note, data: { terminated: true, value: e.value } });
+        emit({ phase: "exit", node: note, data: { result: e.value, terminated: true } });
         if (note.id) (ctx.appContext as any)["#" + note.id] = e.value;
         throw e;
       }
