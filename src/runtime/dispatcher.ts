@@ -1,4 +1,4 @@
-import type { SemanticEvent, PerfCtx, StepSink } from "./registry";
+import type { SemanticEvent, PerfCtx, StepSink, YieldConditionRefV1 } from "./registry";
 import type { RunnerProfile } from "./profile";
 import type { CancelToken } from "../blooky-fx-types";
 
@@ -16,19 +16,6 @@ export class Cancelled extends Error {
   }
 }
 
-/**
- * Semanticsはrefを解釈しない前提なので、result/terminate の value は "未解決" を許す。
- * ここで profile.resolveRef を試み、ダメなら素通し（保険）にする。
- */
-const resolveMaybe = (profile: RunnerProfile, v: unknown, ctx: PerfCtx) => {
-  try {
-    return profile.resolveRef(v as any, ctx);
-  } catch (e) {
-    console.warn("[score-fx/dispatcher] Failed to resolve ref, passing through:", v, e);
-    return v;
-  }
-};
-
 export type DispatchDeps = {
   profile: RunnerProfile;
   ctx: PerfCtx;
@@ -36,10 +23,11 @@ export type DispatchDeps = {
   emit: StepSink;
 };
 
+const isYieldV1 = (u: unknown): u is YieldConditionRefV1 =>
+  !!u && typeof u === "object" && (u as any).kind === "yield-v1";
+
 export const dispatchEvent = async (ev: SemanticEvent, deps: DispatchDeps) => {
-  if (deps.cancelToken.cancelled()) {
-    throw new Cancelled(deps.cancelToken.reason ?? "user");
-  }
+  if (deps.cancelToken.cancelled()) throw new Cancelled(deps.cancelToken.reason ?? "user");
 
   switch (ev.type) {
     case "effect": {
@@ -54,26 +42,27 @@ export const dispatchEvent = async (ev: SemanticEvent, deps: DispatchDeps) => {
       return { kind: "continue" as const };
     }
 
-    case "suspend":
+    case "suspend": {
+      // yield-v1 専用
+      if (!isYieldV1(ev.until)) throw new Error("Unsupported suspend condition (expected yield-v1)");
       deps.emit({ phase: "suspend", note: deps.ctx.note, data: { until: ev.until } });
-      const suspendOutcome = await deps.profile.awaitSuspend(ev.until, deps.ctx, deps.cancelToken);
+
+      const session = await deps.profile.startYield(ev.until, deps.ctx);
+      await deps.profile.awaitYield(session, deps.ctx, deps.cancelToken);
+      const value = await deps.profile.getYieldResult(session, deps.ctx);
+
       deps.emit({ phase: "resume", note: deps.ctx.note, data: { until: ev.until } });
-      if (suspendOutcome.kind === "result") {
-        deps.emit({ phase: "result", note: deps.ctx.note, data: { value: suspendOutcome.value } });
-        return { kind: "result" as const, value: suspendOutcome.value };
-      }
-      return { kind: "continue" as const };
+      deps.emit({ phase: "result", note: deps.ctx.note, data: { value } });
 
-    case "result": {
-      const v = resolveMaybe(deps.profile, ev.value, deps.ctx);
-      deps.emit({ phase: "result", note: deps.ctx.note, data: { value: v } });
-      return { kind: "result" as const, value: v };
+      return { kind: "result" as const, value };
     }
 
-    case "terminate": {
-      const v = resolveMaybe(deps.profile, ev.value, deps.ctx);
-      deps.emit({ phase: "terminate", note: deps.ctx.note, data: { value: v } });
-      throw new Terminated(v);
-    }
+    case "result":
+      deps.emit({ phase: "result", note: deps.ctx.note, data: { value: ev.value } });
+      return { kind: "result" as const, value: ev.value };
+
+    case "terminate":
+      deps.emit({ phase: "terminate", note: deps.ctx.note, data: { value: ev.value } });
+      throw new Terminated(ev.value);
   }
 };

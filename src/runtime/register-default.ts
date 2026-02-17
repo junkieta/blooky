@@ -1,5 +1,5 @@
-import type { Registry, Semantics, StructureRunner } from "./registry";
-import type { FxNote, CancelToken } from "../blooky-fx-types";
+import type { Registry, Semantics, StructureRunner, YieldConditionRefV1 } from "./registry";
+import type { CancelToken } from "../blooky-fx-types";
 import { Cancelled } from "./dispatcher";
 
 const semNone: Semantics = function* () {};
@@ -16,9 +16,19 @@ const semWait: Semantics = function* (note) {
   yield { type: "result", value: undefined };
 };
 
+
 const semYield: Semantics = function* (note) {
   if (note.type !== "yield") return;
-  yield { type: "suspend", until: { kind: "yield", for: note.for, value: note.value, done: note.done } };
+
+  const until: YieldConditionRefV1 = {
+    kind: "yield-v1",
+    target: { kind: "local", ref: note.for }, // local/remote の切替は将来 note 側語彙で拡張
+    input: note.value,
+    meta: { noteType: "yield" },
+  };
+
+  yield { type: "suspend", until };
+  // dispatcher が result を合成するので、ここで result を出す必要はない（出すなら二重になる）
 };
 
 const semCall: Semantics = function* (note) {
