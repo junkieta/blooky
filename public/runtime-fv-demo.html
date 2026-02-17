@@ -61,10 +61,48 @@
       #log {
         max-height: 360px;
         overflow: auto;
-        white-space: pre-wrap;
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
         font-size: 12px;
         line-height: 1.5;
+        background: #f8fafc;
+        border: 1px solid #e4e7ec;
+        border-radius: 8px;
+      }
+      .log-line {
+        border-left: 4px solid transparent;
+        padding: 6px 8px;
+        border-bottom: 1px solid #eef2f7;
+        white-space: pre-wrap;
+      }
+      .log-line.info {
+        background: #fcfcfd;
+        color: #475467;
+      }
+      .log-line.race-winner {
+        background: #ecfdf3;
+      }
+      .log-line.race-loser {
+        background: #fef3f2;
+      }
+      .pill {
+        display: inline-block;
+        border-radius: 999px;
+        padding: 0 8px;
+        margin-right: 8px;
+        font-size: 11px;
+        line-height: 18px;
+      }
+      .pill.exec {
+        background: #eef4ff;
+        color: #3538cd;
+      }
+      .pill.race-winner {
+        background: #d1fadf;
+        color: #067647;
+      }
+      .pill.race-loser {
+        background: #fee4e2;
+        color: #b42318;
       }
       #summary {
         display: flex;
@@ -104,7 +142,7 @@
     <div class="panel small" id="summary"></div>
     <div class="panel">
       <div class="small">step timeline</div>
-      <pre id="log"></pre>
+      <div id="log"></div>
     </div>
     <template id="confirm-template"></template>
     <script type="module" src="/src/demo-runtime-fv.ts"></script>

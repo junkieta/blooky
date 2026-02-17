@@ -11,7 +11,7 @@ const loopLimitInput = document.getElementById("loopLimit") as HTMLInputElement 
 const statusEl = document.getElementById("status") as HTMLDivElement | null;
 const pendingEl = document.getElementById("pending") as HTMLDivElement | null;
 const summaryEl = document.getElementById("summary") as HTMLDivElement | null;
-const logEl = document.getElementById("log") as HTMLPreElement | null;
+const logEl = document.getElementById("log") as HTMLDivElement | null;
 const confirmTpl = document.getElementById("confirm-template") as HTMLTemplateElement | null;
 
 if (
@@ -47,6 +47,17 @@ let pendingYieldId: string | null = null;
 let stepCount = 0;
 const phaseCounter = new Map<string, number>();
 const noteCounter = new Map<string, number>();
+const laneColorByExecutionId = new Map<string, string>();
+const lanePalette = [
+  "#6366f1",
+  "#0ea5e9",
+  "#10b981",
+  "#f59e0b",
+  "#ef4444",
+  "#8b5cf6",
+  "#14b8a6",
+  "#ec4899",
+];
 
 const setStatus = (text: string) => {
   statusEl.textContent = text;
@@ -73,8 +84,45 @@ const formatValue = (value: unknown): string => {
   }
 };
 
-const appendLog = (line: string) => {
-  logEl.textContent += `${line}\n`;
+const laneColor = (executionId: string): string => {
+  if (!laneColorByExecutionId.has(executionId)) {
+    let hash = 0;
+    for (const ch of executionId) {
+      hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+    }
+    laneColorByExecutionId.set(executionId, lanePalette[hash % lanePalette.length]);
+  }
+  return laneColorByExecutionId.get(executionId)!;
+};
+
+const appendLog = (
+  line: string,
+  options?: { executionId?: string; raceTag?: "winner" | "loser"; info?: boolean }
+) => {
+  const row = document.createElement("div");
+  row.className = `log-line${options?.info ? " info" : ""}`;
+
+  if (options?.executionId && options.executionId !== "-") {
+    row.style.borderLeftColor = laneColor(options.executionId);
+    const lanePill = document.createElement("span");
+    lanePill.className = "pill exec";
+    lanePill.textContent = options.executionId;
+    row.appendChild(lanePill);
+  }
+
+  if (options?.raceTag) {
+    row.classList.add(`race-${options.raceTag}`);
+    const racePill = document.createElement("span");
+    racePill.className = `pill race-${options.raceTag}`;
+    racePill.textContent = options.raceTag;
+    row.appendChild(racePill);
+  }
+
+  const text = document.createElement("span");
+  text.textContent = line;
+  row.appendChild(text);
+
+  logEl.appendChild(row);
   logEl.scrollTop = logEl.scrollHeight;
 };
 
@@ -96,13 +144,27 @@ const renderSummary = () => {
 };
 
 const resetView = () => {
-  logEl.textContent = "";
+  logEl.replaceChildren();
   stepCount = 0;
   phaseCounter.clear();
   noteCounter.clear();
+  laneColorByExecutionId.clear();
   pendingYieldId = null;
   setPending("pending yield: none");
   renderSummary();
+};
+
+const detectRaceTag = (step: ExecutionStep): "winner" | "loser" | undefined => {
+  const noteId = step.note.id ?? "";
+  if (!noteId.startsWith("race")) return undefined;
+  if (step.phase === "cancel") return "loser";
+  if (
+    (noteId === "raceFast" || noteId === "raceFastCall") &&
+    (step.phase === "result" || step.phase === "exit")
+  ) {
+    return "winner";
+  }
+  return undefined;
 };
 
 const stepLogger = (step: ExecutionStep) => {
@@ -113,9 +175,10 @@ const stepLogger = (step: ExecutionStep) => {
 
   const executionId = typeof step.data?.executionId === "string" ? step.data.executionId : "-";
   const noteId = step.note.id ? `#${step.note.id}` : "-";
-  appendLog(
-    `${String(stepCount).padStart(3, "0")}  phase=${step.phase.padEnd(9, " ")} note=${step.note.type.padEnd(9, " ")} id=${noteId.padEnd(16, " ")} exec=${executionId} data=${formatValue(step.data)}`
-  );
+  appendLog(`${String(stepCount).padStart(3, "0")}  phase=${step.phase.padEnd(9, " ")} note=${step.note.type.padEnd(9, " ")} id=${noteId.padEnd(16, " ")} data=${formatValue(step.data)}`, {
+    executionId,
+    raceTag: detectRaceTag(step),
+  });
 };
 
 const buildFlow = (): FxNote => {
@@ -251,7 +314,7 @@ const startScenario = async () => {
   resetView();
   setStatus("running");
   setRunning(true);
-  appendLog("runtime modules: runner + fsm + dispatcher + registry + profile-dom-local");
+  appendLog("runtime modules: runner + fsm + dispatcher + registry + profile-dom-local", { info: true });
 
   const prepared = prepare(buildFlow(), makeInitialContext(), { onStep: stepLogger });
   activeHandle = execute(prepared);
@@ -259,10 +322,10 @@ const startScenario = async () => {
   try {
     const appContext = await activeHandle.done;
     const result = (appContext as Record<string | symbol, unknown>)[RETURN_VALUE];
-    appendLog(`RETURN_VALUE=${formatValue(result)}`);
+    appendLog(`RETURN_VALUE=${formatValue(result)}`, { info: true });
     setStatus("completed");
   } catch (error) {
-    appendLog(`ERROR=${formatValue(error)}`);
+    appendLog(`ERROR=${formatValue(error)}`, { info: true });
     setStatus("failed");
   } finally {
     activeHandle = null;
@@ -278,7 +341,7 @@ confirmTpl.addEventListener("fx-yield-start", (event: Event) => {
   setPending(`pending yield: ${detail.id} exec=${detail.executionId} input=${formatValue(detail.input)}`);
   resolveButton.disabled = false;
   rejectButton.disabled = false;
-  appendLog(`yield:start id=${detail.id}`);
+  appendLog(`yield:start id=${detail.id}`, { executionId: detail.executionId, info: true });
 });
 
 runButton.addEventListener("click", () => {
@@ -288,7 +351,7 @@ runButton.addEventListener("click", () => {
 cancelButton.addEventListener("click", () => {
   if (!activeHandle) return;
   activeHandle.cancel();
-  appendLog("manual cancel requested");
+  appendLog("manual cancel requested", { info: true });
 });
 
 resolveButton.addEventListener("click", () => {
@@ -300,7 +363,7 @@ resolveButton.addEventListener("click", () => {
       composed: true,
     })
   );
-  appendLog(`yield:resolve id=${pendingYieldId} value=approve`);
+  appendLog(`yield:resolve id=${pendingYieldId} value=approve`, { info: true });
   pendingYieldId = null;
   resolveButton.disabled = true;
   rejectButton.disabled = true;
@@ -315,7 +378,7 @@ rejectButton.addEventListener("click", () => {
       composed: true,
     })
   );
-  appendLog(`yield:reject id=${pendingYieldId}`);
+  appendLog(`yield:reject id=${pendingYieldId}`, { info: true });
   pendingYieldId = null;
   resolveButton.disabled = true;
   rejectButton.disabled = true;
