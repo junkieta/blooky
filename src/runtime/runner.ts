@@ -6,15 +6,17 @@ import type {
   ExecutionHandle,
   ExecutionStep,
   CancelToken,
-  FxRef
+  FxRef,
+  FxRefSymbol as FxRefSymbolDec
 } from "../blooky-fx-types";
 import { RETURN_VALUE } from "../blooky-fx";
 import type { Registry, PerfCtx } from "./registry";
 import type { RunnerProfile } from "./profile";
 import { RunnerFSM } from "./fsm";
 import { dispatchEvent, Terminated, Cancelled } from "./dispatcher";
-import { FxRefSymbol } from "../blooky-fx-types";
 import { Prop } from "../blooky-fp-types";
+
+const FxRefSymbol = Symbol("FxRefSymbol") as typeof FxRefSymbolDec;
 
 const NotResolved = Symbol.for("NotResolved");
 
