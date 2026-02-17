@@ -12,8 +12,7 @@ const semReturn: Semantics = function* (note) {
 
 const semWait: Semantics = function* (note) {
   if (note.type !== "wait") return;
-  yield { type: "suspend", until: { kind: "wait", ms: note.ms, until: note.until } };
-  yield { type: "result", value: undefined };
+  yield { type: "effect", ref: { kind: "wait", ms: note.ms, until: note.until } };
 };
 
 

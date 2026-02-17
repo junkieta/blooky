@@ -33,6 +33,7 @@ export const createDefaultProfile = (deps: {
   resolve: <T>(ref: FxRef<T>) => Prop<T>;
   // yield は未実装（ブラウザ向け/remote向けは別profileで差し替え）
 }): RunnerProfile => {
+  const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
   const resolveRef = <T>(ref: FxRef<T>, _ctx?: PerfCtx): T => deps.resolve(ref)() as T;
 
   const resolveSelection: RunnerProfile["resolveSelection"] = (note, ctx) => {
@@ -59,6 +60,24 @@ export const createDefaultProfile = (deps: {
 
   const applyEffect: RunnerProfile["applyEffect"] = async (ref, ctx) => {
     const e: any = ref;
+    if (e?.kind === "wait") {
+      const waitMs = e.ms === undefined ? 0 : Number(resolveRef(e.ms, ctx));
+      if (Number.isFinite(waitMs) && waitMs > 0) {
+        await sleep(waitMs);
+      }
+
+      if (e.until !== undefined) {
+        const until = resolveRef(e.until, ctx) as unknown;
+        if (typeof until === "function") {
+          while (!(until as () => boolean)()) {
+            await sleep(16);
+          }
+        }
+      }
+
+      return { kind: "result", value: undefined };
+    }
+
     if (e?.kind !== "call") return { kind: "none" };
 
     const fn = resolveRef(e.action, ctx) as any;

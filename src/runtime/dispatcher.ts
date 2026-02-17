@@ -1,6 +1,6 @@
 import type { SemanticEvent, PerfCtx, StepSink, YieldConditionRefV1 } from "./registry";
 import type { RunnerProfile } from "./profile";
-import type { CancelToken } from "../blooky-fx-types";
+import type { CancelToken, FxRef } from "../blooky-fx-types";
 
 export class Terminated extends Error {
   readonly name = "Terminated";
@@ -58,11 +58,17 @@ export const dispatchEvent = async (ev: SemanticEvent, deps: DispatchDeps) => {
     }
 
     case "result":
-      deps.emit({ phase: "result", note: deps.ctx.note, data: { value: ev.value } });
-      return { kind: "result" as const, value: ev.value };
+      {
+        const value = deps.profile.resolveRef(ev.value as FxRef<unknown>, deps.ctx);
+        deps.emit({ phase: "result", note: deps.ctx.note, data: { value } });
+        return { kind: "result" as const, value };
+      }
 
     case "terminate":
-      deps.emit({ phase: "terminate", note: deps.ctx.note, data: { value: ev.value } });
-      throw new Terminated(ev.value);
+      {
+        const value = deps.profile.resolveRef(ev.value as FxRef<unknown>, deps.ctx);
+        deps.emit({ phase: "terminate", note: deps.ctx.note, data: { value } });
+        throw new Terminated(value);
+      }
   }
 };

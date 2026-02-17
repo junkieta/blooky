@@ -62,11 +62,16 @@ const resolveLocalTarget = (t: YieldTargetRefV1): LocalTarget => {
   if (t.kind !== "local") throw new Error("not local target");
   const r: any = t.ref;
 
+  if (typeof r === "string") return { kind: "template-id", id: r };
+  if (r instanceof HTMLTemplateElement) return { kind: "template", el: r };
   if (r?.kind === "template" && r.el instanceof HTMLTemplateElement) return r as LocalTarget;
   if (r?.kind === "template-id" && typeof r.id === "string") return r as LocalTarget;
 
   throw new Error("Unsupported local yield target ref (expected {kind:'template'|'template-id', ...})");
 };
+
+const isFxRefKey = (v: unknown): v is { __fxRefKey: true; key: string } =>
+  !!v && typeof v === "object" && (v as any).__fxRefKey === true && typeof (v as any).key === "string";
 
 const waitCancel = async (cancelToken: CancelToken) => {
   while (!cancelToken.cancelled()) {
@@ -93,7 +98,13 @@ export const createBrowserLocalProfile = (deps: {
     if (until.kind !== "yield-v1") throw new Error("unsupported yield condition");
     if (until.target.kind !== "local") throw new Error("browser local profile only supports target.kind=local");
 
-    const target = resolveLocalTarget(until.target);
+    const rawTargetRef = until.target.ref;
+    const resolvedTargetRef =
+      isFxRefKey(rawTargetRef) || typeof rawTargetRef === "function"
+        ? base.resolveRef(rawTargetRef as FxRef<unknown>, ctx)
+        : rawTargetRef;
+
+    const target = resolveLocalTarget({ kind: "local", ref: resolvedTargetRef });
     const template =
       target.kind === "template"
         ? target.el
@@ -103,9 +114,11 @@ export const createBrowserLocalProfile = (deps: {
 
     hub.start(id);
 
+    const input = until.input === undefined ? undefined : base.resolveRef(until.input as FxRef<unknown>, ctx);
+
     template.dispatchEvent(
       new CustomEvent("fx-yield-start", {
-        detail: { id, input: until.input, executionId: ctx.executionId, meta: until.meta ?? {} },
+        detail: { id, input, executionId: ctx.executionId, meta: until.meta ?? {} },
         bubbles: true,
         composed: true,
       })
