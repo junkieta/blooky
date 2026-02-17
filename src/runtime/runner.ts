@@ -127,9 +127,13 @@ export function execute(args: {
     const onStep = execContext.onStep;
     if (!onStep) return;
     try {
-      const out = onStep(step);
-      if (out && typeof (out as any).then === "function" && typeof (out as any).catch === "function") {
-        (out as Promise<unknown>).catch((e) => {
+      const maybePromise = onStep(step);
+      if (
+        maybePromise &&
+        typeof (maybePromise as any).then === "function" &&
+        typeof (maybePromise as any).catch === "function"
+      ) {
+        (maybePromise as Promise<unknown>).catch((e) => {
           console.error("[runner] onStep async error (isolated)", e);
         });
       }

@@ -61,7 +61,7 @@ export interface ExecutionContext {
   
   // ミドルウェア・フック
   middlewares?: FxMiddleware[];
-  onStep?: (step: ExecutionStep) => void;
+  onStep?: (step: ExecutionStep) => void | Promise<void>;
 }
 
 // ─── Middleware ───
@@ -165,7 +165,7 @@ export interface ExecContext {
   middlewares?: FxMiddleware[];
   debugController?: any;
   executionId?: string;
-  onStep?: (step: ExecutionStep) => void;
+  onStep?: (step: ExecutionStep) => void | Promise<void>;
 }
 
 // ─── PreparedFx ───

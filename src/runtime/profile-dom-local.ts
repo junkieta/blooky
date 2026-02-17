@@ -58,6 +58,25 @@ class LocalYieldHub {
   }
 }
 
+const boundTemplateBridge = new WeakSet<EventTarget>();
+
+const bindTemplateBridge = (target: EventTarget, hub: LocalYieldHub) => {
+  if (boundTemplateBridge.has(target)) return;
+  boundTemplateBridge.add(target);
+
+  target.addEventListener("fx-yield-resolve", (ev: Event) => {
+    const detail = (ev as CustomEvent<{ id?: unknown; value?: unknown }>).detail;
+    if (!detail || typeof detail.id !== "string") return;
+    hub.resolve(detail.id, detail.value);
+  });
+
+  target.addEventListener("fx-yield-reject", (ev: Event) => {
+    const detail = (ev as CustomEvent<{ id?: unknown; error?: unknown }>).detail;
+    if (!detail || typeof detail.id !== "string") return;
+    hub.reject(detail.id, detail.error);
+  });
+};
+
 const resolveLocalTarget = (t: YieldTargetRefV1): LocalTarget => {
   if (t.kind !== "local") throw new Error("not local target");
   const r: any = t.ref;
@@ -113,6 +132,7 @@ export const createBrowserLocalProfile = (deps: {
     if (!template) throw new Error(`template not found: ${(target as any).id}`);
 
     hub.start(id);
+    bindTemplateBridge(template, hub);
 
     const input = until.input === undefined ? undefined : base.resolveRef(until.input as FxRef<unknown>, ctx);
 
