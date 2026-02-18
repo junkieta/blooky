@@ -15,12 +15,12 @@ export type ExecutionStep = {
 // ─── FxRef: 実行時解決される値への参照 ───
 export declare const FxRefSymbol: unique symbol;
 
-export type FxRefKey<T> = {
+export type FxRefKey = {
   readonly [FxRefSymbol]: true;
   readonly key: string;
 };
 
-export type FxRef<T> = FxRefKey<T> | Prop<T> | T;
+export type FxRef<T> = FxRefKey | Prop<T> | T;
 
 
 // ─── AppContext: アプリケーションコンテキスト ───

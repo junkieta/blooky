@@ -1,18 +1,18 @@
-import type {
-  FxNote,
-  AppContext,
-  ExecContext,
-  PreparedFx,
-  ExecutionHandle,
-  FxRef,
-  FxRefKey,
-  FxCallNote,
-  FxWaitNote,
-  FxYieldNote,
-  FxContextNote,
-  FxLoopNote,
+import {
+  type FxNote,
+  type AppContext,
+  type ExecContext,
+  type PreparedFx,
+  type ExecutionHandle,
+  type FxRef,
+  type FxRefKey,
+  type FxCallNote,
+  type FxWaitNote,
+  type FxYieldNote,
+  type FxContextNote,
+  type FxLoopNote,
 } from "./blooky-fx-types";
-import { prepare as prepareImpl, execute as executeImpl } from "./runtime/runner";
+import { prepare as prepareImpl, execute as executeImpl, FxRefSymbol } from "./runtime/runner";
 import { createRegistry } from "./runtime/registry";
 import { registerDefault } from "./runtime/register-default";
 import { createDefaultProfile } from "./runtime/profile";
@@ -41,8 +41,8 @@ export const execute = (prepared: PreparedFx): ExecutionHandle => {
 export const query = (node: FxNote, app: AppContext = {}, ctx?: Partial<ExecContext>) =>
   execute(prepare(node, app, ctx));
 
-export const ref = <T = unknown>(key: string): FxRefKey<T> =>
-  ({ __fxRefKey: true, key } as unknown as FxRefKey<T>);
+export const ref = <T = unknown>(key: string): FxRefKey =>
+  ({ [FxRefSymbol]: true, key } as unknown as FxRefKey);
 
 export const fx = {
   none: (id?: string): FxNote => ({ type: "none", ...(id ? { id } : {}) }),

@@ -7,7 +7,8 @@ import type {
   ExecutionStep,
   CancelToken,
   FxRef,
-  FxRefSymbol as FxRefSymbolDec
+  FxRefSymbol as FxRefSymbolDec,
+  FxRefKey
 } from "../blooky-fx-types";
 import { RETURN_VALUE } from "../blooky-fx";
 import type { Registry, PerfCtx } from "./registry";
@@ -15,8 +16,6 @@ import type { RunnerProfile } from "./profile";
 import { RunnerFSM } from "./fsm";
 import { dispatchEvent, Terminated, Cancelled } from "./dispatcher";
 import { Prop } from "../blooky-fp-types";
-
-const FxRefSymbol = Symbol("FxRefSymbol") as typeof FxRefSymbolDec;
 
 const NotResolved = Symbol.for("NotResolved");
 
@@ -68,6 +67,12 @@ const createProxyContext = (appContext: AppContext, idRecord: Record<string | sy
       return Reflect.getOwnPropertyDescriptor(target, key);
     },
   });
+
+
+export const FxRefSymbol = Symbol("FxRefSymbol") as typeof FxRefSymbolDec;
+export const isFxRefKey = (v: unknown): v is FxRefKey =>
+  !!v && typeof v === "object" && (v as any)[FxRefSymbol] === true && typeof (v as any).key === "string";
+
 
 /**
  * 最低限のデフォルト resolver（resolveValue を切り離すため）

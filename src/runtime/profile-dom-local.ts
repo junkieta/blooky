@@ -3,6 +3,7 @@ import type { PerfCtx, YieldConditionRefV1, YieldTargetRefV1 } from "./registry"
 import type { RunnerProfile, YieldSession, EffectOutcome } from "./profile";
 import { createDefaultProfile } from "./profile";
 import { Prop } from "../blooky-fp-types";
+import { isFxRefKey } from "./runner";
 
 type LocalTarget =
   | { kind: "template"; el: HTMLTemplateElement }
@@ -58,25 +59,6 @@ class LocalYieldHub {
   }
 }
 
-const boundTemplateBridge = new WeakSet<EventTarget>();
-
-const bindTemplateBridge = (target: EventTarget, hub: LocalYieldHub) => {
-  if (boundTemplateBridge.has(target)) return;
-  boundTemplateBridge.add(target);
-
-  target.addEventListener("fx-yield-resolve", (ev: Event) => {
-    const detail = (ev as CustomEvent<{ id?: unknown; value?: unknown }>).detail;
-    if (!detail || typeof detail.id !== "string") return;
-    hub.resolve(detail.id, detail.value);
-  });
-
-  target.addEventListener("fx-yield-reject", (ev: Event) => {
-    const detail = (ev as CustomEvent<{ id?: unknown; error?: unknown }>).detail;
-    if (!detail || typeof detail.id !== "string") return;
-    hub.reject(detail.id, detail.error);
-  });
-};
-
 const resolveLocalTarget = (t: YieldTargetRefV1): LocalTarget => {
   if (t.kind !== "local") throw new Error("not local target");
   const r: any = t.ref;
@@ -88,9 +70,6 @@ const resolveLocalTarget = (t: YieldTargetRefV1): LocalTarget => {
 
   throw new Error("Unsupported local yield target ref (expected {kind:'template'|'template-id', ...})");
 };
-
-const isFxRefKey = (v: unknown): v is { __fxRefKey: true; key: string } =>
-  !!v && typeof v === "object" && (v as any).__fxRefKey === true && typeof (v as any).key === "string";
 
 const waitCancel = async (cancelToken: CancelToken) => {
   while (!cancelToken.cancelled()) {
@@ -108,6 +87,24 @@ export const createBrowserLocalProfile = (deps: {
 
   const hub = deps.hub ?? new LocalYieldHub();
   const getTemplateById = deps.getTemplateById ?? ((id) => document.getElementById(id) as any);
+  const boundTemplateBridge = new WeakSet<EventTarget>();
+
+  const bindTemplateBridge = (target: EventTarget) => {
+    if (boundTemplateBridge.has(target)) return;
+    boundTemplateBridge.add(target);
+
+    target.addEventListener("fx-yield-resolve", (ev: Event) => {
+      const detail = (ev as CustomEvent<{ id?: unknown; value?: unknown }>).detail;
+      if (!detail || typeof detail.id !== "string") return;
+      hub.resolve(detail.id, detail.value);
+    });
+
+    target.addEventListener("fx-yield-reject", (ev: Event) => {
+      const detail = (ev as CustomEvent<{ id?: unknown; error?: unknown }>).detail;
+      if (!detail || typeof detail.id !== "string") return;
+      hub.reject(detail.id, detail.error);
+    });
+  };
 
   const startYield: RunnerProfile["startYield"] = async (until, ctx) => {
     const id = `${ctx.executionId}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
@@ -132,7 +129,7 @@ export const createBrowserLocalProfile = (deps: {
     if (!template) throw new Error(`template not found: ${(target as any).id}`);
 
     hub.start(id);
-    bindTemplateBridge(template, hub);
+    bindTemplateBridge(template);
 
     const input = until.input === undefined ? undefined : base.resolveRef(until.input as FxRef<unknown>, ctx);
 
