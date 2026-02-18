@@ -1,10 +1,13 @@
 // src/demo.ts
-import { stream, accum, merge, hold, map, remap, when, pipe, PromisedProp } from "./blooky-fp";
-import { jshtml, prime } from "./blooky-fv";
-import { fxdom, EffectElementTagNameMap, dumpGraphDOT, debugPanel } from "./blooky-devtools";
+import { stream, accum, merge, hold, map, remap, pipe } from "./blooky-fp";
+import { createFV } from "./blooky-fv";
+import { fxdom, EffectElementTagNameMap, dumpGraphDOT } from "./blooky-devtools";
 import { instance as viz_instance } from "@viz-js/viz";
 import { JSHTMLNodeSource } from "./blooky-fv-types";
 import { DripperStream, Prop } from "./blooky-fp-types";
+import { clock } from "./runtime/time";
+
+const {prime,jshtml} = createFV(clock);
 
 // debuggerとしてdefine（自動的にデバッグパネルが表示される）
 fxdom.defineEffectElements(EffectElementTagNameMap);
@@ -12,7 +15,7 @@ fxdom.defineEffectElements(EffectElementTagNameMap);
 // --- 1. 実行フローの定義 ---
 interface EffectContext {
   confirmQuestionActivated$: DripperStream<string>,
-  $confirmAnswerResolved: PromisedProp<string>,
+  $confirmAnswerResolved: Prop<string>,
   $selectedConfirmAnswer: Prop<string>,
   $triggerSave: Prop<boolean>,
   statusMessageStream$: DripperStream<string>,
@@ -91,8 +94,8 @@ const $selectedConfirmAnswer = pipe(
   map((evt) => (evt.target as HTMLButtonElement).value),
   hold("yet")
 );
-const $confirmAnswerResolved = when<string>((answer) => answer !== "yet")($selectedConfirmAnswer);
-const $confirmQuestionDialogbox = hold<JSHTMLNodeSource>(null)(map<JSHTMLNodeSource, string>((text) => [
+const $confirmAnswerResolved = ($selectedConfirmAnswer);
+const $confirmQuestionDialogbox = hold<JSHTMLNodeSource>(null)(map<string,JSHTMLNodeSource>((text) => [
   { p: text },
   { button: "OK", $: { onclick: confirmButtonClicked$, value: "yes" } },
   { button: "Cancel", $: { onclick: confirmButtonClicked$, value: "no" } },
@@ -142,8 +145,8 @@ const renderDot = async (dot: string) => {
 
 // --- 5. マウント ---
 document.body.append(
-  debugPanel,
   AppUIRenderer(context),
   EffectRenderer(context),
   jshtml([renderDot(dot), { pre: dot }])
 );
+

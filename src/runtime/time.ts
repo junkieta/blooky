@@ -2,7 +2,22 @@ import { stream, drip, hold, commit, conflict } from "../blooky-fp";
 import { FVRuntime, ObservedDripPlan } from "../blooky-fv";
 import { DripPlan, Prop } from "../blooky-fp-types";
 
-type Clock = Prop<number> & FVRuntime;
+export type CommitDripPlan = Map<Prop<any>,any>;
+
+export type ObservedTick = {
+  tick_index: number;
+  tick_id: string | number;
+  timestamp: number;
+  effects_summary: CommitDripPlan;
+};
+
+type TickObserver = (tick: ObservedTick) => void;
+
+type Clock = Prop<number> & FVRuntime & {
+    observeTick: (f: TickObserver) => () => void;
+    unobserveTick: (f: TickObserver) => void;
+  };
+
 type FatalHandler = (error: CommitExecutionError) => void;
 
 const beat$ = stream<number>();
@@ -43,6 +58,9 @@ const clockObservers = new Map<
   Set<Prop<unknown>>
 >();
 
+const tickObservers = new Set<TickObserver>();
+let tickIndexCounter = 0;
+
 let clockRunning: number | NodeJS.Timeout = 0;
 let fatalHandler: FatalHandler = (error) => {
   // Host-defined fatal path (default behavior)
@@ -70,17 +88,18 @@ const buildCommitIntent = (t: number, reservations: Reservation[]): DripPlan => 
   return drip(t)(beat$).concat(...reservations.map(({ plan }) => plan));
 };
 
-const notifyClockObservers = (commitIntent: DripPlan): Error[] => {
+const notifyClockObservers = (commitIntent: CommitDripPlan): Error[] => {
   const errors: Error[] = [];
+  const prop_all = new Set(commitIntent.keys());
   // commitIntent は conflict-free を前提に Map 化（subset）
   clockObservers.forEach((props, f) => {
     // subset: props に含まれるものだけ抜く
-    const subset = commitIntent.filter(([p]) => props.has(p));
-    if (!subset.length) return;
+    const subset = prop_all.intersection(props);
+    if (!subset.size) return;
 
     try {
       const maybePromise = (f as (plan: ObservedDripPlan) => unknown)(
-        new Map(subset) as any
+        new Map([...subset].map((p)=>[p,commitIntent.get(p)!])) as any
       );
       // Observer async failure is isolated from submit/commit result.
       if (
@@ -90,6 +109,37 @@ const notifyClockObservers = (commitIntent: DripPlan): Error[] => {
       ) {
         (maybePromise as Promise<unknown>).catch((err) => {
           console.error("clockObserver: async thrown error", err);
+        });
+      }
+    } catch (err) {
+      errors.push(err as Error);
+    }
+  });
+  return errors;
+};
+
+const buildObservedTick = (commitPlan: CommitDripPlan): ObservedTick => {
+  const tick_index = tickIndexCounter++;
+  return {
+    tick_index,
+    tick_id: tick_index,
+    timestamp: Date.now(),
+    effects_summary: commitPlan
+  };
+};
+
+const notifyBridgeTickObservers = (observedTick: ObservedTick): Error[] => {
+  const errors: Error[] = [];
+  tickObservers.forEach((f) => {
+    try {
+      const maybePromise = (f as (tick: ObservedTick) => unknown)(observedTick);
+      if (
+        maybePromise &&
+        typeof (maybePromise as any).then === "function" &&
+        typeof (maybePromise as any).catch === "function"
+      ) {
+        (maybePromise as Promise<unknown>).catch((err) => {
+          console.error("bridgeTickObserver: async thrown error", err);
         });
       }
     } catch (err) {
@@ -123,8 +173,20 @@ const advanceClock = () => {
       return;
     }
 
+    // observerに渡すためconflict無しを保証した後Mapに変換
+    const commitPlanMap = new Map(commitIntent);
+
+    // 3) Bridge Tick Payload を確定（pre-commit）
+    const observedTick = buildObservedTick(commitPlanMap);
+
     // 3) ObservedPlan（subset view）を通知（pre-commit）
-    const obsErrors = notifyClockObservers(commitIntent);
+    const tickObsErrors = notifyBridgeTickObservers(observedTick);
+    if (tickObsErrors.length) {
+      console.error("bridgeTickObserver: thrown errors", ...tickObsErrors);
+      // 隔離方針：observer例外は commit 成否に影響させない
+    }
+
+    const obsErrors = notifyClockObservers(commitPlanMap);
     if (obsErrors.length) {
       console.error("clockObserver: thrown errors", ...obsErrors);
       // 隔離方針：observer例外は commit 成否に影響させない
@@ -154,16 +216,17 @@ const tick = (plan: DripPlan) => {
   });
 };
 
-export const clock: Clock = Object.assign<Prop<number>, FVRuntime>(hold(0)(beat$), {
-  observe(f: (plan: ObservedDripPlan) => void) {
+export const clock: Clock = Object.assign(hold(0)(beat$), {
+
+  observeCommit(f: (plan: ObservedDripPlan) => void) {
     return (p: Prop<any>) => {
       if (!clockObservers.has(f)) clockObservers.set(f, new Set([p]));
       else clockObservers.get(f)!.add(p);
-      return clock.unobserve(f).bind(null, p);
+      return clock.unobserveCommit(f).bind(null, p);
     };
   },
 
-  unobserve(f: (plan: ObservedDripPlan) => void) {
+  unobserveCommit(f: (plan: ObservedDripPlan) => void) {
     return (p?: Prop<unknown>) => {
       if (!clockObservers.has(f)) return;
       if (!p) {
@@ -176,7 +239,18 @@ export const clock: Clock = Object.assign<Prop<number>, FVRuntime>(hold(0)(beat$
     };
   },
 
-  submit: tick,
+  observeTick(f: TickObserver) {
+    tickObservers.add(f);
+    return () => {
+      tickObservers.delete(f);
+    };
+  },
+
+  unobserveTick(f: TickObserver) {
+    tickObservers.delete(f);
+  },
+
+  submitPlan: tick,
 });
 
 export const setFatalHandler = (handler: FatalHandler) => {

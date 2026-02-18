@@ -55,20 +55,10 @@ export interface ExecutionContext {
   // 子ノードの実行
   executeChild: (child: FxNote) => AsyncGenerator<ExecutionStep, any, any>;
   
-  // デバッグ・制御
-  debugController?: any; // DebugController（循環参照回避のため any）
   cancelToken: CancelToken;
   
-  // ミドルウェア・フック
-  middlewares?: FxMiddleware[];
   onStep?: (step: ExecutionStep) => void | Promise<void>;
 }
-
-// ─── Middleware ───
-export type FxMiddleware = (
-  ctx: { step: ExecutionStep; Note: FxNote; executionId: string },
-  next: () => Promise<void>
-) => Promise<void>;
 
 // ─── NoteDefinition Interface ───
 export interface INoteDefinition<T extends FxNote['type']> {
@@ -162,8 +152,6 @@ export type FxNoteType = FxNote["type"];
 export interface ExecContext {
   resolve: <T>(ref: FxRef<T>) => Prop<T>;
   cancelToken: CancelToken;
-  middlewares?: FxMiddleware[];
-  debugController?: any;
   executionId?: string;
   onStep?: (step: ExecutionStep) => void | Promise<void>;
 }

@@ -42,7 +42,7 @@ export const query = (node: FxNote, app: AppContext = {}, ctx?: Partial<ExecCont
   execute(prepare(node, app, ctx));
 
 export const ref = <T = unknown>(key: string): FxRefKey =>
-  ({ [FxRefSymbol]: true, key } as unknown as FxRefKey);
+  ({ [FxRefSymbol]: true, key } as FxRefKey);
 
 export const fx = {
   none: (id?: string): FxNote => ({ type: "none", ...(id ? { id } : {}) }),

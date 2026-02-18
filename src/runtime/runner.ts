@@ -115,8 +115,6 @@ export function prepare(flow: FxNote, initialAppContext: AppContext, parent?: Pa
     cancelToken,
     executionId: parent?.executionId ?? `exec-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     onStep: parent?.onStep,
-    middlewares: parent?.middlewares,
-    debugController: parent?.debugController,
   };
 
   return { rootNote: flow, execContext, appContext };
