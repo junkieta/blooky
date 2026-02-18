@@ -116,7 +116,12 @@ const overlayContext = (
 ) => {
   const scoped = Object.create(parent);
   for (const k of Reflect.ownKeys(patch)) {
-    (scoped as any)[k as any] = (patch as any)[k as any];
+    Object.defineProperty(scoped, k, {
+      value: (patch as any)[k as any],
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
   }
   return scoped as Record<string | symbol, any>;
 };

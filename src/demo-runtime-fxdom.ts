@@ -2,6 +2,7 @@ import { RETURN_VALUE, prepare, execute } from "./blooky-fx";
 import { fxdom, FxEffectElement } from "./blooky-fxdom";
 import type { ExecutionHandle, ExecutionStep } from "./blooky-fx-types";
 import { createFV } from "./blooky-fv";
+import { stream, map, merge, hold, accum, drip, commit } from "./blooky-fp";
 import { clock } from "./runtime/time";
 
 const { prime, jshtml } = createFV(clock);
@@ -38,13 +39,18 @@ if (
   throw new Error("runtime score-fx fxdom demo: required elements are missing");
 }
 
-type DemoState = {
-  startedAt: string;
-  mode: string;
-  featureEnabled: boolean;
-  loopLimit: number;
-  loopCount: number;
-  trace: string[];
+type DemoModel = {
+  $startedAt: () => string;
+  $mode: () => string;
+  $featureEnabled: () => boolean;
+  $loopLimit: () => number;
+  $loopCount: () => number;
+  $trace: () => string[];
+  record: (message: string) => string;
+  loopTick: () => number;
+  loopContinue: () => boolean;
+  yieldInput: () => Record<string, unknown>;
+  finalize: () => Record<string, unknown>;
 };
 
 type PendingYieldDetail = { id: string; executionId: string; input?: unknown };
@@ -294,47 +300,89 @@ const FxFlow = prime((ctx: FxFlowContext) => ({
 
 const buildFlowElement = (ctx: FxFlowContext): FxEffectElement => FxFlow(ctx) as FxEffectElement;
 
-const makeInitialContext = (): FxFlowContext => {
+const createDemoModel = (): DemoModel => {
+  const startedAt = new Date().toISOString();
+  const mode = modeSelect.value;
+  const featureEnabled = featureCheck.checked;
   const loopLimit = Math.max(1, Math.min(8, Number(loopLimitInput.value) || 3));
-  const state: DemoState = {
-    startedAt: new Date().toISOString(),
-    mode: modeSelect.value,
-    featureEnabled: featureCheck.checked,
-    loopLimit,
-    loopCount: 0,
-    trace: [],
+
+  const source = {
+    mode$: stream<string>(),
+    featureEnabled$: stream<boolean>(),
+    loopLimit$: stream<number>(),
+    startedAt$: stream<string>(),
+    record$: stream<string>(),
+    loopTick$: stream<null>(),
   };
 
+  const $mode = hold(mode)(source.mode$);
+  const $featureEnabled = hold(featureEnabled)(source.featureEnabled$);
+  const $loopLimit = hold(loopLimit)(source.loopLimit$);
+  const $startedAt = hold(startedAt)(source.startedAt$);
+  const $loopCount = accum((count: number) => count + 1, 0)(source.loopTick$);
+
+  const traceRecord$ = map((message: string) => message)(source.record$);
+  const traceLoop$ = map(() => `loop:tick(${$loopCount() + 1}/${$loopLimit()})`)(source.loopTick$);
+  const traceMessage$ = merge([traceRecord$, traceLoop$]);
+  const $trace = accum((trace: string[], message: string) => [...trace, `${trace.length + 1}. ${message}`], [])(traceMessage$);
+
+  const record = (message: string) => {
+    commit(drip(message)(source.record$));
+    return message;
+  };
+
+  const loopTick = () => {
+    const nextCount = $loopCount() + 1;
+    commit(drip(null)(source.loopTick$));
+    return nextCount;
+  };
+
+  const loopContinue = () => $loopCount() < $loopLimit();
+
+  const yieldInput = () => ({
+    question: "Apply scenario commit?",
+    mode: $mode(),
+    featureEnabled: $featureEnabled(),
+    loopLimit: $loopLimit(),
+    traceSoFar: $trace().slice(),
+  });
+
+  const finalize = () => ({
+    status: "completed",
+    startedAt: $startedAt(),
+    mode: $mode(),
+    featureEnabled: $featureEnabled(),
+    loopCount: $loopCount(),
+    trace: $trace().slice(),
+  });
+
   return {
-    state,
-    mode: state.mode,
-    featureEnabled: state.featureEnabled,
+    $startedAt,
+    $mode,
+    $featureEnabled,
+    $loopLimit,
+    $loopCount,
+    $trace,
+    record,
+    loopTick,
+    loopContinue,
+    yieldInput,
+    finalize,
+  };
+};
+
+const makeInitialContext = (): FxFlowContext => {
+  const model = createDemoModel();
+
+  return {
+    mode: model.$mode(),
+    featureEnabled: model.$featureEnabled(),
     confirmTarget: "confirm-template",
-    yieldInput: () => ({
-      question: "Apply scenario commit?",
-      mode: state.mode,
-      featureEnabled: state.featureEnabled,
-      loopLimit: state.loopLimit,
-      traceSoFar: state.trace.slice(),
-    }),
-    record: (message: string) => {
-      state.trace.push(`${state.trace.length + 1}. ${message}`);
-      return message;
-    },
-    loopTick: () => {
-      state.loopCount += 1;
-      const message = `loop:tick(${state.loopCount}/${state.loopLimit})`;
-      state.trace.push(`${state.trace.length + 1}. ${message}`);
-      return state.loopCount;
-    },
-    loopContinue: () => state.loopCount < state.loopLimit,
-    finalize: () => ({
-      status: "completed",
-      mode: state.mode,
-      featureEnabled: state.featureEnabled,
-      loopCount: state.loopCount,
-      trace: state.trace.slice(),
-    }),
+    yieldInput: model.yieldInput,
+    record: model.record,
+    loopTick: model.loopTick,
+    loopContinue: model.loopContinue,
+    finalize: model.finalize,
 
     sequenceStartMessage: "sequence:start",
     parallelAMessage: "parallel:A",
