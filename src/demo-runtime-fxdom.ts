@@ -1,0 +1,388 @@
+import { RETURN_VALUE, prepare, execute } from "./blooky-fx";
+import { fxdom, FxEffectElement } from "./blooky-fxdom";
+import type { ExecutionHandle, ExecutionStep } from "./blooky-fx-types";
+
+const runButton = document.getElementById("run") as HTMLButtonElement | null;
+const cancelButton = document.getElementById("cancel") as HTMLButtonElement | null;
+const resolveButton = document.getElementById("resolve") as HTMLButtonElement | null;
+const rejectButton = document.getElementById("reject") as HTMLButtonElement | null;
+const modeSelect = document.getElementById("mode") as HTMLSelectElement | null;
+const featureCheck = document.getElementById("feature") as HTMLInputElement | null;
+const loopLimitInput = document.getElementById("loopLimit") as HTMLInputElement | null;
+const mountEl = document.getElementById("mount") as HTMLDivElement | null;
+const statusEl = document.getElementById("status") as HTMLDivElement | null;
+const pendingEl = document.getElementById("pending") as HTMLDivElement | null;
+const summaryEl = document.getElementById("summary") as HTMLDivElement | null;
+const logEl = document.getElementById("log") as HTMLDivElement | null;
+const confirmTpl = document.getElementById("confirm-template") as HTMLTemplateElement | null;
+
+if (
+  !runButton ||
+  !cancelButton ||
+  !resolveButton ||
+  !rejectButton ||
+  !modeSelect ||
+  !featureCheck ||
+  !loopLimitInput ||
+  !mountEl ||
+  !statusEl ||
+  !pendingEl ||
+  !summaryEl ||
+  !logEl ||
+  !confirmTpl
+) {
+  throw new Error("runtime score-fx fxdom demo: required elements are missing");
+}
+
+type DemoState = {
+  startedAt: string;
+  mode: string;
+  featureEnabled: boolean;
+  loopLimit: number;
+  loopCount: number;
+  trace: string[];
+};
+
+type PendingYieldDetail = { id: string; executionId: string; input?: unknown };
+
+let activeHandle: ExecutionHandle | null = null;
+let pendingYieldId: string | null = null;
+let stepCount = 0;
+const phaseCounter = new Map<string, number>();
+const noteCounter = new Map<string, number>();
+const laneColorByExecutionId = new Map<string, string>();
+const lanePalette = ["#6366f1", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#14b8a6", "#ec4899"];
+
+if (!customElements.get("fx-effect")) {
+  fxdom.defineEffectElements();
+}
+
+const setStatus = (text: string) => {
+  statusEl.textContent = text;
+};
+
+const setPending = (text: string) => {
+  pendingEl.textContent = text;
+};
+
+const addCount = (map: Map<string, number>, key: string) => {
+  map.set(key, (map.get(key) ?? 0) + 1);
+};
+
+const escape = (s: string) => s.replaceAll("\\", "\\\\").replaceAll("\n", "\\n");
+
+const formatValue = (value: unknown): string => {
+  if (value instanceof Error) return `Error(${value.message})`;
+  if (typeof value === "function") return "[Function]";
+  if (typeof value === "symbol") return `Symbol(${value.description ?? ""})`;
+  try {
+    return escape(JSON.stringify(value));
+  } catch {
+    return String(value);
+  }
+};
+
+const laneColor = (executionId: string): string => {
+  if (!laneColorByExecutionId.has(executionId)) {
+    let hash = 0;
+    for (const ch of executionId) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+    laneColorByExecutionId.set(executionId, lanePalette[hash % lanePalette.length]);
+  }
+  return laneColorByExecutionId.get(executionId)!;
+};
+
+const appendLog = (
+  line: string,
+  options?: { executionId?: string; raceTag?: "winner" | "loser"; info?: boolean }
+) => {
+  const row = document.createElement("div");
+  row.className = `log-line${options?.info ? " info" : ""}`;
+
+  if (options?.executionId && options.executionId !== "-") {
+    row.style.borderLeftColor = laneColor(options.executionId);
+    const lanePill = document.createElement("span");
+    lanePill.className = "pill exec";
+    lanePill.textContent = options.executionId;
+    row.appendChild(lanePill);
+  }
+
+  if (options?.raceTag) {
+    row.classList.add(`race-${options.raceTag}`);
+    const racePill = document.createElement("span");
+    racePill.className = `pill race-${options.raceTag}`;
+    racePill.textContent = options.raceTag;
+    row.appendChild(racePill);
+  }
+
+  const text = document.createElement("span");
+  text.textContent = line;
+  row.appendChild(text);
+  logEl.appendChild(row);
+  logEl.scrollTop = logEl.scrollHeight;
+};
+
+const renderSummary = () => {
+  const phaseText = [...phaseCounter.entries()].map(([k, v]) => `${k}:${v}`).join("  ");
+  const noteText = [...noteCounter.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+    .map(([k, v]) => `${k}:${v}`)
+    .join("  ");
+
+  summaryEl.innerHTML = [
+    `<span>steps=<b>${stepCount}</b></span>`,
+    `<span>phase=<b>${phaseText || "-"}</b></span>`,
+    `<span>notes=<b>${noteText || "-"}</b></span>`,
+  ].join(" ");
+};
+
+const resetView = () => {
+  logEl.replaceChildren();
+  stepCount = 0;
+  phaseCounter.clear();
+  noteCounter.clear();
+  laneColorByExecutionId.clear();
+  pendingYieldId = null;
+  setPending("pending yield: none");
+  renderSummary();
+};
+
+const detectRaceTag = (step: ExecutionStep): "winner" | "loser" | undefined => {
+  const noteId = step.note.id ?? "";
+  if (!noteId.startsWith("race")) return undefined;
+  if (step.phase === "cancel") return "loser";
+  if ((noteId === "raceFast" || noteId === "raceFastCall") && (step.phase === "result" || step.phase === "exit")) {
+    return "winner";
+  }
+  return undefined;
+};
+
+const stepLogger = (step: ExecutionStep) => {
+  stepCount += 1;
+  addCount(phaseCounter, step.phase);
+  addCount(noteCounter, step.note.type);
+  renderSummary();
+
+  const executionId = typeof step.data?.executionId === "string" ? step.data.executionId : "-";
+  const noteId = step.note.id ? `#${step.note.id}` : "-";
+  appendLog(
+    `${String(stepCount).padStart(3, "0")}  phase=${step.phase.padEnd(9, " ")} note=${step.note.type.padEnd(9, " ")} id=${noteId.padEnd(16, " ")} data=${formatValue(step.data)}`,
+    {
+      executionId,
+      raceTag: detectRaceTag(step),
+    }
+  );
+};
+
+const el = (tag: string, attrs?: Record<string, string>, children: Element[] = []): Element => {
+  const node = document.createElement(tag);
+  if (attrs) {
+    for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+  }
+  if (children.length) node.append(...children);
+  return node;
+};
+
+const buildFlowElement = (): FxEffectElement => {
+  const raceFast = el("fx-sequence", { id: "raceFast" }, [
+    el("fx-wait", { ms: "120" }),
+    el("fx-call", { fn: "record", arg: "raceFastMessage", id: "raceFastCall" }),
+  ]);
+  const raceSlowA = el("fx-sequence", { id: "raceSlowA" }, [
+    el("fx-wait", { ms: "360" }),
+    el("fx-call", { fn: "record", arg: "raceSlowAMessage", id: "raceSlowACall" }),
+  ]);
+  const raceSlowB = el("fx-sequence", { id: "raceSlowB" }, [
+    el("fx-wait", { ms: "260" }),
+    el("fx-call", { fn: "record", arg: "raceSlowBMessage", id: "raceSlowBCall" }),
+  ]);
+
+  const root = el("fx-effect", { id: "root" }, [
+    el("fx-call", { fn: "record", arg: "sequenceStartMessage", id: "startCall" }),
+    el("fx-parallel", { id: "parallelBlock" }, [
+      el("fx-sequence", { id: "parallelBranchA" }, [
+        el("fx-wait", { ms: "80" }),
+        el("fx-call", { fn: "record", arg: "parallelAMessage", id: "parallelA" }),
+      ]),
+      el("fx-sequence", { id: "parallelBranchB" }, [
+        el("fx-wait", { ms: "180" }),
+        el("fx-call", { fn: "record", arg: "parallelBMessage", id: "parallelB" }),
+      ]),
+    ]),
+    el("fx-race", { id: "raceBlock" }, [raceSlowA, raceFast, raceSlowB]),
+    el("fx-if", { when: "featureEnabled", id: "conditionBlock" }, [
+      el("fx-call", { slot: "then", fn: "record", arg: "conditionTrueMessage", id: "condTrue" }),
+      el("fx-call", { slot: "else", fn: "record", arg: "conditionFalseMessage", id: "condFalse" }),
+    ]),
+    el("fx-switch", { by: "mode", id: "switchBlock" }, [
+      el("fx-call", { slot: "safe", fn: "record", arg: "switchSafeMessage", id: "modeSafe" }),
+      el("fx-call", { slot: "fast", fn: "record", arg: "switchFastMessage", id: "modeFast" }),
+      el("fx-call", { slot: "default", fn: "record", arg: "switchDefaultMessage", id: "modeDefault" }),
+    ]),
+    el("fx-loop", { while: "loopContinue", "max-iterations": "8", id: "loopBlock" }, [
+      el("fx-sequence", { id: "loopBody" }, [
+        el("fx-call", { fn: "loopTick", id: "loopTickCall" }),
+        el("fx-wait", { ms: "60" }),
+      ]),
+    ]),
+    el("fx-yield", { for: "confirmTarget", value: "yieldInput", id: "confirm" }),
+    el("fx-switch", { by: "#confirm", id: "yieldSwitch" }, [
+      el("fx-call", { slot: "approve", fn: "record", arg: "yieldApproveMessage", id: "yieldApproved" }),
+      el("fx-call", { slot: "reject", fn: "record", arg: "yieldRejectMessage", id: "yieldRejected" }),
+      el("fx-call", { slot: "default", fn: "record", arg: "yieldUnknownMessage", id: "yieldUnknown" }),
+    ]),
+    el("fx-return", { value: "finalize", id: "finalReturn" }),
+  ]);
+
+  return root as FxEffectElement;
+};
+
+const makeInitialContext = (): Record<string, unknown> => {
+  const loopLimit = Math.max(1, Math.min(8, Number(loopLimitInput.value) || 3));
+  const state: DemoState = {
+    startedAt: new Date().toISOString(),
+    mode: modeSelect.value,
+    featureEnabled: featureCheck.checked,
+    loopLimit,
+    loopCount: 0,
+    trace: [],
+  };
+
+  return {
+    state,
+    mode: state.mode,
+    featureEnabled: state.featureEnabled,
+    confirmTarget: "confirm-template",
+    yieldInput: () => ({
+      question: "Apply scenario commit?",
+      mode: state.mode,
+      featureEnabled: state.featureEnabled,
+      loopLimit: state.loopLimit,
+      traceSoFar: state.trace.slice(),
+    }),
+    record: (message: string) => {
+      state.trace.push(`${state.trace.length + 1}. ${message}`);
+      return message;
+    },
+    loopTick: () => {
+      state.loopCount += 1;
+      const message = `loop:tick(${state.loopCount}/${state.loopLimit})`;
+      state.trace.push(`${state.trace.length + 1}. ${message}`);
+      return state.loopCount;
+    },
+    loopContinue: () => state.loopCount < state.loopLimit,
+    finalize: () => ({
+      status: "completed",
+      mode: state.mode,
+      featureEnabled: state.featureEnabled,
+      loopCount: state.loopCount,
+      trace: state.trace.slice(),
+    }),
+
+    sequenceStartMessage: "sequence:start",
+    parallelAMessage: "parallel:A",
+    parallelBMessage: "parallel:B",
+    raceFastMessage: "race:fast winner",
+    raceSlowAMessage: "race:slowA",
+    raceSlowBMessage: "race:slowB",
+    conditionTrueMessage: "condition:true",
+    conditionFalseMessage: "condition:false",
+    switchSafeMessage: "switch:safe",
+    switchFastMessage: "switch:fast",
+    switchDefaultMessage: "switch:default",
+    yieldApproveMessage: "yield:approve",
+    yieldRejectMessage: "yield:reject",
+    yieldUnknownMessage: "yield:unknown",
+  };
+};
+
+const setRunning = (running: boolean) => {
+  runButton.disabled = running;
+  cancelButton.disabled = !running;
+  if (!running) {
+    resolveButton.disabled = true;
+    rejectButton.disabled = true;
+  }
+};
+
+const startScenario = async () => {
+  if (activeHandle) return;
+
+  resetView();
+  setStatus("running");
+  setRunning(true);
+  appendLog("runtime modules: runner + fsm + dispatcher + registry + profile-dom-local", { info: true });
+
+  const fxEffect = buildFlowElement();
+  mountEl.replaceChildren(fxEffect);
+
+  const prepared = prepare(fxEffect.toFxNote(), makeInitialContext(), { onStep: stepLogger });
+  activeHandle = execute(prepared);
+
+  try {
+    const appContext = await activeHandle.done;
+    const result = (appContext as Record<string | symbol, unknown>)[RETURN_VALUE];
+    appendLog(`RETURN_VALUE=${formatValue(result)}`, { info: true });
+    setStatus("completed");
+  } catch (error) {
+    appendLog(`ERROR=${formatValue(error)}`, { info: true });
+    setStatus("failed");
+  } finally {
+    activeHandle = null;
+    pendingYieldId = null;
+    setPending("pending yield: none");
+    setRunning(false);
+  }
+};
+
+confirmTpl.addEventListener("fx-yield-start", (event: Event) => {
+  const detail = (event as CustomEvent<PendingYieldDetail>).detail;
+  pendingYieldId = detail.id;
+  setPending(`pending yield: ${detail.id} exec=${detail.executionId} input=${formatValue(detail.input)}`);
+  resolveButton.disabled = false;
+  rejectButton.disabled = false;
+  appendLog(`yield:start id=${detail.id}`, { executionId: detail.executionId, info: true });
+});
+
+runButton.addEventListener("click", () => {
+  void startScenario();
+});
+
+cancelButton.addEventListener("click", () => {
+  if (!activeHandle) return;
+  activeHandle.cancel();
+  appendLog("manual cancel requested", { info: true });
+});
+
+resolveButton.addEventListener("click", () => {
+  if (!pendingYieldId) return;
+  confirmTpl.dispatchEvent(
+    new CustomEvent("fx-yield-resolve", {
+      detail: { id: pendingYieldId, value: "approve" },
+      bubbles: true,
+      composed: true,
+    })
+  );
+  appendLog(`yield:resolve id=${pendingYieldId} value=approve`, { info: true });
+  pendingYieldId = null;
+  resolveButton.disabled = true;
+  rejectButton.disabled = true;
+});
+
+rejectButton.addEventListener("click", () => {
+  if (!pendingYieldId) return;
+  confirmTpl.dispatchEvent(
+    new CustomEvent("fx-yield-reject", {
+      detail: { id: pendingYieldId, error: new Error("rejected by demo user") },
+      bubbles: true,
+      composed: true,
+    })
+  );
+  appendLog(`yield:reject id=${pendingYieldId}`, { info: true });
+  pendingYieldId = null;
+  resolveButton.disabled = true;
+  rejectButton.disabled = true;
+});
+
+resetView();
+setStatus("idle");

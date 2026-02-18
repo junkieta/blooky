@@ -1,5 +1,4 @@
-import { jshtml, JSHTML_ATTR_HANDLER, JSHTML_ELEMENT_HANDLER, JSHTMLAttrRuntime } from "./blooky-fv";
-import { blooky } from "./blooky-fp";
+import { JSHTML_ATTR_HANDLER, JSHTML_ELEMENT_HANDLER, JSHTMLAttrRuntime } from "./blooky-fv";
 import { 
   prepare, 
   execute, 
@@ -8,7 +7,26 @@ import {
 } from "./blooky-fx";
 import { FxNote, ExecContext, PreparedFx, ExecutionHandle, AppContext, FxRef, ExecutionStep } from "./blooky-fx-types";
 
-type FxIgniteType = "none" | "quantum" | "visual" | "sequential" | "immediate";
+type FxDomErrorCode =
+  | "INVALID_JSON_ARGUMENT"
+  | "MISSING_REQUIRED_ATTRIBUTE"
+  | "INVALID_JSON_YIELD_VALUE"
+  | "MISSING_CONTEXT_USAGE_KEY"
+  | "UNAUTHORIZED_CONTEXT_ACCESS"
+  | "CUSTOM_ELEMENT_ALREADY_DEFINED";
+
+const createFxDomError = (
+  code: FxDomErrorCode,
+  message: string,
+  detail?: Record<string, unknown>
+): Error & { detail?: Record<string, unknown> } => {
+  const error = new Error(`[fxdom:${code}] ${message}`);
+  (error as Error & { code?: string }).code = code;
+  if (detail) {
+    (error as Error & { detail?: Record<string, unknown> }).detail = detail;
+  }
+  return error;
+};
 
 // ---- 抽象基底クラス ----
 
@@ -153,13 +171,15 @@ class FxCallElement extends EffectElement {
           return JSON.parse(rawText);
         } catch (e) {
           // JSONパースエラーは structure エラーとして報告
-          throw blooky.error("structure", {
-            code: "INVALID_JSON_ARGUMENT",
-            expected: "JSON",
-            message: `Invalid JSON content provided in <fx-call> body.`,
-            actual: rawText,
-            suggestions: ["Ensure the element body contains valid JSON, or use the 'arg' attribute for context reference."],
-          });
+          throw createFxDomError(
+            "INVALID_JSON_ARGUMENT",
+            "Invalid JSON content provided in <fx-call> body.",
+            {
+              expected: "JSON",
+              actual: rawText,
+              suggestions: ["Ensure the element body contains valid JSON, or use the 'arg' attribute for context reference."],
+            }
+          );
         }
       }
     }
@@ -171,102 +191,6 @@ class FxCallElement extends EffectElement {
       catcher: this.hasAttribute("catcher") ? ref(this.getAttribute("catcher")!) : undefined,
       id: this.id,
     });
-  }
-}
-
-/**
- * 読み込んだフローのDOMテンプレートをキャッシュするためのMap
- * string: JSONファイルのsrc
- * HTMLTemplateElement: パース済みのDOMフラグメントを保持するtemplate要素
- */
-const FLOW_TEMPLATE_CACHE = new Map<string, HTMLTemplateElement>();
-
-/**
- * 外部ソースからフロー定義を読み込み、展開するカスタム要素。
- * @note FxFlowからFxIncludeにリネームされました。
- */
-class FxIncludeElement extends EffectElement {
-
-  // 'src'属性の変更を監視対象に含める
-  static observedAttributes = ['src'];
-  
-  toFxNote(): FxNote {
-    const children = this.childrenToFxNotes();
-    // 子ノードが複数あればsequence、1つならそのまま、なければnone
-    const node = children.length > 1
-      ? fx.sequence(children)
-      : children[0] ?? fx.none();
-      
-    // idがあればノードに設定
-    return this.id ? { ...node, id: this.id } : node;
-  }
-
-  connectedCallback() {
-    this.attachShadow({ mode: 'open' });
-    this.shadowRoot!.innerHTML = `<slot></slot>`;
-    this.updateContent(); // 内部メソッドを呼び出す
-  }
-
-  attributeChangedCallback(name: string, oldValue: string, newValue: string) {
-    // src属性が変更され、かつ新しい値がセットされた場合にのみ更新
-    if (name === 'src' && oldValue !== newValue) {
-      this.updateContent(); // 内部メソッドを呼び出す
-    }
-  }
-  
-  /**
-   * src属性に基づいて、要素の内容を更新する内部メソッド
-   */
-  private async updateContent() {
-    const src = this.getAttribute("src");
-    if (!src) {
-      this.replaceChildren(); // srcがなければ内容を空にする
-      return;
-    }
-
-    const useCache = this.getAttribute("cache") !== "no";
-
-    let template = FLOW_TEMPLATE_CACHE.get(src);
-    if (!template || !useCache) {
-      try {
-        const response = await fetch(src, { headers: { Accept: "application/json" } });
-        if (!response.ok) throw blooky.error("user", {
-          code: "FETCH_FAILED_ERROR",
-          message: `Fetch failed:"${response.url}"`,
-          element: this,
-          originalError: new Error(response.statusText),
-          suggestions: ["Check the network path and ensure the source exists and returns a 200 OK status."]
-        });
-        
-        const contentJson = await response.json();
-
-        template = this.ownerDocument.createElement("template") as HTMLTemplateElement;
-        // JSONレスポンスをJSHTMLに渡してDOMフラグメントを生成
-        template.content.append(jshtml(contentJson));
-        FLOW_TEMPLATE_CACHE.set(src, template);
-      } catch (error) {
-        // 元のエラーが blooky.error でない場合は、blooky.errorにラップする
-        const blookyError = (error.category) ? error : blooky.error("user", {
-          code: "INCLUDE_PROCESSING_ERROR",
-          message: `Error processing include from "${src}"`,
-          element: this,
-          originalError: error,
-          suggestions: ["Verify the content of the remote file is valid JSHTML JSON structure."]
-        });
-        
-        // エラーをコンソールに出力
-        console.error(`Error processing <fx-include src="${src}">:`, blookyError);
-
-        // コンテンツをクリア
-        this.replaceChildren(); 
-        
-        return; // エラー処理を完結させ、外に例外を伝播させない        
-      }
-    }
-
-    // テンプレートの内容を複製して自身の子要素に置き換える
-    const clonedContent = template.content.cloneNode(true);
-    this.replaceChildren(clonedContent);
   }
 }
 
@@ -375,9 +299,7 @@ class FxYieldElement extends EffectElement {
     
     // for属性は必須
     if (!forAttr) {
-      throw blooky.error("structure", {
-        code: "MISSING_REQUIRED_ATTRIBUTE",
-        message: `<fx-yield> requires a 'for' attribute to specify the yield key.`,
+      throw createFxDomError("MISSING_REQUIRED_ATTRIBUTE", "<fx-yield> requires a 'for' attribute to specify the yield key.", {
         attribute: "for",
         suggestions: ["Add the 'for' attribute to specify which key to yield to."],
         expected: "string (context key)",
@@ -396,13 +318,15 @@ class FxYieldElement extends EffectElement {
           return JSON.parse(rawText);
         } catch (e) {
           // JSONパースエラーは structure エラーとして報告
-          throw blooky.error("structure", {
-            code: "INVALID_JSON_YIELD_VALUE",
-            expected: "JSON",
-            message: `Invalid JSON content provided in <fx-yield> body.`,
-            actual: rawText,
-            suggestions: ["Ensure the element body contains valid JSON, or use the 'value' attribute for context reference."],
-          });
+          throw createFxDomError(
+            "INVALID_JSON_YIELD_VALUE",
+            "Invalid JSON content provided in <fx-yield> body.",
+            {
+              expected: "JSON",
+              actual: rawText,
+              suggestions: ["Ensure the element body contains valid JSON, or use the 'value' attribute for context reference."],
+            }
+          );
         }
       }
     }
@@ -471,14 +395,16 @@ class FxContextElement extends EffectElement {
       // use属性で指定されているがctxに存在しないキーをチェック
       const noExist = useList.filter((use)=>!(use in ctx));
       if(noExist.length) {
-        throw blooky.error("structure", {
-          code: "MISSING_CONTEXT_USAGE_KEY",
-          message: `[fx-context] Invalid context: keys "${noExist.join(", ")}" are required by 'use' attribute but not contained in the input context.`,
-          attribute: "use",
-          suggestions: ["Ensure the context passed to the element contains all keys listed in the 'use' attribute."],
-          expected: useList.join(", "),
-          actual: Object.keys(ctx).join(", ")
-        });
+        throw createFxDomError(
+          "MISSING_CONTEXT_USAGE_KEY",
+          `[fx-context] Invalid context: keys "${noExist.join(", ")}" are required by 'use' attribute but not contained in the input context.`,
+          {
+            attribute: "use",
+            suggestions: ["Ensure the context passed to the element contains all keys listed in the 'use' attribute."],
+            expected: useList.join(", "),
+            actual: Object.keys(ctx).join(", ")
+          }
+        );
       }
     }
     this.context = ctx;
@@ -508,13 +434,15 @@ class FxContextElement extends EffectElement {
     if (key in this.context) {
       // use属性によるチェックが必要であれば実行
       if(requiredUseAttr === true && !this.containedUseAttr(key)) {
-        throw blooky.error("constraint", {
-          code: "UNAUTHORIZED_CONTEXT_ACCESS",
-          message: `[fx-context] Invalid context key: "${key}" is not contained in the 'use' attribute for required access.`,
-          constraint: `Key "${key}" must be listed in 'use' attribute.`,
-          property: key,
-          suggestions: ["Add the key to the 'use' attribute if it should be accessed here."]
-        });
+        throw createFxDomError(
+          "UNAUTHORIZED_CONTEXT_ACCESS",
+          `[fx-context] Invalid context key: "${key}" is not contained in the 'use' attribute for required access.`,
+          {
+            constraint: `Key "${key}" must be listed in 'use' attribute.`,
+            property: key,
+            suggestions: ["Add the key to the 'use' attribute if it should be accessed here."]
+          }
+        );
       }
       return this.context[key];
     }
@@ -531,12 +459,10 @@ class FxContextElement extends EffectElement {
 
 /**
  * フロー実行の起点 (prepare/execute) となるカスタム要素。
- * `ignite` 属性によって実行タイミングを制御する。
+ * 接続時に prepare され、必要に応じて execute を明示的に呼び出して実行する。
  */
 
 class FxEffectElement extends FxContextElement {
-
-  static observedAttributes = ["theme", "ignite"];
   
   protected _execContext?: Partial<ExecContext> | undefined;
   protected _preparedFx?: PreparedFx;
@@ -623,67 +549,8 @@ class FxEffectElement extends FxContextElement {
     return this._handle;
   }
 
-  protected igniteFx(type: FxIgniteType) {
-    console.log('[fxdom] FxEffectElement: igniteFx', type);
-    
-    this.prepare();
-    
-    switch (type) {
-      case "none":
-        console.log('[fxdom] FxEffectElement: ignite none - not executing');
-        break;
-
-      case "quantum":
-        console.log('[fxdom] FxEffectElement: ignite quantum - queueMicrotask');
-        queueMicrotask(() => {
-          console.log('[fxdom] FxEffectElement: quantum execute');
-          this.execute();
-        });
-        break;
-
-      case "visual":
-        console.log('[fxdom] FxEffectElement: ignite visual - requestAnimationFrame');
-        requestAnimationFrame(() => {
-          console.log('[fxdom] FxEffectElement: visual execute');
-          this.execute();
-        });
-        break;
-
-      case "sequential":
-        console.log('[fxdom] FxEffectElement: ignite sequential - setTimeout');
-        setTimeout(() => {
-          console.log('[fxdom] FxEffectElement: sequential execute');
-          this.execute();
-        });
-        break;
-
-      case "immediate":
-        console.log('[fxdom] FxEffectElement: ignite immediate - execute now');
-        this.execute();
-        break;
-
-      default:
-        throw blooky.error("user", {
-          code: "UNKNOWN_IGNITE_VALUE",
-          message: `Unknown 'ignite' attribute value: "${this.getAttribute("ignite")}"`,
-          element: this,
-          recoverable: true,
-          originalError: null,
-          suggestions: ["Use 'none', 'quantum', 'visual', 'sequential', or 'immediate'."],
-        });
-    }
-  }
-
   connectedCallback() {
-    console.log('[fxdom] FxEffectElement: connectedCallback');
-    
-    const igniteValue = this.hasAttribute("ignite") 
-      ? this.getAttribute("ignite") as FxIgniteType
-      : "none";
-    
-    console.log('[fxdom] FxEffectElement: ignite value', igniteValue);
-    
-    this.igniteFx(igniteValue);
+    this.prepare();
   }
 
   disconnectedCallback() {
@@ -691,22 +558,6 @@ class FxEffectElement extends FxContextElement {
     this._handle?.cancel();
   }
 
-  attributeChangedCallback(name: string, oldValue: string, newValue: string) {
-    console.log('[fxdom] FxEffectElement: attributeChangedCallback', { name, oldValue, newValue });
-    
-    if (newValue === oldValue || !this.isConnected) return;
-    
-    if (name === "ignite") {
-      this._handle?.cancel();
-      if (newValue && newValue !== "none") {
-        this.igniteFx(newValue as FxIgniteType);
-      }
-    }
-    
-//    if (name === "theme") {
-//      this.loadTheme(newValue);
-//    }
-  }
 }
 
 /**
@@ -723,12 +574,14 @@ const fxdom = {
     Object.entries(tagNameMap).forEach(([tag,cls])=>{
       if (customElements.get(tag)) {
           // カスタム要素が既に定義されている場合は dev-config エラー
-          throw blooky.error("dev-config", {
-            code: "CUSTOM_ELEMENT_ALREADY_DEFINED",
-            message: `Custom element "${tag}" is already defined.`,
-            suggestions: ["Ensure fxdom.defineEffectElements() is only called once."],
-            nodeType: tag,
-          });
+          throw createFxDomError(
+            "CUSTOM_ELEMENT_ALREADY_DEFINED",
+            `Custom element "${tag}" is already defined.`,
+            {
+              suggestions: ["Ensure fxdom.defineEffectElements() is only called once."],
+              nodeType: tag,
+            }
+          );
       }
       customElements.define(tag,cls as unknown as CustomElementConstructor)
     });
@@ -745,7 +598,6 @@ const EffectElementTagNameMap = {
   "fx-race":  FxRaceElement,
   "fx-wait":  FxWaitElement,
   "fx-call":  FxCallElement,
-  "fx-include":  FxIncludeElement,
   "fx-if":  FxIfElement,
   "fx-switch":  FxSwitchElement,
   "fx-loop":  FxLoopElement,
@@ -755,4 +607,4 @@ const EffectElementTagNameMap = {
   "fx-return": FxReturnElement
 }
 
-export {FxCallElement,FxWaitElement,FxEffectElement,FxIfElement,FxIncludeElement,FxParallelElement,FxRaceElement,FxLoopElement,FxSequenceElement,FxSwitchElement,FxContextElement,FxReturnElement,fxdom,EffectElementTagNameMap};
+export {FxCallElement,FxWaitElement,FxEffectElement,FxIfElement,FxParallelElement,FxRaceElement,FxLoopElement,FxSequenceElement,FxSwitchElement,FxContextElement,FxReturnElement,fxdom,EffectElementTagNameMap};
