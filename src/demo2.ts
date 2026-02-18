@@ -23,11 +23,11 @@ function main() {
   // ---- UI (prime) ----
   const App = fv.prime(({ click$, $count }: { click$: Dripper<MouseEvent>, $count: Prop<number> }) => ({
     div: [
-      { h2: "Prime + Prop update + runtime.submit demo" },
+      { h2: "Prime + Prop update + runtime.submitPlan demo" },
       { p: ["Text updates via Prop: count = ", $count] },
       { button: "increment", $: { onclick: click$ } },
       {
-        p: "Flow: onclick(Dripper) -> drip(plan) -> runtime.submit -> fp.commit -> runtime.observe(update) -> DOM patch",
+        p: "Flow: onclick(Dripper) -> drip(plan) -> runtime.submitPlan -> fp.commit -> runtime.observeCommit(update) -> DOM patch",
       },
     ],
   }));

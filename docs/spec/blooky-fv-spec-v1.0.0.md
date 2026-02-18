@@ -1,4 +1,4 @@
-# blooky-fv Specification v1.0.0
+﻿# blooky-fv Specification v1.0.0
 
 **Subtitle:** DOM Binding & Context Propagation Layer  
 **Status:** 🔒 Final / Frozen  
@@ -17,9 +17,9 @@ blooky-fv は blooky-fp によって構築された FRP グラフを DOM に投�
 ### 本仕様が規定するもの
 
 1. **JSHTML → DOM 投影**: Prop と DOM の接続モデル
-2. **Runtime 観測契約**: runtime.observe / unobserve インターフェース
+2. **Runtime 観測契約**: runtime.observeCommit / unobserveCommit インターフェース
 3. **Context 伝搬モデル**: 初期化時の context 注入規則
-4. **Event Adapter**: DOM イベント → runtime.submit 変換
+4. **Event Adapter**: DOM イベント → runtime.submitPlan 変換
 5. **Custom Element Hooks**: カスタム要素処理契約
 
 ### 本仕様が規定しないもの
@@ -104,34 +104,34 @@ export interface FVRuntime {
    * reject: conflict（recoverable failure）のみ
    * fatal は submit の reject 経路で扱わない
    */
-  submit(plan: DripPlan): Promise<DripPlan>
+  submitPlan(plan: DripPlan): Promise<DripPlan>
 
   /**
    * 観測関数 f を登録し、観測対象 prop を追加する関数を返す。
    * f は ObservedPlan（view）を受け取る。
    * 返り値は当該 prop の購読解除関数（unobserver）。
    */
-  observe(f: (plan: ObservedPlan) => void): (p: Prop<any>) => () => void
+  observeCommit(f: (plan: ObservedDripPlan) => void): (p: Prop<any>) => () => void
 
   /**
    * 観測解除。
    * - p 指定あり: 当該 prop のみ解除
    * - p 省略: f 全体を解除
    */
-  unobserve(f: (plan: ObservedPlan) => void): (p?: Prop<any>) => void
+  unobserveCommit(f: (plan: ObservedDripPlan) => void): (p?: Prop<any>) => void
 }
 ```
 
 #### 規範
 
-- `submit` は commit 完了時に resolve しなければならない（MUST）
-- `submit` は conflict の場合に限り reject しなければならない（MUST）
-- fatal（CommitExecutionError 相当）を submit reject 経路で扱ってはならない（MUST NOT）
-- `observe` は Prop 単位で購読を登録しなければならない（MUST）
-- `observe` の返り値は購読解除関数（unobserver）を返す関数でなければならない（MUST）
-- `unobserve` は購読解除を行わなければならない（MUST）
-- `unobserve(f)()` は f に紐づく全購読を解除しなければならない（MUST）
-- `unobserve(f)(p)` は f の p に対する購読のみを解除しなければならない（MUST）
+- `submitPlan` は commit 完了時に resolve しなければならない（MUST）
+- `submitPlan` は conflict の場合に限り reject しなければならない（MUST）
+- fatal（CommitExecutionError 相当）を submitPlan reject 経路で扱ってはならない（MUST NOT）
+- `observeCommit` は Prop 単位で購読を登録しなければならない（MUST）
+- `observeCommit` の返り値は購読解除関数（unobserver）を返す関数でなければならない（MUST）
+- `unobserveCmmit` は購読解除を行わなければならない（MUST）
+- `unobserveCommit(f)()` は f に紐づく全購読を解除しなければならない（MUST）
+- `unobserveCommit(f)(p)` は f の p に対する購読のみを解除しなければならない（MUST）
 
 ---
 
@@ -163,13 +163,13 @@ ObservedPlan は commit-plan から生成される観測用 view である。
 
 #### Observe Handle（規範）
 
-`runtime.observe(f)` は、Prop を購読対象として追加し、当該 Prop の **購読解除関数（unobserver）** を返す関数を返さなければならない（MUST）。
+`runtime.observeCommit(f)` は、Prop を購読対象として追加し、当該 Prop の **購読解除関数（unobserver）** を返す関数を返さなければならない（MUST）。
 
 fv は、各 Prop について対応する unobserver を保持してよい（MAY）。
 
 #### 規範
 
-1. PropBridge が初めて生成された際、fv は `runtime.observe` を通じて購読登録を行う（MUST）
+1. PropBridge が初めて生成された際、fv は `runtime.observeCommit` を通じて購読登録を行う（MUST）
 2. 対応する PropBridge がすべて除去された場合、fv は対応する unobserver を呼び出さなければならない（MUST）
 3. 購読解除は **Prop 単位**で行う（MUST）
 4. 同一 Prop に複数 bridge が存在する場合、最後の bridge が除去された時点で解除されなければならない（MUST）
@@ -308,7 +308,7 @@ fv は、ある Prop に対応する bridge がすべて除去された時点で
 
 - 購読解除は **Prop 単位**で行う（MUST）
 - 同一 Prop に複数 bridge が存在する場合、最後の bridge が除去された時点で解除されなければならない（MUST）
-- 解除は `runtime.observe(f)(prop)` が返す **unobserver を呼び出す**ことで行われなければならない（MUST）
+- 解除は `runtime.observeCommit(f)(prop)` が返す **unobserver を呼び出す**ことで行われなければならない（MUST）
 
 ---
 
@@ -332,7 +332,7 @@ fv は `listenerForSubmit` を提供する。
 `listenerForSubmit(d)(ev)` は：
 
 1. `plan = drip(ev)(d)` を生成する（MUST）
-2. `runtime.submit(plan)` を呼ぶ（MUST）
+2. `runtime.submitPlan(plan)` を呼ぶ（MUST）
 3. resolve / reject 処理（MUST）
 ・ listener の返り値は意味を持たない（MUST NOT 依存）
 
@@ -340,7 +340,7 @@ fv は `listenerForSubmit` を提供する。
 
 ### 8.2 Event Projection（Informative）
 
-fv は `runtime.submit` の結果を DOM CustomEvent として投影してよい（MAY）。
+fv は `runtime.submitPlan` の結果を DOM CustomEvent として投影してよい（MAY）。
 
 例：
 
@@ -388,7 +388,7 @@ fv は以下を提供しない：
 
 - context は immutable（生成時のみ使用）
 - fv は実行意味論を持たない
-- runtime 依存点は submit / observe / unobserve のみ
+- runtime 依存点は submitPlan / observeCommit / unobserveCommit のみ
 - ObservedPlan は view（編集不可）
 
 拡張は v1.1 以降で行う。
@@ -428,7 +428,7 @@ Range 置換が行われる場合、旧 DOM を含む範囲が丸ごと置換さ
 
 ## Appendix B: `blooky-commit-*` DOM Events（Informative）
 
-本 Appendix は、runtime.submit の結果を DOM に投影する慣習的イベントを説明する。規範ではない。
+本 Appendix は、runtime.submitPlan の結果を DOM に投影する慣習的イベントを説明する。規範ではない。
 
 ### B.1 Event List
 
@@ -450,8 +450,9 @@ Range 置換が行われる場合、旧 DOM を含む範囲が丸ごと置換さ
 ### B.3 Cancellation（Recommended）
 
 `blooky-commit-start` は `cancelable: true` で dispatch されてよい。
-`preventDefault()` された場合、adapter は `runtime.submit` を呼び出さないことが慣習的に求められる（Recommended）。
+`preventDefault()` された場合、adapter は `runtime.submitPlan` を呼び出さないことが慣習的に求められる（Recommended）。
 
 ---
 
 **END OF SPECIFICATION**
+

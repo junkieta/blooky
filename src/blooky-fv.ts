@@ -3,9 +3,9 @@
  * blookyを用いてリアクティブなDOMを構築するライブラリ。
  * blooky-fpのStream/Propの概念をDOMにバインドし、宣言的なHTML記述（JSHTML）を可能にする。
  *
- * vNext: fv は fx に直依存せず、FVRuntime（observe/unbind/submit）を注入して動作する。
- * - DOM Event -> drip -> DripPlan を生成し、runtime.submitへ委譲
- * - commit後の plan 通知は runtime.observe 経由で update(plan) が呼ばれる
+ * Next: fv は fx に直依存せず、FVRuntime（observeCommit/unobserveCommit/submitPlan）を注入して動作する。
+ * - DOM Event -> drip -> DripPlan を生成し、runtime.submitPlanへ委譲
+ * - commit時の plan 通知は runtime.observeCommit 経由で update(plan) が呼ばれる
  *
  * NOTE: mutations() はコアから排除（削除）。
  */
@@ -46,13 +46,13 @@ export interface FVRuntime {
    * f(plan) を受け取る関数を登録し、Propを監視対象に登録する registerProp を返す。
    * registerProp(p) が呼ばれた Prop に関する commit が発生したとき、onPlan が呼ばれること。
    */
-  observe(f: (plan: ObservedDripPlan) => void): (p: Prop<any>) => ()=>void;
+  observeCommit(f: (plan: ObservedDripPlan) => void): (p: Prop<any>) => ()=>void;
 
   /** observeしたobserve/register の対象から外す */
-  unobserve(f: (plan: ObservedDripPlan) => void): (p: Prop<any>) => void;
+  unobserveCommit(f: (plan: ObservedDripPlan) => void): (p: Prop<any>) => void;
 
   /** fv からの「更新計画」を受け取り、適切な境界で commit する（or スケジュールする） */
-  submit(plan: DripPlan): Promise<any>;
+  submitPlan(plan: DripPlan): Promise<any>;
 
 };
 
@@ -203,15 +203,12 @@ export const createFV = (rt: FVRuntime) => {
   const PROP_BRIDGE_RECORD = new Map<Prop<any>, PropBridge[]>();
 
   /**
-   * Plan を受けて DOM を更新する（runtime.observe から呼ばれる）
+   * Plan を受けて DOM を更新する（runtime.observeCommit から呼ばれる）
    */
   const update = (plan: ObservedDripPlan) => {
 
-    // 検索用（重複の“解決”意図は持たない。conflictはfp側がthrowする前提）
-    const effectMap = new Map(plan);
-
     // DOMに関係するPropを残してガベージコレクト
-    const update_target = [...effectMap.keys()].flatMap((p) => PROP_BRIDGE_RECORD.get(p) || []);
+    const update_target = [...plan.keys()].flatMap((p) => PROP_BRIDGE_RECORD.get(p) || []);
 
     const isGCTarget = (a: PropBridge) =>
       !a.isConnected() || update_target.some((b) => b.contains(a) && a !== b);
@@ -224,10 +221,10 @@ export const createFV = (rt: FVRuntime) => {
     });
 
     // メモリに残ったbridgeだけでアップデートする
-    effectMap.forEach((next, p) => {
+    plan.forEach((next, p) => {
       const bridges = PROP_BRIDGE_RECORD.get(p);
       if (!bridges) {
-        rt.unobserve(update)(p);
+        rt.unobserveCommit(update)(p);
         return;
       }
       const prev = p() as any;
@@ -238,7 +235,7 @@ export const createFV = (rt: FVRuntime) => {
   /**
    * runtime が返す「このPropを監視対象にする」関数
    */
-  const registerProp = rt.observe(update);
+  const registerProp = rt.observeCommit(update);
 
   /**
    * PropBridgeを内部レコードに記録する。
@@ -258,7 +255,7 @@ export const createFV = (rt: FVRuntime) => {
   };
 
   /**
-   * Dripper をDOMイベントリスナーに変換する（実行は runtime.submit に委譲）
+   * Dripper をDOMイベントリスナーに変換する（実行は runtime.submitPlan に委譲）
    */
 const listenerForSubmit =
   <A extends Event>(d: Dripper<A>) =>
@@ -291,7 +288,7 @@ const listenerForSubmit =
     }
 
     // interface が保証するのは「commit完了のPromise」
-    rt.submit(plan)
+    rt.submitPlan(plan)
       .then(() => {
         target.dispatchEvent(
           new CustomEvent("blooky-commit-completed", {
@@ -421,7 +418,7 @@ const listenerForSubmit =
 
   /**
    * PropとDOMの一般的な属性をバインドするクラス。
-   * Dripperの場合、listenerForSubmit で runtime.submit へ委譲する listener を生成する。
+   * Dripperの場合、listenerForSubmit で runtime.submitPlan へ委譲する listener を生成する。
    */
   class AttrPropBridge extends AbstractAttrPropBridge<JSHTMLAttrSource> {
     generatedListener?: EventListenerOrEventListenerObject;
