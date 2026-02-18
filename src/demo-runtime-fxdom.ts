@@ -1,6 +1,10 @@
 import { RETURN_VALUE, prepare, execute } from "./blooky-fx";
 import { fxdom, FxEffectElement } from "./blooky-fxdom";
 import type { ExecutionHandle, ExecutionStep } from "./blooky-fx-types";
+import { createFV } from "./blooky-fv";
+import { clock } from "./runtime/time";
+
+const { prime, jshtml } = createFV(clock);
 
 const runButton = document.getElementById("run") as HTMLButtonElement | null;
 const cancelButton = document.getElementById("cancel") as HTMLButtonElement | null;
@@ -174,70 +178,123 @@ const stepLogger = (step: ExecutionStep) => {
   );
 };
 
-const el = (tag: string, attrs?: Record<string, string>, children: Element[] = []): Element => {
-  const node = document.createElement(tag);
-  if (attrs) {
-    for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
-  }
-  if (children.length) node.append(...children);
-  return node;
+type FxFlowContext = Record<string, unknown> & {
+  record: (message: string) => string;
+  loopTick: () => number;
+  loopContinue: () => boolean;
+  finalize: () => Record<string, unknown>;
+  mode: string;
+  featureEnabled: boolean;
+  confirmTarget: string;
+  yieldInput: () => Record<string, unknown>;
+  sequenceStartMessage: string;
+  parallelAMessage: string;
+  parallelBMessage: string;
+  raceFastMessage: string;
+  raceSlowAMessage: string;
+  raceSlowBMessage: string;
+  conditionTrueMessage: string;
+  conditionFalseMessage: string;
+  switchSafeMessage: string;
+  switchFastMessage: string;
+  switchDefaultMessage: string;
+  yieldApproveMessage: string;
+  yieldRejectMessage: string;
+  yieldUnknownMessage: string;
 };
 
-const buildFlowElement = (): FxEffectElement => {
-  const raceFast = el("fx-sequence", { id: "raceFast" }, [
-    el("fx-wait", { ms: "120" }),
-    el("fx-call", { fn: "record", arg: "raceFastMessage", id: "raceFastCall" }),
-  ]);
-  const raceSlowA = el("fx-sequence", { id: "raceSlowA" }, [
-    el("fx-wait", { ms: "360" }),
-    el("fx-call", { fn: "record", arg: "raceSlowAMessage", id: "raceSlowACall" }),
-  ]);
-  const raceSlowB = el("fx-sequence", { id: "raceSlowB" }, [
-    el("fx-wait", { ms: "260" }),
-    el("fx-call", { fn: "record", arg: "raceSlowBMessage", id: "raceSlowBCall" }),
-  ]);
+const FxFlow = prime((ctx: FxFlowContext) => ({
+  "fx-effect": [
+    { "fx-call": jshtml.$({ fn: ctx.record, arg: ctx.sequenceStartMessage, id: "startCall" }) },
+    {
+      "fx-parallel": [
+        {
+          "fx-sequence": [
+            { "fx-wait": jshtml.$({ ms: 80 }) },
+            { "fx-call": jshtml.$({ fn: ctx.record, arg: ctx.parallelAMessage, id: "parallelA" }) },
+          ],
+          $: { id: "parallelBranchA" },
+        },
+        {
+          "fx-sequence": [
+            { "fx-wait": jshtml.$({ ms: 180 }) },
+            { "fx-call": jshtml.$({ fn: ctx.record, arg: ctx.parallelBMessage, id: "parallelB" }) },
+          ],
+          $: { id: "parallelBranchB" },
+        },
+      ],
+      $: { id: "parallelBlock" },
+    },
+    {
+      "fx-race": [
+        {
+          "fx-sequence": [
+            { "fx-wait": jshtml.$({ ms: 360 }) },
+            { "fx-call": jshtml.$({ fn: ctx.record, arg: ctx.raceSlowAMessage, id: "raceSlowACall" }) },
+          ],
+          $: { id: "raceSlowA" },
+        },
+        {
+          "fx-sequence": [
+            { "fx-wait": jshtml.$({ ms: 120 }) },
+            { "fx-call": jshtml.$({ fn: ctx.record, arg: ctx.raceFastMessage, id: "raceFastCall" }) },
+          ],
+          $: { id: "raceFast" },
+        },
+        {
+          "fx-sequence": [
+            { "fx-wait": jshtml.$({ ms: 260 }) },
+            { "fx-call": jshtml.$({ fn: ctx.record, arg: ctx.raceSlowBMessage, id: "raceSlowBCall" }) },
+          ],
+          $: { id: "raceSlowB" },
+        },
+      ],
+      $: { id: "raceBlock" },
+    },
+    {
+      "fx-if": [
+        { "fx-call": jshtml.$({ slot: "then", fn: ctx.record, arg: ctx.conditionTrueMessage, id: "condTrue" }) },
+        { "fx-call": jshtml.$({ slot: "else", fn: ctx.record, arg: ctx.conditionFalseMessage, id: "condFalse" }) },
+      ],
+      $: { when: ctx.featureEnabled, id: "conditionBlock" },
+    },
+    {
+      "fx-switch": [
+        { "fx-call": jshtml.$({ slot: "safe", fn: ctx.record, arg: ctx.switchSafeMessage, id: "modeSafe" }) },
+        { "fx-call": jshtml.$({ slot: "fast", fn: ctx.record, arg: ctx.switchFastMessage, id: "modeFast" }) },
+        { "fx-call": jshtml.$({ slot: "default", fn: ctx.record, arg: ctx.switchDefaultMessage, id: "modeDefault" }) },
+      ],
+      $: { by: ctx.mode, id: "switchBlock" },
+    },
+    {
+      "fx-loop": [
+        {
+          "fx-sequence": [
+            { "fx-call": jshtml.$({ fn: ctx.loopTick, id: "loopTickCall" }) },
+            { "fx-wait": jshtml.$({ ms: 60 }) },
+          ],
+          $: { id: "loopBody" },
+        },
+      ],
+      $: { while: ctx.loopContinue, "max-iterations": 8, id: "loopBlock" },
+    },
+    { "fx-yield": jshtml.$({ for: ctx.confirmTarget, value: ctx.yieldInput, id: "confirm" }) },
+    {
+      "fx-switch": [
+        { "fx-call": jshtml.$({ slot: "approve", fn: ctx.record, arg: ctx.yieldApproveMessage, id: "yieldApproved" }) },
+        { "fx-call": jshtml.$({ slot: "reject", fn: ctx.record, arg: ctx.yieldRejectMessage, id: "yieldRejected" }) },
+        { "fx-call": jshtml.$({ slot: "default", fn: ctx.record, arg: ctx.yieldUnknownMessage, id: "yieldUnknown" }) },
+      ],
+      $: { by: "#confirm", id: "yieldSwitch" },
+    },
+    { "fx-return": jshtml.$({ value: ctx.finalize, id: "finalReturn" }) },
+  ],
+  $: { id: "root" },
+}));
 
-  const root = el("fx-effect", { id: "root" }, [
-    el("fx-call", { fn: "record", arg: "sequenceStartMessage", id: "startCall" }),
-    el("fx-parallel", { id: "parallelBlock" }, [
-      el("fx-sequence", { id: "parallelBranchA" }, [
-        el("fx-wait", { ms: "80" }),
-        el("fx-call", { fn: "record", arg: "parallelAMessage", id: "parallelA" }),
-      ]),
-      el("fx-sequence", { id: "parallelBranchB" }, [
-        el("fx-wait", { ms: "180" }),
-        el("fx-call", { fn: "record", arg: "parallelBMessage", id: "parallelB" }),
-      ]),
-    ]),
-    el("fx-race", { id: "raceBlock" }, [raceSlowA, raceFast, raceSlowB]),
-    el("fx-if", { when: "featureEnabled", id: "conditionBlock" }, [
-      el("fx-call", { slot: "then", fn: "record", arg: "conditionTrueMessage", id: "condTrue" }),
-      el("fx-call", { slot: "else", fn: "record", arg: "conditionFalseMessage", id: "condFalse" }),
-    ]),
-    el("fx-switch", { by: "mode", id: "switchBlock" }, [
-      el("fx-call", { slot: "safe", fn: "record", arg: "switchSafeMessage", id: "modeSafe" }),
-      el("fx-call", { slot: "fast", fn: "record", arg: "switchFastMessage", id: "modeFast" }),
-      el("fx-call", { slot: "default", fn: "record", arg: "switchDefaultMessage", id: "modeDefault" }),
-    ]),
-    el("fx-loop", { while: "loopContinue", "max-iterations": "8", id: "loopBlock" }, [
-      el("fx-sequence", { id: "loopBody" }, [
-        el("fx-call", { fn: "loopTick", id: "loopTickCall" }),
-        el("fx-wait", { ms: "60" }),
-      ]),
-    ]),
-    el("fx-yield", { for: "confirmTarget", value: "yieldInput", id: "confirm" }),
-    el("fx-switch", { by: "#confirm", id: "yieldSwitch" }, [
-      el("fx-call", { slot: "approve", fn: "record", arg: "yieldApproveMessage", id: "yieldApproved" }),
-      el("fx-call", { slot: "reject", fn: "record", arg: "yieldRejectMessage", id: "yieldRejected" }),
-      el("fx-call", { slot: "default", fn: "record", arg: "yieldUnknownMessage", id: "yieldUnknown" }),
-    ]),
-    el("fx-return", { value: "finalize", id: "finalReturn" }),
-  ]);
+const buildFlowElement = (ctx: FxFlowContext): FxEffectElement => FxFlow(ctx) as FxEffectElement;
 
-  return root as FxEffectElement;
-};
-
-const makeInitialContext = (): Record<string, unknown> => {
+const makeInitialContext = (): FxFlowContext => {
   const loopLimit = Math.max(1, Math.min(8, Number(loopLimitInput.value) || 3));
   const state: DemoState = {
     startedAt: new Date().toISOString(),
@@ -293,7 +350,7 @@ const makeInitialContext = (): Record<string, unknown> => {
     yieldApproveMessage: "yield:approve",
     yieldRejectMessage: "yield:reject",
     yieldUnknownMessage: "yield:unknown",
-  };
+  } as FxFlowContext;
 };
 
 const setRunning = (running: boolean) => {
@@ -313,10 +370,11 @@ const startScenario = async () => {
   setRunning(true);
   appendLog("runtime modules: runner + fsm + dispatcher + registry + profile-dom-local", { info: true });
 
-  const fxEffect = buildFlowElement();
+  const context = makeInitialContext();
+  const fxEffect = buildFlowElement(context);
   mountEl.replaceChildren(fxEffect);
 
-  const prepared = prepare(fxEffect.toFxNote(), makeInitialContext(), { onStep: stepLogger });
+  const prepared = prepare(fxEffect.toFxNote(), context, { onStep: stepLogger });
   activeHandle = execute(prepared);
 
   try {

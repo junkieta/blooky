@@ -458,104 +458,14 @@ class FxContextElement extends EffectElement {
 }
 
 /**
- * フロー実行の起点 (prepare/execute) となるカスタム要素。
- * 接続時に prepare され、必要に応じて execute を明示的に呼び出して実行する。
+ * フロー宣言のルートとなるカスタム要素。
+ * contextの提供機能を有する。
  */
 
 class FxEffectElement extends FxContextElement {
   
-  protected _execContext?: Partial<ExecContext> | undefined;
-  protected _preparedFx?: PreparedFx;
-  protected _handle?: ExecutionHandle;
-  
-  // 🆕 ステップハンドラの追加
-  protected _stepHandlers: Set<(step: ExecutionStep) => void> = new Set();
-
   [JSHTML_ELEMENT_HANDLER](context?: AppContext) {
     if (context) this.setContext(context);
-  }
-
-  // 🆕 ステップイベントのリスナー登録
-  addStepListener(handler: (step: ExecutionStep) => void) {
-    this._stepHandlers.add(handler);
-  }
-
-  removeStepListener(handler: (step: ExecutionStep) => void) {
-    this._stepHandlers.delete(handler);
-  }
-
-  prepare(force = false) {
-    if (!force && this._preparedFx) {
-      return this._preparedFx;
-    }
-    
-    const node = this.toFxNote();
-    
-    // 🆕 onStep コールバックを ExecContext に追加
-    const execContext: Partial<ExecContext> = {
-      ...this._execContext,
-      onStep: (step: ExecutionStep) => {
-        // カスタムイベントを発火
-        this.dispatchEvent(new CustomEvent('fx-step', {
-          detail: step,
-          bubbles: true
-        }));
-        
-        // 登録されたハンドラを呼び出し
-        this._stepHandlers.forEach(handler => handler(step));
-      }
-    };
-    
-    this._preparedFx = prepare(node, this.context, execContext);
-    return this._preparedFx;
-  }
-
-  execute() {
-    if (this._handle) {
-      this._handle.cancel();
-    }
-    
-    const prepared = this._preparedFx || this.prepare();
-    
-    // 🆕 実行開始イベント
-    this.dispatchEvent(new CustomEvent('fx-execution-start', {
-      detail: { executionId: prepared.execContext.executionId },
-      bubbles: true
-    }));
-    
-    this._handle = execute(prepared);
-    
-    // 🆕 実行完了時の処理
-    this._handle.done
-      .then((finalContext) => {
-        this.dispatchEvent(new CustomEvent('fx-execution-complete', {
-          detail: { 
-            executionId: prepared.execContext.executionId,
-            context: finalContext 
-          },
-          bubbles: true
-        }));
-      })
-      .catch((error) => {
-        this.dispatchEvent(new CustomEvent('fx-execution-error', {
-          detail: { 
-            executionId: prepared.execContext.executionId,
-            error 
-          },
-          bubbles: true
-        }));
-      });
-    
-    return this._handle;
-  }
-
-  connectedCallback() {
-    this.prepare();
-  }
-
-  disconnectedCallback() {
-    console.log('[fxdom] FxEffectElement: disconnectedCallback');
-    this._handle?.cancel();
   }
 
 }
