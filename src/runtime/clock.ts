@@ -156,7 +156,7 @@ const advanceClock = () => {
     clockRunning = 0;
     if (fatalState) return;
 
-    if (!tickQueue.length && !clockObservers.size) return;
+    if (!tickQueue.length && !clockObservers.size && !tickObservers.size) return;
 
     const reservations = tickQueue.splice(0);
 
@@ -179,20 +179,21 @@ const advanceClock = () => {
     // 3) Bridge Tick Payload を確定（pre-commit）
     const observedTick = buildObservedTick(commitPlanMap);
 
-    // 3) ObservedPlan（subset view）を通知（pre-commit）
+    // 3) ObservedTick を通知（pre-commit）
     const tickObsErrors = notifyTickObservers(observedTick);
     if (tickObsErrors.length) {
       console.error("bridgeTickObserver: thrown errors", ...tickObsErrors);
       // 隔離方針：observer例外は commit 成否に影響させない
     }
 
+    // 4) ObservedPlan（subset view）を通知（pre-commit）
     const obsErrors = notifyClockObservers(commitPlanMap);
     if (obsErrors.length) {
       console.error("clockObserver: thrown errors", ...obsErrors);
       // 隔離方針：observer例外は commit 成否に影響させない
     }
 
-    // 4) commit（本来 throw しない前提。throw したら停止級）
+    // 5) commit（本来 throw しない前提。throw したら停止級）
     try {
       commit(commitIntent);
     } catch (err) {
@@ -201,7 +202,7 @@ const advanceClock = () => {
       enterFatalState(fatal); return;
     }
 
-    // 5) resolve（commit 成功）
+    // 6) resolve（commit 成功）
     reservations.forEach(({ resolve }) => resolve(commitIntent));
 
     advanceClock();

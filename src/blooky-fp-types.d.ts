@@ -33,7 +33,12 @@ export type Vertex = {
 
 
 export type PropPlan<A> = [Prop<A>, A];
-export type DripPlan = PropPlan<any>[];
+export type DripPlan = 
+  |  PropPlan<any>[] 
+  | (PropPlan<any>[] & {
+    dripper: DripperStream<any>,
+    value: any
+  });
 
 // Informative / internal
 export type FlowingState = [PropPlan<unknown>[], [MergedStream<any>, any][]];

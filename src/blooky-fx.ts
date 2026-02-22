@@ -16,6 +16,8 @@ import { prepare as prepareImpl, execute as executeImpl, FxRefSymbol } from "./r
 import { createRegistry, registerDefault } from "./runtime/registry";
 import { createDefaultProfile } from "./runtime/profile";
 import { createBrowserLocalProfile } from "./runtime/profile-dom-local";
+import { DripPlan } from "./blooky-fp-types";
+import { clock } from "./runtime/clock";
 
 // registry は1回だけ作る
 const registry = createRegistry();
@@ -30,10 +32,14 @@ export const prepare = (
 };
 
 export const execute = (prepared: PreparedFx): ExecutionHandle => {
+  const depends = {
+    resolve: prepared.execContext.resolve,
+    commit: (plan: DripPlan) => clock.submitPlan(plan)
+  };
   const profile =
     typeof document !== "undefined"
-      ? createBrowserLocalProfile({ resolve: prepared.execContext.resolve })
-      : createDefaultProfile({ resolve: prepared.execContext.resolve });
+      ? createBrowserLocalProfile(depends)
+      : createDefaultProfile(depends);
   return executeImpl({ prepared, registry, profile });
 };
 

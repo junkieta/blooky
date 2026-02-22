@@ -2,7 +2,7 @@ import type { CancelToken, FxRef } from "../blooky-fx-types";
 import type { PerfCtx, YieldConditionRefV1, YieldTargetRefV1 } from "./registry";
 import type { RunnerProfile, YieldSession, EffectOutcome } from "./profile";
 import { createDefaultProfile } from "./profile";
-import { Prop } from "../blooky-fp-types";
+import { DripPlan, Prop } from "../blooky-fp-types";
 import { isFxRefKey } from "./engine";
 
 type LocalTarget =
@@ -80,10 +80,11 @@ const waitCancel = async (cancelToken: CancelToken) => {
 
 export const createBrowserLocalProfile = (deps: {
   resolve: <T>(ref: FxRef<T>) => Prop<T>;
+  commit: (plan: DripPlan) => Promise<void>;
   getTemplateById?: (id: string) => HTMLTemplateElement | null;
   hub?: LocalYieldHub;
 }): RunnerProfile => {
-  const base = createDefaultProfile({ resolve: deps.resolve });
+  const base = createDefaultProfile({ resolve: deps.resolve, commit: deps.commit });
 
   const hub = deps.hub ?? new LocalYieldHub();
   const getTemplateById = deps.getTemplateById ?? ((id) => document.getElementById(id) as any);

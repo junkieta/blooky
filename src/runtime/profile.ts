@@ -1,4 +1,5 @@
-import { Prop } from "../blooky-fp-types";
+import { drip } from "../blooky-fp";
+import { DripperStream, DripPlan, Prop } from "../blooky-fp-types";
 import type { FxNote, FxRef, CancelToken } from "../blooky-fx-types";
 import type { PerfCtx, YieldConditionRefV1 } from "./registry";
 
@@ -27,10 +28,19 @@ export interface RunnerProfile {
 
   projectEffect(ref: unknown, ctx: PerfCtx): unknown;
   applyEffect(ref: unknown, ctx: PerfCtx): Promise<EffectOutcome>;
+
+  /**
+   * note の exit 境界で呼ばれる（note と note の間）
+   * - done が DripperStream を参照している場合だけ FRP に接続する
+   * - 呼び出し側（runner）は await する（タイムライン同期のため）
+   */
+  applyExitBoundary(note: FxNote, ctx: PerfCtx, result: unknown, meta?: { terminated?: boolean }): Promise<void>;
+
 }
 
 export const createDefaultProfile = (deps: {
   resolve: <T>(ref: FxRef<T>) => Prop<T>;
+  commit: (plan: DripPlan) => Promise<void>
   // yield は未実装（ブラウザ向け/remote向けは別profileで差し替え）
 }): RunnerProfile => {
   const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -93,6 +103,20 @@ export const createDefaultProfile = (deps: {
     }
   };
 
+  const applyExitBoundary = async(note: FxNote, ctx: PerfCtx, result: unknown) => {
+    // 1) Context 公開
+    if(note.id) {
+      ctx.appContext["#"+note.id] = result;
+    }
+    // 2) done があれば FRP 接続（必要なときだけ）
+    const done = (note as any).done;
+    if (done !== undefined) {
+      const dripper = resolveRef<DripperStream<any>>(done, ctx);
+      await deps.commit(drip(result)(dripper));
+    }
+  };
+
+
   return {
     resolveRef,
     resolveSelection,
@@ -101,5 +125,9 @@ export const createDefaultProfile = (deps: {
     getYieldResult,
     projectEffect,
     applyEffect,
+    applyExitBoundary
   };
+
+  
 };
+

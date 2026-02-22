@@ -178,7 +178,6 @@ export function execute(args: {
         });
 
         emit({ phase: "exit", note: note, data: { result: value } });
-        if (note.id) (ctx.appContext as any)["#" + note.id] = value;
         return value;
       }
 
@@ -190,7 +189,7 @@ export function execute(args: {
       for (const ev of sem(note, ctx)) {
         fsm.onEvent(ev);
 
-        const r = await dispatchEvent(ev, {
+        const r = await dispatchSemEvent(ev, {
           profile,
           ctx,
           cancelToken,
@@ -210,12 +209,13 @@ export function execute(args: {
       }
 
       emit({ phase: "exit", note: note, data: { result: final } });
-      if (note.id) (ctx.appContext as any)["#" + note.id] = final;
+      // note と note の間（exit直後）で done 境界処理
+      await profile.applyExitBoundary(note, ctx, final);
       return final;
     } catch (e) {
       if (e instanceof Terminated) {
         emit({ phase: "exit", note: note, data: { result: e.value, terminated: true } });
-        if (note.id) (ctx.appContext as any)["#" + note.id] = e.value;
+        await profile.applyExitBoundary(note, ctx, e.value);
         throw e;
       }
 
@@ -308,7 +308,7 @@ export type DispatchDeps = {
 const isYieldV1 = (u: unknown): u is YieldConditionRefV1 =>
   !!u && typeof u === "object" && (u as any).kind === "yield-v1";
 
-const dispatchEvent = async (ev: SemanticEvent, deps: DispatchDeps) => {
+const dispatchSemEvent = async (ev: SemanticEvent, deps: DispatchDeps) => {
   if (deps.cancelToken.cancelled()) throw new Cancelled(deps.cancelToken.reason ?? "user");
 
   switch (ev.type) {

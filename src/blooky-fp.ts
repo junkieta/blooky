@@ -374,7 +374,7 @@ const flowLazy = <A>(v:A) => (s:Stream<A>) : FlowingState => {
  * @param value - 流し込む値
  * @returns Dripperを受け取りDripPlanを返す関数
  */
-const drip = <A>(value:A) => (dripper:DripperStream<A>) : DripPlan => flowLazy(value)(dripper)[0];
+const drip = <A>(value:A) => (dripper:DripperStream<A>) : DripPlan => Object.assign(flowLazy(value)(dripper)[0], { dripper,value });
 
 /**
  * DripPlanの競合を収集する
