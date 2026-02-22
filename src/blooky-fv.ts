@@ -667,7 +667,9 @@ const listenerForSubmit =
         }
       }
 
-      if (children) elm.append(build(children));
+      if (children) {
+        (elm.tagName === "TEMPLATE" ? (elm as HTMLTemplateElement).content : elm).append(build(children));
+      }
 
       // カスタム要素のJSHTML_ELEMENT_HANDLERフックを実行
       if (elmClass && (JSHTML_ELEMENT_HANDLER as any) in (elm as any)) (elm as any)[JSHTML_ELEMENT_HANDLER](context);
