@@ -14,9 +14,9 @@ export type ObservedTick = {
 type TickObserver = (tick: ObservedTick) => void;
 
 type Clock = Prop<number> & FVRuntime & {
-    observeTick: (f: TickObserver) => () => void;
-    unobserveTick: (f: TickObserver) => void;
-  };
+  observeTick: (f: TickObserver) => () => void;
+  unobserveTick: (f: TickObserver) => void;
+};
 
 type FatalHandler = (error: CommitExecutionError) => void;
 
@@ -128,7 +128,7 @@ const buildObservedTick = (commitPlan: CommitDripPlan): ObservedTick => {
   };
 };
 
-const notifyBridgeTickObservers = (observedTick: ObservedTick): Error[] => {
+const notifyTickObservers = (observedTick: ObservedTick): Error[] => {
   const errors: Error[] = [];
   tickObservers.forEach((f) => {
     try {
@@ -180,7 +180,7 @@ const advanceClock = () => {
     const observedTick = buildObservedTick(commitPlanMap);
 
     // 3) ObservedPlan（subset view）を通知（pre-commit）
-    const tickObsErrors = notifyBridgeTickObservers(observedTick);
+    const tickObsErrors = notifyTickObservers(observedTick);
     if (tickObsErrors.length) {
       console.error("bridgeTickObserver: thrown errors", ...tickObsErrors);
       // 隔離方針：observer例外は commit 成否に影響させない

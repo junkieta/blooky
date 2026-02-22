@@ -225,14 +225,14 @@ Semantics は：
 
 #### 4.4.1 Structural Semantics（構造・制御）
 
-| kind        | 分類         | SubNotes | Semantics が発行してよい Event               | note.data 最小 |
-| ----------- | ---------- | -------- | ------------------------------------- | ------------ |
-| `sequence`  | Structural | children | `result`（任意）             | なし           |
-| `parallel`  | Structural | children | `result`（任意）                  | なし           |
-| `race`      | Structural | children | `result`（任意）                  | なし           |
+| kind        | 分類       | SubNotes | Semantics が発行してよい Event        | note.data 最小 |
+| ----------- | ---------- | -------- | ------------------------------------- | -------------- |
+| `sequence`  | Structural | children | `result`（任意）                      | なし           |
+| `parallel`  | Structural | children | `result`（任意）                      | なし           |
+| `race`      | Structural | children | `result`（任意）                      | なし           |
 | `loop`      | Structural | body     | `result`（任意）, `terminate`（任意） | 任意           |
-| `condition` | Structural | branches | `result`（then / else のいずれか）             | `test`（ref）  |
-| `switch`    | Structural | cases    | `result`（選択された case）                    | `key`（ref）   |
+| `condition` | Structural | branches | `result`（then / else のいずれか）    | `test`（ref）  |
+| `switch`    | Structural | cases    | `result`（選択された case）           | `key`（ref）   |
 
 **規範：**
 
@@ -244,11 +244,11 @@ Semantics は：
 
 #### 4.4.2 Execution / Boundary Semantics（実行・境界）
 
-| kind    | 分類        | SubNotes | Semantics が発行してよい Event | note.data 最小                        |
-| ------- | --------- | -------- | ----------------------- | ----------------------------------- |
-| `call`  | Execution | ❌ leaf   | `result`, `effect`（任意）  | `fn`（ref）, `args`（ref/serializable） |
-| `wait`  | Boundary  | ❌ leaf   | `suspend`               | `until`（opaque condition）           |
-| `yield` | Boundary  | ❌ leaf   | `suspend`               | `score`（ref）, `input`（ref）          |
+| kind    | 分類      | SubNotes | Semantics が発行してよい Event | note.data 最小                    |
+| ------- | --------- | -------- | ------------------------- | -------------------------------------- |
+| `call`  | Execution | ❌ leaf | `result`, `effect`（任意）| `fn`（ref）, `args`（ref/serializable） |
+| `wait`  | Boundary  | ❌ leaf | `suspend`                 | `until`（opaque condition）             |
+| `yield` | Boundary  | ❌ leaf | `suspend`                 | `score`（ref）, `input`（ref）          |
 
 **規範：**
 
@@ -260,10 +260,10 @@ Semantics は：
 
 #### 4.4.3 Terminal / Utility Semantics（終端・補助）
 
-| kind     | 分類       | SubNotes | Semantics が発行してよい Event            | note.data 最小 |
-| -------- | -------- | -------- | ---------------------------------- | ------------ |
-| `return` | Terminal | ❌ leaf   | `terminate(value)`                 | `value`（ref） |
-| `none`   | Utility  | ❌ leaf   | （何も発行しない）/ `result(undefined)`（任意） | なし           |
+| kind     | 分類     | SubNotes | Semantics が発行してよい Event                   | note.data 最小 |
+| -------- | -------- | -------- | ------------------------------------------------ | -------------- |
+| `return` | Terminal | ❌ leaf  | `terminate(value)`                              | `value`（ref） |
+| `none`   | Utility  | ❌ leaf  | （何も発行しない）/ `result(undefined)`（任意） | なし           |
 
 **規範：**
 

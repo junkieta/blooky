@@ -11,10 +11,8 @@ import type {
   FxRefKey
 } from "../blooky-fx-types";
 import { RETURN_VALUE } from "../blooky-fx";
-import type { Registry, PerfCtx } from "./registry";
+import type { Registry, PerfCtx, SemanticEvent, StepSink, YieldConditionRefV1 } from "./registry";
 import type { RunnerProfile } from "./profile";
-import { RunnerFSM } from "./fsm";
-import { dispatchEvent, Terminated, Cancelled } from "./dispatcher";
 import { Prop } from "../blooky-fp-types";
 
 const NotResolved = Symbol.for("NotResolved");
@@ -285,3 +283,138 @@ function flatten(n: FxNote): FxNote[] {
       return [n];
   }
 }
+
+export class Terminated extends Error {
+  readonly name = "Terminated";
+  constructor(readonly value: unknown) {
+    super("Performance terminated");
+  }
+}
+
+export class Cancelled extends Error {
+  readonly name = "Cancelled";
+  constructor(readonly reason: string) {
+    super(`Execution cancelled: ${reason}`);
+  }
+}
+
+export type DispatchDeps = {
+  profile: RunnerProfile;
+  ctx: PerfCtx;
+  cancelToken: CancelToken;
+  emit: StepSink;
+};
+
+const isYieldV1 = (u: unknown): u is YieldConditionRefV1 =>
+  !!u && typeof u === "object" && (u as any).kind === "yield-v1";
+
+const dispatchEvent = async (ev: SemanticEvent, deps: DispatchDeps) => {
+  if (deps.cancelToken.cancelled()) throw new Cancelled(deps.cancelToken.reason ?? "user");
+
+  switch (ev.type) {
+    case "effect": {
+      const projected = deps.profile.projectEffect(ev.ref, deps.ctx);
+      deps.emit({ phase: "effect", note: deps.ctx.note, data: projected });
+
+      const applied = await deps.profile.applyEffect(ev.ref, deps.ctx);
+      if (applied.kind === "result") {
+        deps.emit({ phase: "result", note: deps.ctx.note, data: { value: applied.value } });
+        return { kind: "result" as const, value: applied.value };
+      }
+      return { kind: "continue" as const };
+    }
+
+    case "suspend": {
+      // yield-v1 専用
+      if (!isYieldV1(ev.until)) throw new Error("Unsupported suspend condition (expected yield-v1)");
+      deps.emit({ phase: "suspend", note: deps.ctx.note, data: { until: ev.until } });
+
+      const session = await deps.profile.startYield(ev.until, deps.ctx);
+      await deps.profile.awaitYield(session, deps.ctx, deps.cancelToken);
+      const value = await deps.profile.getYieldResult(session, deps.ctx);
+
+      deps.emit({ phase: "resume", note: deps.ctx.note, data: { until: ev.until } });
+      deps.emit({ phase: "result", note: deps.ctx.note, data: { value } });
+
+      return { kind: "result" as const, value };
+    }
+
+    case "result":
+      {
+        const value = deps.profile.resolveRef(ev.value as FxRef<unknown>, deps.ctx);
+        deps.emit({ phase: "result", note: deps.ctx.note, data: { value } });
+        return { kind: "result" as const, value };
+      }
+
+    case "terminate":
+      {
+        const value = deps.profile.resolveRef(ev.value as FxRef<unknown>, deps.ctx);
+        deps.emit({ phase: "terminate", note: deps.ctx.note, data: { value } });
+        throw new Terminated(value);
+      }
+  }
+};
+
+type Phase = "enter" | "running" | "suspended" | "completed" | "terminated" | "cancelled";
+
+class RunnerFSM {
+  private phase: Phase = "enter";
+  private sawResult = false;
+  private sawTerminate = false;
+
+  onEnter() {
+    if (this.phase !== "enter") throw new Error("FSM violation: enter twice");
+    this.phase = "running";
+  }
+
+  onEvent(ev: SemanticEvent) {
+    if (this.phase === "completed" || this.phase === "terminated" || this.phase === "cancelled") {
+      throw new Error(`FSM violation: event after end (${ev.type})`);
+    }
+
+    switch (ev.type) {
+      case "effect":
+        if (this.sawResult || this.sawTerminate) {
+          throw new Error("FSM violation: effect after result/terminate");
+        }
+        return;
+
+      case "suspend":
+        if (this.sawResult || this.sawTerminate) {
+          throw new Error("FSM violation: suspend after result/terminate");
+        }
+        if (this.phase !== "running") {
+          throw new Error("FSM violation: suspend when not running");
+        }
+        this.phase = "suspended";
+        return;
+
+      case "result":
+        if (this.sawTerminate) throw new Error("FSM violation: result with terminate");
+        if (this.sawResult) throw new Error("FSM violation: duplicate result");
+        this.sawResult = true;
+        this.phase = "completed";
+        return;
+
+      case "terminate":
+        if (this.sawResult) throw new Error("FSM violation: terminate with result");
+        if (this.sawTerminate) throw new Error("FSM violation: duplicate terminate");
+        this.sawTerminate = true;
+        this.phase = "terminated";
+        return;
+    }
+  }
+
+  onResume() {
+    if (this.phase !== "suspended") throw new Error("FSM violation: resume without suspend");
+    this.phase = "running";
+  }
+
+  onCancel() {
+    if (this.phase === "completed" || this.phase === "terminated" || this.phase === "cancelled") {
+      throw new Error("FSM violation: cancel after end");
+    }
+    this.phase = "cancelled";
+  }
+}
+

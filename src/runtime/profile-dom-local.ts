@@ -3,7 +3,7 @@ import type { PerfCtx, YieldConditionRefV1, YieldTargetRefV1 } from "./registry"
 import type { RunnerProfile, YieldSession, EffectOutcome } from "./profile";
 import { createDefaultProfile } from "./profile";
 import { Prop } from "../blooky-fp-types";
-import { isFxRefKey } from "./runner";
+import { isFxRefKey } from "./engine";
 
 type LocalTarget =
   | { kind: "template"; el: HTMLTemplateElement }

@@ -12,9 +12,8 @@ import {
   type FxContextNote,
   type FxLoopNote,
 } from "./blooky-fx-types";
-import { prepare as prepareImpl, execute as executeImpl, FxRefSymbol } from "./runtime/runner";
-import { createRegistry } from "./runtime/registry";
-import { registerDefault } from "./runtime/register-default";
+import { prepare as prepareImpl, execute as executeImpl, FxRefSymbol } from "./runtime/engine";
+import { createRegistry, registerDefault } from "./runtime/registry";
 import { createDefaultProfile } from "./runtime/profile";
 import { createBrowserLocalProfile } from "./runtime/profile-dom-local";
 

@@ -3,7 +3,7 @@ import { fxdom, FxEffectElement } from "./blooky-fxdom";
 import type { ExecutionHandle, ExecutionStep } from "./blooky-fx-types";
 import { createFV } from "./blooky-fv";
 import { stream, map, merge, hold, accum, drip, commit } from "./blooky-fp";
-import { clock } from "./runtime/time";
+import { clock } from "./runtime/clock";
 
 const { prime, jshtml } = createFV(clock);
 

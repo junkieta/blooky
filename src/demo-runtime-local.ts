@@ -55,8 +55,8 @@ confirmTpl.addEventListener("fx-yield-start", (event: Event) => {
 const flow = fx.sequence(
   [
     fx.yield({
-      for: ref("confirm-template"),
-      value: () => ({ prompt: "apply update?", at: new Date().toISOString() }),
+      score: ref("confirm-template"),
+      input: () => ({ prompt: "apply update?", at: new Date().toISOString() }),
       id: "confirm",
     }),
     fx.return(ref("#confirm"), "final-return"),

@@ -234,8 +234,8 @@ const buildFlow = (): FxNote => {
       ),
 
       fx.yield({
-        for: ref("confirmTarget"),
-        value: ref("yieldInput"),
+        score: ref("confirmTarget"),
+        input: ref("yieldInput"),
         id: "confirm",
       }),
 

@@ -1,11 +1,9 @@
 import { JSHTML_ATTR_HANDLER, JSHTML_ELEMENT_HANDLER, JSHTMLAttrRuntime } from "./blooky-fv";
 import { 
-  prepare, 
-  execute, 
   fx, 
   ref,
 } from "./blooky-fx";
-import { FxNote, ExecContext, PreparedFx, ExecutionHandle, AppContext, FxRef, ExecutionStep } from "./blooky-fx-types";
+import { FxNote, AppContext, FxRef } from "./blooky-fx-types";
 
 type FxDomErrorCode =
   | "INVALID_JSON_ARGUMENT"
@@ -49,6 +47,11 @@ export abstract class EffectElement extends HTMLElement {
       .filter((n): n is EffectElement => n instanceof EffectElement)
       .map((n) => n.toFxNote());
   }
+
+  connectedCallback(): void {
+    // no-op; subclasses may override
+  }
+
 }
 
 // ---- コンテキストバインディング ----
@@ -291,14 +294,18 @@ class FxLoopElement extends EffectElement {
  */
 class FxYieldElement extends EffectElement {
   /** @inheritdoc */
-  static [JSHTML_ATTR_HANDLER] = { for: attrValueToContextKey, done: attrValueToContextKey }
+  static [JSHTML_ATTR_HANDLER] = {
+    score: attrValueToContextKey,
+    input: attrValueToContextKey,
+    done: attrValueToContextKey
+  }
   
   toFxNote(): FxNote {
     const id = this.id;
-    const forAttr = this.getAttribute("for");
+    const scoreAttr = this.getAttribute("score");
     
     // for属性は必須
-    if (!forAttr) {
+    if (!scoreAttr) {
       throw createFxDomError("MISSING_REQUIRED_ATTRIBUTE", "<fx-yield> requires a 'for' attribute to specify the yield key.", {
         attribute: "for",
         suggestions: ["Add the 'for' attribute to specify which key to yield to."],
@@ -309,8 +316,8 @@ class FxYieldElement extends EffectElement {
     
     let value: undefined | FxRef<any> = undefined;
     
-    if(this.hasAttribute("value")) {
-      value = ref(this.getAttribute("value")!);
+    if(this.hasAttribute("input")) {
+      value = ref(this.getAttribute("input")!);
     } else if(/\S/.test(this.textContent)) {
       const rawText = this.textContent.trim();
       value = () => {
@@ -332,8 +339,8 @@ class FxYieldElement extends EffectElement {
     }
     
     return fx.yield({
-      for: ref<string>(forAttr),
-      value,
+      score: ref<string>(scoreAttr),
+      input: value,
       done: this.hasAttribute("done") ? ref(this.getAttribute("done")!) : undefined,
       id
     });
@@ -468,6 +475,14 @@ class FxEffectElement extends FxContextElement {
     if (context) this.setContext(context);
   }
 
+  connectedCallback(): void {
+    super.connectedCallback();
+    const styleElm = document.createElement("style");
+    styleElm.textContent = ":host { display: none; }";
+    const slotElm = document.createElement("slot");
+    (this.shadowRoot || this.attachShadow({ mode: "open" }))!.replaceChildren(styleElm, slotElm);
+  }
+
 }
 
 /**
@@ -503,18 +518,20 @@ const fxdom = {
  * 組み込みのEffectElementタグ名とクラスのマップ
  */
 const EffectElementTagNameMap = {
+  // score-fx対応要素
   "fx-sequence": FxSequenceElement,
   "fx-parallel": FxParallelElement,
-  "fx-race":  FxRaceElement,
-  "fx-wait":  FxWaitElement,
-  "fx-call":  FxCallElement,
-  "fx-if":  FxIfElement,
-  "fx-switch":  FxSwitchElement,
-  "fx-loop":  FxLoopElement,
+  "fx-race": FxRaceElement,
+  "fx-wait": FxWaitElement,
+  "fx-call": FxCallElement,
+  "fx-if": FxIfElement,
+  "fx-switch": FxSwitchElement,
+  "fx-loop": FxLoopElement,
   "fx-yield": FxYieldElement,
-  "fx-context":  FxContextElement,
-  "fx-effect":  FxEffectElement,
-  "fx-return": FxReturnElement
+  "fx-return": FxReturnElement,
+  // コンテキスト適用要素
+  "fx-context": FxContextElement,
+  "fx-effect": FxEffectElement,
 }
 
 export {FxCallElement,FxWaitElement,FxEffectElement,FxIfElement,FxParallelElement,FxRaceElement,FxLoopElement,FxSequenceElement,FxSwitchElement,FxContextElement,FxReturnElement,fxdom,EffectElementTagNameMap};

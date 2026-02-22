@@ -120,8 +120,8 @@ export type FxCallNote = FxNoteBase<"call", {
   done?: FxRef<DripperStream<any>>;
 }>;
 export type FxYieldNote = FxNoteBase<"yield", { 
-  for: FxRef<FxContextNote>; 
-  value?: FxRef<any>;
+  score: FxRef<unknown>; 
+  input?: FxRef<any>;
   done?: FxRef<DripperStream<any>>;
 }>;
 export type FxContextNote = FxNoteBase<"context", { 

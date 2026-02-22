@@ -5,7 +5,7 @@ import { fxdom, EffectElementTagNameMap, dumpGraphDOT } from "./blooky-devtools"
 import { instance as viz_instance } from "@viz-js/viz";
 import { JSHTMLNodeSource } from "./blooky-fv-types";
 import { DripperStream, Prop } from "./blooky-fp-types";
-import { clock } from "./runtime/time";
+import { clock } from "./runtime/clock";
 
 const {prime,jshtml} = createFV(clock);
 
