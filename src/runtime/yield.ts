@@ -1,5 +1,6 @@
 // runtime/yield-hub-local.ts
 
+import { query } from "../blooky-fx";
 import { FxRef, PerfCtx, YieldConditionRef, YieldDriver, YieldHub, YieldLocator, YieldRequest, YieldTargetRef } from "../blooky-fx-types";
 
 type Entry =
@@ -107,25 +108,32 @@ export class TemplateYieldDriver implements YieldDriver {
 
       if (!template) throw new Error("[yield/template] template not found");
 
-      // 1) clone
+      // clone
       const frag = template.content.cloneNode(true) as DocumentFragment;
+      // 実行（input を渡したいなら appContext や attribute 経由など、方針を決める）
+      const app: Record<string | symbol, any> = Object.create(req.ctx.appContext);
 
-      // 2) 実行対象のルートを決める（fx-effect 推奨。fx-context なら入口を追加）
-      const host = document.createElement("fx-effect") as FxEffectElement;
+      // 実行対象のルートを決める（fx-effect 推奨。fx-context なら入口を追加）
+      const host = document.createElement("fx-context") as FxEffectElement;
       host.id = "YIELDED" + id;
+      host.setContext(app);
       host.appendChild(frag);
-      // 3) connected 要件のため attach
+
+      // connected 要件のため attach
       this.deps.attachParent.appendChild(host);
-      // 4) 実行（input を渡したいなら appContext や attribute 経由など、方針を決める）
-      const app: Record<string | symbol, any> = {};
+
       if (input !== undefined) (app as any)["$_"] = input;
 
-      const handle = executeByElement(host, app, /* ctx */ undefined);
-      await handle.done; // ← 例：handle.result が Promise<unknown> だと仮定
-      host.remove();
+      const handle = query(host.toFxNote(), app, {
+        resolve: req.ctx.execContext.resolve,
+        cancelToken: req.ctx.execContext.cancelToken,
+        executionId: `${req.ctx.executionId}:yield:${id}`,
+      });
+      const yieldedApp = await handle.done; // ← 例：handle.result が Promise<unknown> だと仮定
 
+      host.remove();
       // 5) resolve
-      this.deps.hub.resolve(id, app[RETURN_VALUE]);
+      this.deps.hub.resolve(id, yieldedApp[RETURN_VALUE]);
     } catch (e) {
       this.deps.hub.reject(id, e);
     }

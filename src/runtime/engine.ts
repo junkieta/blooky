@@ -351,7 +351,7 @@ const dispatchSemEvent = async (ev: SemanticEvent, deps: DispatchDeps) => {
 };
 
 const notifyStepObserver = (observers: Set<StepObserver>) => (step: ExecutionStep) => {
-  if (!observers.size) observers.forEach((observer)=>{
+  if (observers.size) observers.forEach((observer)=>{
     try {
       const maybePromise = observer(step);
       if (

@@ -93,7 +93,6 @@ export const createDefaultProfile = (deps: {
     const done = (note as any).done;
     if (done !== undefined) {
       const dripper = resolveRef<DripperStream<any>>(done, ctx);
-      console.log(done,ctx);
       await deps.commit(drip(result)(dripper));
     }
   };

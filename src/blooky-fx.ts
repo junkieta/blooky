@@ -60,8 +60,8 @@ export const execute = (prepared: PreparedFx): ExecutionHandle => {
   });
 };
 
-export const query = (node: FxNote, app: AppContext = {}, ctx?: Partial<ExecContext>) =>
-  execute(prepare(node, app, ctx));
+export const query = (note: FxNote, app: AppContext = {}, ctx?: Partial<ExecContext>) =>
+  execute(prepare(note, app, ctx));
 
 export const ref = <T = unknown>(key: string): FxRefKey =>
   ({ [FxRefSymbol]: true, key } as FxRefKey);

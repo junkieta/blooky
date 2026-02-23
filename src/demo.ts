@@ -100,8 +100,9 @@ const $selectedConfirmAnswer = pipe(
   hold("yet")
 );
 const $confirmAnswerResolved = ($selectedConfirmAnswer);
-const $confirmQuestionDialogbox = hold<JSHTMLNodeSource>(null)(map<ActivatedResult,JSHTMLNodeSource>((res) => [
-  { p: res.ok === true ? res.result : res.error.message },
+const $confirmQuestionDialogbox = hold<JSHTMLNodeSource>(null)(map<ActivatedResult,JSHTMLNodeSource>((res) => 
+[
+  { p: res.ok === true ? [res.result] : res.error.message },
   { button: "OK", $: { onclick: confirmButtonClicked$, value: "yes" } },
   { button: "Cancel", $: { onclick: confirmButtonClicked$, value: "no" } },
 ])(confirmQuestionActivated$));
@@ -151,7 +152,7 @@ const renderDot = async (dot: string) => {
 const mo = new MutationObserver((records)=>{
   const nodes = records.flatMap((r)=>Array.from(r.addedNodes));
   nodes.filter((n) => n.nodeName.toLowerCase() === "fx-effect").forEach((effect)=>{
-    executeByElement(effect as FxEffectElement);
+    executeByElement(effect as FxEffectElement, context);
   })
 });
 
