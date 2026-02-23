@@ -8,12 +8,18 @@ import type {
   CancelToken,
   FxRef,
   FxRefSymbol as FxRefSymbolDec,
-  FxRefKey
+  FxRefKey,
+  StepObserver,
+  Registry,
+  PerfCtx,
+  SemanticEvent,
+  StepSink,
+  YieldConditionRef,
+  RunnerProfile
 } from "../blooky-fx-types";
-import { RETURN_VALUE } from "../blooky-fx";
-import type { Registry, PerfCtx, SemanticEvent, StepSink, YieldConditionRefV1 } from "./registry";
-import type { RunnerProfile } from "./profile";
 import { Prop } from "../blooky-fp-types";
+
+export const RETURN_VALUE = Symbol("RETURN_VALUE");
 
 const NotResolved = Symbol.for("NotResolved");
 
@@ -105,14 +111,12 @@ export function prepare(flow: FxNote, initialAppContext: AppContext, parent?: Pa
 
   const appContext = createProxyContext(initialAppContext, localRecord);
   const cancelToken = createCancelToken(parent?.cancelToken);
-
   const execContext: ExecContext = {
     resolve:
       parent?.resolve ??
       (<T,>(ref: FxRef<T>) => defaultResolve(ref, appContext)),
     cancelToken,
     executionId: parent?.executionId ?? `exec-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    onStep: parent?.onStep,
   };
 
   return { rootNote: flow, execContext, appContext };
@@ -126,24 +130,8 @@ export function execute(args: {
   const { prepared, registry, profile } = args;
   const { rootNote, execContext, appContext } = prepared;
 
-  const emit = (step: ExecutionStep) => {
-    const onStep = execContext.onStep;
-    if (!onStep) return;
-    try {
-      const maybePromise = onStep(step);
-      if (
-        maybePromise &&
-        typeof (maybePromise as any).then === "function" &&
-        typeof (maybePromise as any).catch === "function"
-      ) {
-        (maybePromise as Promise<unknown>).catch((e) => {
-          console.error("[runner] onStep async error (isolated)", e);
-        });
-      }
-    } catch (e) {
-      console.error("[runner] onStep error (isolated)", e);
-    }
-  };
+  const stepObservers = new Set<StepObserver>();
+  const notifyStep = notifyStepObserver(stepObservers);
 
   const run = async (
     note: FxNote,
@@ -151,10 +139,15 @@ export function execute(args: {
     appCtx: Record<string | symbol, any>,
     cancelToken: CancelToken
   ): Promise<unknown> => {
-    const ctx: PerfCtx = { note, appContext: appCtx, executionId: `${parentId}:${note.type}` };
+    const ctx: PerfCtx = {
+      note,
+      execContext,
+      appContext: appCtx,
+      executionId: `${parentId}:${note.type}`
+    };
 
     const fsm = new RunnerFSM();
-    emit({ phase: "enter", note: note, data: { executionId: ctx.executionId } });
+    notifyStep({ phase: "enter", note: note, data: { executionId: ctx.executionId } });
     fsm.onEnter();
 
     try {
@@ -174,10 +167,9 @@ export function execute(args: {
             ),
           profile,
           cancelToken,
-          emit,
         });
 
-        emit({ phase: "exit", note: note, data: { result: value } });
+        notifyStep({ phase: "exit", note: note, data: { result: value } });
         return value;
       }
 
@@ -185,7 +177,6 @@ export function execute(args: {
       if (!sem) throw new Error(`No semantics for ${note.type}`);
 
       let final: unknown = undefined;
-
       for (const ev of sem(note, ctx)) {
         fsm.onEvent(ev);
 
@@ -193,7 +184,7 @@ export function execute(args: {
           profile,
           ctx,
           cancelToken,
-          emit,
+          emit: notifyStep,
         });
 
         if (ev.type === "suspend") {
@@ -208,27 +199,27 @@ export function execute(args: {
         }
       }
 
-      emit({ phase: "exit", note: note, data: { result: final } });
+      notifyStep({ phase: "exit", note: note, data: { result: final } });
       // note と note の間（exit直後）で done 境界処理
       await profile.applyExitBoundary(note, ctx, final);
       return final;
     } catch (e) {
       if (e instanceof Terminated) {
-        emit({ phase: "exit", note: note, data: { result: e.value, terminated: true } });
+        notifyStep({ phase: "exit", note: note, data: { result: e.value, terminated: true } });
         await profile.applyExitBoundary(note, ctx, e.value);
         throw e;
       }
 
       if (e instanceof Cancelled) {
         fsm.onCancel();
-        emit({ phase: "cancel", note: note, data: { reason: e.reason } });
+        notifyStep({ phase: "cancel", note: note, data: { reason: e.reason } });
         throw e;
       }
 
       if (isCancelledError(e)) {
         const reason = cancelledReasonFromError(e);
         fsm.onCancel();
-        emit({ phase: "cancel", note: note, data: { reason } });
+        notifyStep({ phase: "cancel", note: note, data: { reason } });
         throw new Cancelled(reason);
       }
 
@@ -256,6 +247,10 @@ export function execute(args: {
 
   return {
     cancel: () => execContext.cancelToken.cancel("user"),
+    observeStep: (fn:StepObserver) => {
+      stepObservers.add(fn);
+      return () => stepObservers.delete(fn);
+    },
     done,
   };
 }
@@ -305,8 +300,8 @@ export type DispatchDeps = {
   emit: StepSink;
 };
 
-const isYieldV1 = (u: unknown): u is YieldConditionRefV1 =>
-  !!u && typeof u === "object" && (u as any).kind === "yield-v1";
+const isYield = (u: unknown): u is YieldConditionRef =>
+  !!u && typeof u === "object" && (u as any).kind === "yield";
 
 const dispatchSemEvent = async (ev: SemanticEvent, deps: DispatchDeps) => {
   if (deps.cancelToken.cancelled()) throw new Cancelled(deps.cancelToken.reason ?? "user");
@@ -325,8 +320,8 @@ const dispatchSemEvent = async (ev: SemanticEvent, deps: DispatchDeps) => {
     }
 
     case "suspend": {
-      // yield-v1 専用
-      if (!isYieldV1(ev.until)) throw new Error("Unsupported suspend condition (expected yield-v1)");
+      // yield 専用
+      if (!isYield(ev.until)) throw new Error("Unsupported suspend condition (expected yield)");
       deps.emit({ phase: "suspend", note: deps.ctx.note, data: { until: ev.until } });
 
       const session = await deps.profile.startYield(ev.until, deps.ctx);
@@ -354,6 +349,26 @@ const dispatchSemEvent = async (ev: SemanticEvent, deps: DispatchDeps) => {
       }
   }
 };
+
+const notifyStepObserver = (observers: Set<StepObserver>) => (step: ExecutionStep) => {
+  if (!observers.size) observers.forEach((observer)=>{
+    try {
+      const maybePromise = observer(step);
+      if (
+        maybePromise &&
+        typeof (maybePromise as any).then === "function" &&
+        typeof (maybePromise as any).catch === "function"
+      ) {
+        (maybePromise as Promise<unknown>).catch((e) => {
+          console.error("[runner] StepObserver async error (isolated)", e);
+        });
+      }
+    } catch (e) {
+      console.error("[runner] StepObserver error (isolated)", e);
+    }
+  })
+}
+
 
 type Phase = "enter" | "running" | "suspended" | "completed" | "terminated" | "cancelled";
 
