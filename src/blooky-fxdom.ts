@@ -1,9 +1,10 @@
 import { JSHTML_ATTR_HANDLER, JSHTML_ELEMENT_HANDLER, JSHTMLAttrRuntime } from "./blooky-fv";
 import { 
   fx, 
+  query, 
   ref,
 } from "./blooky-fx";
-import { FxNote, AppContext, FxRef } from "./blooky-fx-types";
+import { FxNote, AppContext, FxRef, ExecContext } from "./blooky-fx-types";
 
 type FxDomErrorCode =
   | "INVALID_JSON_ARGUMENT"
@@ -28,6 +29,9 @@ const createFxDomError = (
 
 // ---- 抽象基底クラス ----
 
+export const defaultFxStylesheet = new CSSStyleSheet();
+defaultFxStylesheet.replaceSync(":host { display: none; }");
+
 /**
  * 副作用フローのノード (FxNote) を表現するすべてのカスタム要素の抽象基底クラス。
  */
@@ -49,7 +53,9 @@ export abstract class EffectElement extends HTMLElement {
   }
 
   connectedCallback(): void {
-    // no-op; subclasses may override
+    const shadow = (this.shadowRoot || this.attachShadow({ mode: "open" }));
+    shadow.replaceChildren(document.createElement("slot"));
+    shadow.adoptedStyleSheets = [defaultFxStylesheet];
   }
 
 }
@@ -304,11 +310,11 @@ class FxYieldElement extends EffectElement {
     const id = this.id;
     const scoreAttr = this.getAttribute("score");
     
-    // for属性は必須
+    // score属性は必須
     if (!scoreAttr) {
-      throw createFxDomError("MISSING_REQUIRED_ATTRIBUTE", "<fx-yield> requires a 'for' attribute to specify the yield key.", {
+      throw createFxDomError("MISSING_REQUIRED_ATTRIBUTE", "<fx-yield> requires a 'score' attribute to specify the yield key.", {
         attribute: "for",
-        suggestions: ["Add the 'for' attribute to specify which key to yield to."],
+        suggestions: ["Add the 'score' attribute to specify which key to yield to."],
         expected: "string (context key)",
         actual: "missing"
       });
@@ -464,11 +470,11 @@ class FxContextElement extends EffectElement {
   
 }
 
+
 /**
  * フロー宣言のルートとなるカスタム要素。
  * contextの提供機能を有する。
  */
-
 class FxEffectElement extends FxContextElement {
   
   [JSHTML_ELEMENT_HANDLER](context?: AppContext) {
@@ -477,10 +483,6 @@ class FxEffectElement extends FxContextElement {
 
   connectedCallback(): void {
     super.connectedCallback();
-    const styleElm = document.createElement("style");
-    styleElm.textContent = ":host { display: none; }";
-    const slotElm = document.createElement("slot");
-    (this.shadowRoot || this.attachShadow({ mode: "open" }))!.replaceChildren(styleElm, slotElm);
   }
 
 }
@@ -488,7 +490,7 @@ class FxEffectElement extends FxContextElement {
 /**
  * カスタム要素を定義するためのヘルパーオブジェクト。
  */
-const fxdom = {
+export const fxdom = {
 
   /**
    * 指定されたタグ名マップに基づいてカスタム要素を定義する。
@@ -514,10 +516,18 @@ const fxdom = {
 
 }
 
+export const executeByElement = (root: FxEffectElement, app: AppContext = {}, ctx?: Partial<ExecContext>) => {
+  if(root.tagName.toLowerCase() !== "fx-effect")
+    throw new Error("[ExecuteError] executeByElement needs `fx-effect` Element");
+  else if(!root.isConnected)
+    throw new Error("[ExecuteError] Element is not connected");
+  return query(root.toFxNote(), app, ctx);
+};
+
 /**
  * 組み込みのEffectElementタグ名とクラスのマップ
  */
-const EffectElementTagNameMap = {
+export const EffectElementTagNameMap = {
   // score-fx対応要素
   "fx-sequence": FxSequenceElement,
   "fx-parallel": FxParallelElement,
@@ -534,4 +544,5 @@ const EffectElementTagNameMap = {
   "fx-effect": FxEffectElement,
 }
 
-export {FxCallElement,FxWaitElement,FxEffectElement,FxIfElement,FxParallelElement,FxRaceElement,FxLoopElement,FxSequenceElement,FxSwitchElement,FxContextElement,FxReturnElement,fxdom,EffectElementTagNameMap};
+// elements
+export {FxCallElement,FxWaitElement,FxEffectElement,FxIfElement,FxParallelElement,FxRaceElement,FxLoopElement,FxSequenceElement,FxSwitchElement,FxContextElement,FxReturnElement};
