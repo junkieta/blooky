@@ -1,11 +1,12 @@
 // src/demo.ts
 import { stream, accum, merge, hold, map, remap, pipe } from "./blooky-fp";
 import { createFV } from "./blooky-fv";
-import { fxdom, EffectElementTagNameMap, dumpGraphDOT } from "./blooky-devtools";
+import { fxdom, EffectElementTagNameMap, dumpGraphDOT, executeByElement } from "./blooky-devtools";
 import { instance as viz_instance } from "@viz-js/viz";
 import { JSHTMLNodeSource } from "./blooky-fv-types";
 import { DripperStream, Prop } from "./blooky-fp-types";
 import { clock } from "./runtime/clock";
+import { FxEffectElement } from "./blooky-fxdom";
 
 const {prime,jshtml} = createFV(clock);
 
@@ -14,13 +15,14 @@ fxdom.defineEffectElements(EffectElementTagNameMap);
 
 // --- 1. 実行フローの定義 ---
 interface EffectContext {
-  confirmQuestionActivated$: DripperStream<string>,
+  confirmQuestionActivated$: DripperStream<ActivatedResult>
   $confirmAnswerResolved: Prop<string>,
   $selectedConfirmAnswer: Prop<string>,
   $triggerSave: Prop<boolean>,
   statusMessageStream$: DripperStream<string>,
   $finalMessage: Prop<string>,
-  save$: DripperStream<void>
+  save$: DripperStream<void>,
+  identity: (v:any)=>any
 }
 
 const EffectRenderer = prime(({
@@ -30,19 +32,19 @@ const EffectRenderer = prime(({
   $triggerSave,
   statusMessageStream$,
   $finalMessage,
-  save$
+  save$,
 }: EffectContext) => ({
   "fx-effect": [
     {
-      "fx-context": [
+      "template": [
         { "fx-call": jshtml.$({ fn: "identity", arg: "$_", done: confirmQuestionActivated$ }) },
         { "fx-wait": jshtml.$({ until: $confirmAnswerResolved }) },
         { "fx-return": jshtml.$({ value: $selectedConfirmAnswer }) }
-      ],
+      ],  
       $: { id: "fxConfirm" }
     },
     { "fx-wait": jshtml.$({ "until": $triggerSave }) },
-    { "fx-yield": '"Confirmation needed: Save this count?"', $: { for: "#fxConfirm", id: "confirmResult" } },
+    { "fx-yield": '"Confirmation needed: Save this count?"', $: { score: "#fxConfirm", id: "confirmResult" } },
     {
       "fx-switch": [
         {
@@ -87,7 +89,10 @@ const AppUIRenderer = prime(({ $count, increment$, decrement$, save$, $statusMes
 }));
 
 // confirm dialog
-const confirmQuestionActivated$ = stream<string>();
+type ActivatedResult = 
+  | { ok: true, result: string }
+  | { ok: false, error: Error };
+const confirmQuestionActivated$ = stream<ActivatedResult>();
 const confirmButtonClicked$ = stream<MouseEvent>();
 const $selectedConfirmAnswer = pipe(
   confirmButtonClicked$,
@@ -95,8 +100,8 @@ const $selectedConfirmAnswer = pipe(
   hold("yet")
 );
 const $confirmAnswerResolved = ($selectedConfirmAnswer);
-const $confirmQuestionDialogbox = hold<JSHTMLNodeSource>(null)(map<string,JSHTMLNodeSource>((text) => [
-  { p: text },
+const $confirmQuestionDialogbox = hold<JSHTMLNodeSource>(null)(map<ActivatedResult,JSHTMLNodeSource>((res) => [
+  { p: res.ok === true ? res.result : res.error.message },
   { button: "OK", $: { onclick: confirmButtonClicked$, value: "yes" } },
   { button: "Cancel", $: { onclick: confirmButtonClicked$, value: "no" } },
 ])(confirmQuestionActivated$));
@@ -114,7 +119,6 @@ const $statusMessage = hold('Ready.')(statusMessageStream$);
 const $finalMessage = remap<number, string>((v) => `Saved Count:${v}`)($count);
 const $colorOfCount = remap<number, string>((count) => count % 3 ? "blue" : "red")($count);
 
-
 const context = {
   increment$,
   decrement$,
@@ -130,7 +134,7 @@ const context = {
   $selectedConfirmAnswer,
   $confirmAnswerResolved,
   $confirmQuestionDialogbox,
-  identity: (v: unknown) => v,
+  identity: <V>(v: V) => v,
   log: (s: unknown) => console.log(s),
 };
 
@@ -144,6 +148,15 @@ const renderDot = async (dot: string) => {
 }
 
 // --- 5. マウント ---
+const mo = new MutationObserver((records)=>{
+  const nodes = records.flatMap((r)=>Array.from(r.addedNodes));
+  nodes.filter((n) => n.nodeName.toLowerCase() === "fx-effect").forEach((effect)=>{
+    executeByElement(effect as FxEffectElement);
+  })
+});
+
+mo.observe(document.body, { subtree: true, childList: true });
+
 document.body.append(
   AppUIRenderer(context),
   EffectRenderer(context),

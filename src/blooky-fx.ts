@@ -12,12 +12,13 @@ import {
   type FxContextNote,
   type FxLoopNote,
 } from "./blooky-fx-types";
-import { prepare as prepareImpl, execute as executeImpl, FxRefSymbol } from "./runtime/engine";
+import { prepare as prepareImpl, execute as executeImpl, FxRefSymbol, RETURN_VALUE } from "./runtime/engine";
 import { createRegistry, registerDefault } from "./runtime/registry";
 import { createDefaultProfile } from "./runtime/profile";
-import { createBrowserLocalProfile } from "./runtime/profile-dom-local";
+import { createBrowserLocalProfile, LocalYieldHub } from "./runtime/profile-dom-local";
 import { DripPlan } from "./blooky-fp-types";
 import { clock } from "./runtime/clock";
+import { TemplateYieldDriver, CompositeYieldDriver } from "./runtime/yield";
 
 // registry は1回だけ作る
 const registry = createRegistry();
@@ -32,15 +33,31 @@ export const prepare = (
 };
 
 export const execute = (prepared: PreparedFx): ExecutionHandle => {
-  const depends = {
+  const commit = (plan: DripPlan) => clock.submitPlan(plan);
+  const hub = new LocalYieldHub();
+  const drivers: any = {};
+  // template driver は DOM が必要（ただし profile は分岐不要。driver を差し替えるだけ）
+  const isBrowser = typeof document !== "undefined";
+  if (isBrowser) {
+    drivers["template"] = new TemplateYieldDriver({
+      hub,
+      attachParent: document.body,
+      getTemplateById: (id) => document.getElementById(id) as any,
+    });
+    drivers["template-el"] = drivers["template"];
+  }
+  // remote driver は transport があるなら常に注入可能
+  // drivers["remote"] = new RemoteYieldDriver({ hub, client: remoteClient });
+  const yieldDriver = new CompositeYieldDriver(drivers);
+  const profile = (isBrowser ? createBrowserLocalProfile : createDefaultProfile)({
     resolve: prepared.execContext.resolve,
-    commit: (plan: DripPlan) => clock.submitPlan(plan)
-  };
-  const profile =
-    typeof document !== "undefined"
-      ? createBrowserLocalProfile(depends)
-      : createDefaultProfile(depends);
-  return executeImpl({ prepared, registry, profile });
+    commit,
+    yieldHub: hub,
+    yieldDriver,
+  });
+  return executeImpl({
+    prepared, registry, profile
+  });
 };
 
 export const query = (node: FxNote, app: AppContext = {}, ctx?: Partial<ExecContext>) =>
@@ -103,4 +120,4 @@ export const fx = {
   }),
 };
 
-export const RETURN_VALUE = Symbol("RETURN_VALUE");
+export { RETURN_VALUE };

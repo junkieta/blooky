@@ -153,7 +153,6 @@ export interface ExecContext {
   resolve: <T>(ref: FxRef<T>) => Prop<T>;
   cancelToken: CancelToken;
   executionId?: string;
-  onStep?: (step: ExecutionStep) => void | Promise<void>;
 }
 
 // ─── PreparedFx ───
@@ -163,9 +162,12 @@ export interface PreparedFx {
   readonly appContext: AppContext;
 }
 
+export type StepObserver = (step: ExecutionStep) => void | Promise<void>
+
 // ─── ExecutionHandle ───
 export interface ExecutionHandle {
   cancel: () => void;
+  observeStep: (fn: StepObserver) => () => void
   done: Promise<AppContext>;
 }
 
@@ -173,3 +175,120 @@ export interface ExecutionHandle {
 export type FxFactoryMap = {
   [K in FxNoteType]: (...args: any[]) => Extract<FxNote, { type: K }>;
 };
+
+
+export type EffectOutcome =
+  | { kind: "none" }
+  | { kind: "result"; value: unknown };
+
+export type YieldSession = {
+  kind: "yield-session";
+  id: string;
+  until: YieldConditionRef;
+};
+
+export interface RunnerProfile {
+  resolveRef<T>(ref: FxRef<T>, ctx: PerfCtx): T;
+
+  resolveSelection(
+    note: Extract<FxNote, { type: "condition" | "switch" }>,
+    ctx: PerfCtx
+  ): FxNote | null;
+
+  // Yield lifecycle
+  startYield(until: YieldConditionRef, ctx: PerfCtx): Promise<YieldSession>;
+  awaitYield(session: YieldSession, ctx: PerfCtx, cancelToken: CancelToken): Promise<void>;
+  getYieldResult(session: YieldSession, ctx: PerfCtx): Promise<unknown>;
+
+  projectEffect(ref: unknown, ctx: PerfCtx): unknown;
+  applyEffect(ref: unknown, ctx: PerfCtx): Promise<EffectOutcome>;
+
+  /**
+   * note の exit 境界で呼ばれる（note と note の間）
+   * - done が DripperStream を参照している場合だけ FRP に接続する
+   * - 呼び出し側（runner）は await する（タイムライン同期のため）
+   */
+  applyExitBoundary(note: FxNote, ctx: PerfCtx, result: unknown, meta?: { terminated?: boolean }): Promise<void>;
+
+}
+
+
+export type ConditionRef = unknown;
+
+export type SemanticEvent =
+  | { type: "result"; value: unknown }
+  | { type: "suspend"; until: ConditionRef }
+  | { type: "effect"; ref: unknown }
+  | { type: "terminate"; value?: unknown };
+
+// ─────────────────────────────────────────────
+// Yield (remote 対応) 固定型
+// runtime は DOM 型を知らない（targetRef は opaque）
+// ─────────────────────────────────────────────
+
+export type YieldTargetRef =
+  | { kind: "local"; ref: unknown }   // 例: template-id / component-handle / anything
+  | { kind: "remote"; ref: unknown }; // 例: ws://... / remote execution handle / anything
+
+export type YieldConditionRef = {
+  kind: "yield";
+  target: YieldTargetRef;
+  input?: unknown;        // 外部入力（value）。構造は profile が解釈
+  meta?: Record<string, unknown>; // 診断用（任意）
+};
+
+export type PerfCtx = {
+  note: FxNote;
+  appContext: Record<string | symbol, any>;
+  execContext: ExecContext;
+  executionId: string;
+};
+
+export type Semantics = (note: FxNote, ctx: PerfCtx) => Generator<SemanticEvent, void, void>;
+export type RunChild = (
+  n: FxNote,
+  overrideAppContext?: Record<string | symbol, any>,
+  overrideCancelToken?: CancelToken
+) => Promise<unknown>;
+export type StepSink = (step: ExecutionStep) => void;
+
+export type StructureDeps = {
+  runChild: RunChild;
+  profile: RunnerProfile;
+  cancelToken: CancelToken;
+};
+
+export type StructureRunner = (note: FxNote, ctx: PerfCtx, deps: StructureDeps) => Promise<unknown>;
+
+export interface Registry {
+  semantics: Map<FxNote["type"], Semantics>;
+  structures: Map<FxNote["type"], StructureRunner>;
+}
+
+/** locator: yield の主権移譲先 */
+export type YieldLocator =
+  | { kind: "template"; templateId: string }                 // HTMLTemplateElement を id で
+  | { kind: "template-el"; el: HTMLTemplateElement }         // 直接参照
+  | { kind: "remote"; endpoint: string; locator: unknown }   // remote へ委譲（details は adapter 依存）
+  | { kind: "worker"; workerId: string; locator: unknown };  // worker へ委譲
+
+export type YieldRequest = {
+  id: string;
+  locator: YieldLocator;
+  input?: unknown;
+  ctx: PerfCtx;
+  /** 任意：cancel を driver 側でも参照したい場合 */
+  cancelToken?: CancelToken;
+};
+
+export interface YieldHub {
+  start(id: string): void;
+  await(id: string): Promise<void>;
+  resolve(id: string, value: unknown): void;
+  reject(id: string, error: unknown): void;
+  get(id: string): unknown;
+}
+
+export interface YieldDriver {
+  requestYield(req: YieldRequest): void | Promise<void>;
+}

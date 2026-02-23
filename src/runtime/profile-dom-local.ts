@@ -1,13 +1,8 @@
-import type { CancelToken, FxRef } from "../blooky-fx-types";
-import type { PerfCtx, YieldConditionRefV1, YieldTargetRefV1 } from "./registry";
-import type { RunnerProfile, YieldSession, EffectOutcome } from "./profile";
+import type { CancelToken, FxRef, PerfCtx, RunnerProfile, YieldConditionRef, YieldDriver, YieldHub, YieldLocator, YieldSession } from "../blooky-fx-types";
 import { createDefaultProfile } from "./profile";
 import { DripPlan, Prop } from "../blooky-fp-types";
 import { isFxRefKey } from "./engine";
 
-type LocalTarget =
-  | { kind: "template"; el: HTMLTemplateElement }
-  | { kind: "template-id"; id: string };
 
 type Deferred<T> = { promise: Promise<T>; resolve: (v: T) => void; reject: (e: unknown) => void };
 const defer = <T>(): Deferred<T> => {
@@ -17,59 +12,55 @@ const defer = <T>(): Deferred<T> => {
   return { promise, resolve, reject };
 };
 
-class LocalYieldHub {
-  private pending = new Map<string, Deferred<unknown>>();
-  private resolved = new Map<string, unknown>();
+
+type Entry =
+  | { state: "pending"; p: Promise<void>; resolve: () => void; reject: (e: unknown) => void }
+  | { state: "resolved"; value: unknown }
+  | { state: "rejected"; error: unknown };
+
+export class LocalYieldHub implements YieldHub {
+  private map = new Map<string, Entry>();
 
   start(id: string) {
-    if (this.pending.has(id) || this.resolved.has(id)) {
-      throw new Error(`Yield session already exists: ${id}`);
-    }
-    const d = defer<unknown>();
-    this.pending.set(id, d);
-    return d;
+    if (this.map.has(id)) return;
+    let _resolve!: () => void;
+    let _reject!: (e: unknown) => void;
+    const p = new Promise<void>((res, rej) => {
+      _resolve = res;
+      _reject = rej;
+    });
+    this.map.set(id, { state: "pending", p, resolve: _resolve, reject: _reject });
+  }
+
+  await(id: string): Promise<void> {
+    const e = this.map.get(id);
+    if (!e) return Promise.reject(new Error(`[yield] unknown session id: ${id}`));
+    if (e.state === "pending") return e.p;
+    return Promise.resolve();
   }
 
   resolve(id: string, value: unknown) {
-    const d = this.pending.get(id);
-    if (!d) return false;
-    this.pending.delete(id);
-    this.resolved.set(id, value);
-    d.resolve(value);
-    return true;
+    const e = this.map.get(id);
+    if (!e || e.state !== "pending") return;
+    this.map.set(id, { state: "resolved", value });
+    e.resolve();
   }
 
   reject(id: string, error: unknown) {
-    const d = this.pending.get(id);
-    if (!d) return false;
-    this.pending.delete(id);
-    d.reject(error);
-    return true;
+    const e = this.map.get(id);
+    if (!e || e.state !== "pending") return;
+    this.map.set(id, { state: "rejected", error });
+    e.reject(error);
   }
 
-  async await(id: string) {
-    const d = this.pending.get(id);
-    if (!d) throw new Error(`No pending yield session: ${id}`);
-    return d.promise;
-  }
-
-  get(id: string) {
-    if (!this.resolved.has(id)) throw new Error(`No resolved yield session: ${id}`);
-    return this.resolved.get(id);
+  get(id: string): unknown {
+    const e = this.map.get(id);
+    if (!e) throw new Error(`[yield] unknown session id: ${id}`);
+    if (e.state === "resolved") return e.value;
+    if (e.state === "rejected") throw e.error;
+    throw new Error(`[yield] not ready: ${id}`);
   }
 }
-
-const resolveLocalTarget = (t: YieldTargetRefV1): LocalTarget => {
-  if (t.kind !== "local") throw new Error("not local target");
-  const r: any = t.ref;
-
-  if (typeof r === "string") return { kind: "template-id", id: r };
-  if (r instanceof HTMLTemplateElement) return { kind: "template", el: r };
-  if (r?.kind === "template" && r.el instanceof HTMLTemplateElement) return r as LocalTarget;
-  if (r?.kind === "template-id" && typeof r.id === "string") return r as LocalTarget;
-
-  throw new Error("Unsupported local yield target ref (expected {kind:'template'|'template-id', ...})");
-};
 
 const waitCancel = async (cancelToken: CancelToken) => {
   while (!cancelToken.cancelled()) {
@@ -81,66 +72,33 @@ const waitCancel = async (cancelToken: CancelToken) => {
 export const createBrowserLocalProfile = (deps: {
   resolve: <T>(ref: FxRef<T>) => Prop<T>;
   commit: (plan: DripPlan) => Promise<void>;
-  getTemplateById?: (id: string) => HTMLTemplateElement | null;
-  hub?: LocalYieldHub;
+  yieldHub?: LocalYieldHub;
+  yieldDriver: YieldDriver
+
 }): RunnerProfile => {
-  const base = createDefaultProfile({ resolve: deps.resolve, commit: deps.commit });
-
-  const hub = deps.hub ?? new LocalYieldHub();
-  const getTemplateById = deps.getTemplateById ?? ((id) => document.getElementById(id) as any);
-  const boundTemplateBridge = new WeakSet<EventTarget>();
-
-  const bindTemplateBridge = (target: EventTarget) => {
-    if (boundTemplateBridge.has(target)) return;
-    boundTemplateBridge.add(target);
-
-    target.addEventListener("fx-yield-resolve", (ev: Event) => {
-      const detail = (ev as CustomEvent<{ id?: unknown; value?: unknown }>).detail;
-      if (!detail || typeof detail.id !== "string") return;
-      hub.resolve(detail.id, detail.value);
-    });
-
-    target.addEventListener("fx-yield-reject", (ev: Event) => {
-      const detail = (ev as CustomEvent<{ id?: unknown; error?: unknown }>).detail;
-      if (!detail || typeof detail.id !== "string") return;
-      hub.reject(detail.id, detail.error);
-    });
-  };
-
+  const base = createDefaultProfile({
+    resolve: deps.resolve, 
+    commit: deps.commit,
+    yieldHub: deps.yieldHub,
+    yieldDriver: deps.yieldDriver
+  });
+  const hub = deps.yieldHub ?? new LocalYieldHub();
   const startYield: RunnerProfile["startYield"] = async (until, ctx) => {
     const id = `${ctx.executionId}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
-    const session: YieldSession = { kind: "yield-session-v1", id, until };
-
-    // 副作用開始はここ（契約一貫性）
-    if (until.kind !== "yield-v1") throw new Error("unsupported yield condition");
-    if (until.target.kind !== "local") throw new Error("browser local profile only supports target.kind=local");
-
-    const rawTargetRef = until.target.ref;
-    const resolvedTargetRef =
-      isFxRefKey(rawTargetRef) || typeof rawTargetRef === "function"
-        ? base.resolveRef(rawTargetRef as FxRef<unknown>, ctx)
-        : rawTargetRef;
-
-    const target = resolveLocalTarget({ kind: "local", ref: resolvedTargetRef });
-    const template =
-      target.kind === "template"
-        ? target.el
-        : (getTemplateById(target.id) ?? null);
-
-    if (!template) throw new Error(`template not found: ${(target as any).id}`);
-
+    const session: YieldSession = { kind: "yield-session", id, until };
     hub.start(id);
-    bindTemplateBridge(template);
+    // locator を確定（既存 until.target を使う。ref が FxRef なら resolve）
+    const rawRef = until.target.ref;
+    const resolvedRef =
+      isFxRefKey(rawRef) || typeof rawRef === "function"
+        ? base.resolveRef(rawRef as FxRef<unknown>, ctx)
+        : rawRef;
 
+    const locator: YieldLocator = { kind: until.target.kind, ref: resolvedRef } as any;
     const input = until.input === undefined ? undefined : base.resolveRef(until.input as FxRef<unknown>, ctx);
-
-    template.dispatchEvent(
-      new CustomEvent("fx-yield-start", {
-        detail: { id, input, executionId: ctx.executionId, meta: until.meta ?? {} },
-        bubbles: true,
-        composed: true,
-      })
-    );
+    Promise.resolve(
+      deps.yieldDriver.requestYield({ id, locator, input, ctx })
+    ).catch((e) => hub.reject(id, e));
 
     return session;
   };
@@ -160,10 +118,9 @@ export const createBrowserLocalProfile = (deps: {
 
   return {
     ...base,
-    startYield,
+//    startYield,
     awaitYield,
     getYieldResult,
   };
 };
 
-export { LocalYieldHub };
