@@ -1,25 +1,27 @@
-﻿/**
- * blooky-devtools.ts (rewrite)
- *
- * Conformance target: blooky-devtools Specification v1.0.0
- * - DevTools MUST NOT generate ordering keys
- * - Ordering MUST follow Bridge-provided tick_index only
- * - Observer failures MUST be isolated from commit/submit outcomes
- */
+﻿import {
+  fxdom,
+  executeByElement as defaultExecuteByElement,
+  EffectElementTagNameMap as DefaultEffectElementTagNameMap,
+  FxEffectElement as ConcreteEffectElementConstructor,
+  defaultFxStylesheet,
+  FxEffectElement,
+} from "./blooky-fxdom";
+import type { AppContext, ExecContext, FxNote } from "./blooky-fx-types";
 
-import { clock } from "./runtime/time";
-import type { ObservedTick, CommitDripPlan } from "./runtime/time";
-import type { ObservedDripPlan } from "./blooky-fv";
-import type { Prop, Stream, DripperStream, Vertex, MergedStream } from "./blooky-fp-types";
-import type { ExecutionStep } from "./blooky-fx-types";
-import { isStream, isVertex, isChainedProp, isDripperStream, vertex } from "./blooky-fp";
-import { fxdom, EffectElementTagNameMap } from "./blooky-fxdom";
+import { clock } from "./runtime/clock";
+import type { ObservedTick, CommitDripPlan } from "./runtime/clock";
+import { isChainedProp, isDripperStream, isStream, isVertex, Prop, Stream, vertex } from "./blooky-fp";
+import { Vertex, DripperStream, MergedStream } from "./blooky-fp-types";
 
-export { fxdom, EffectElementTagNameMap };
+// ---------------------------------------------------------------------------
+// Bridge Tick timeline (core monitoring)
+// ---------------------------------------------------------------------------
 
 type EffectSummary = CommitDripPlan;
 
-// Bridge/Adapter must provide these. DevTools must not synthesize ordering keys.
+/**
+ * Bridge/Adapter must provide these. DevTools must not synthesize ordering keys.
+ */
 export type BridgeTickPayload = {
   tick_index: number;
   tick_id: string | number;
@@ -29,11 +31,6 @@ export type BridgeTickPayload = {
 };
 
 export type TickRecord = BridgeTickPayload;
-
-type PlanSnapshot = {
-  observed_at: number;
-  effects_summary: EffectSummary;
-};
 
 class DevToolsTimeline {
   private records: TickRecord[] = [];
@@ -59,6 +56,7 @@ class DevToolsTimeline {
     // Ordering is always by bridge-provided tick_index.
     this.records.sort((a, b) => a.tick_index - b.tick_index);
 
+    // Keep bounded history (informative).
     if (this.records.length > 1000) {
       this.records.splice(0, this.records.length - 1000);
     }
@@ -74,31 +72,6 @@ class DevToolsTimeline {
 }
 
 const timeline = new DevToolsTimeline();
-const recentObservedPlans: PlanSnapshot[] = [];
-
-function renderTickRecord(record: TickRecord) {
-  const panel = document.getElementById("blooky-devtools-panel");
-  if (!panel) return;
-
-  const entry = document.createElement("div");
-  entry.className = "devtools-tick-entry";
-  entry.textContent = `Tick ${record.tick_index}: ${record.effects_summary.size} updates`;
-  panel.insertBefore(entry, panel.firstChild);
-
-  while (panel.children.length > 50) panel.removeChild(panel.lastChild!);
-}
-
-function renderPlanSnapshot(snapshot: PlanSnapshot) {
-  const panel = document.getElementById("blooky-devtools-panel");
-  if (!panel) return;
-
-  const entry = document.createElement("div");
-  entry.className = "devtools-tick-entry";
-  entry.textContent = `Observed plan (tick_index unavailable): ${snapshot.effects_summary.size} updates`;
-  panel.insertBefore(entry, panel.firstChild);
-
-  while (panel.children.length > 50) panel.removeChild(panel.lastChild!);
-}
 
 /**
  * Preferred path for v1.0.0 conformance.
@@ -107,8 +80,8 @@ function renderPlanSnapshot(snapshot: PlanSnapshot) {
 export const observeBridgeTick = (payload: BridgeTickPayload) => {
   try {
     timeline.addFromBridge(payload);
-    renderTickRecord(payload);
   } catch (error) {
+    // MUST be isolated from commit/submit outcomes.
     console.error("[devtools] Observer error (isolated):", error);
   }
 };
@@ -123,8 +96,8 @@ export const createBridgeTickObserver = () => (payload: BridgeTickPayload) => {
 let detachBridgeTickObserver: (() => void) | null = null;
 
 /**
- * Bridge (runtime/time) の tick 通知と DevTools を接続する。
- * 返り値を呼ぶと購読解除される。
+ * Connect runtime/time clock.observeTick() to DevTools observeBridgeTick().
+ * Returns a function that detaches the observer.
  */
 export const connectClockBridgeTicks = () => {
   if (!detachBridgeTickObserver) {
@@ -140,49 +113,361 @@ export const connectClockBridgeTicks = () => {
 };
 
 /**
- * Legacy runtime.observeCommit(plan) path.
- * This path does not create timeline records because tick_index is not present.
+ * Read-only access for projections.
  */
-const devtoolsObserver = (plan: ObservedDripPlan) => {
-  try {
-    const snapshot: PlanSnapshot = {
-      observed_at: Date.now(),
-      effects_summary: plan,
-    };
-    recentObservedPlans.push(snapshot);
-    if (recentObservedPlans.length > 1000) {
-      recentObservedPlans.splice(0, recentObservedPlans.length - 1000);
+export const getTickRecords = (): readonly TickRecord[] => timeline.getRecords();
+export const clearTickRecords = () => timeline.clear();
+
+// ---------------------------------------------------------------------------
+// FxDOM injection (core projection primitives)
+// ---------------------------------------------------------------------------
+
+/**
+ * FxNote ↔ EffectElement binding.
+ * NOTE: Spec recommends external binding tables (WeakMap), not embedding into FxNote.
+ */
+const FxNoteMap = new WeakMap<FxNote, HTMLElement>();
+const FxElementStates = new WeakMap<HTMLElement, CustomStateSet>();
+
+export const getFxElement = (n: FxNote): HTMLElement | undefined => FxNoteMap.get(n);
+export const getFxElementStates = (el: HTMLElement): CustomStateSet | undefined => FxElementStates.get(el);
+
+// ---- Stylesheets (dev-only visual aid) ----
+
+const devtoolsCSSPath = ["./blooky-devtools-nested.css", "./blooky-devtools-theme.css"];
+
+/**
+ * Load style sheets for EffectElement projections.
+ * Failure MUST be isolated.
+ */
+const DevEffectElementStyleSheets: Promise<CSSStyleSheet[]> = Promise.all(
+  devtoolsCSSPath.map(async (path) => {
+    try {
+      const res = await fetch(path);
+      const text = await res.text();
+      const sheet = new CSSStyleSheet();
+      await sheet.replace(text);
+      return sheet;
+    } catch (e) {
+      console.warn("[devtools] Failed to load stylesheet:", path, e);
+      // Return an empty sheet to keep adoptedStyleSheets stable.
+      return new CSSStyleSheet();
     }
-    renderPlanSnapshot(snapshot);
-  } catch (error) {
-    console.error("[devtools] Observer error (isolated):", error);
+  })
+).catch((e) => {
+  console.warn("[devtools] Stylesheet loading failed (isolated):", e);
+  return [];
+});
+
+// ---- Dynamic extends for all EffectElements ----
+
+/**
+ * Dev-only EffectElementTagNameMap.
+ * - Adds CustomStateSet-based projection
+ * - Adds small ShadowRoot label UI for debugging/inspection
+ *
+ * IMPORTANT: This map MUST be passed to fxdom.defineEffectElements() by the entry-point.
+ * This module does not call defineEffectElements() by itself.
+ */
+const EffectElementTagNameMap: typeof DefaultEffectElementTagNameMap = Object.fromEntries(
+  new Map(Object.entries(DefaultEffectElementTagNameMap))
+) as any;
+
+Object.entries(EffectElementTagNameMap).forEach(([tag, fxClass]) => {
+
+  EffectElementTagNameMap[tag as keyof typeof EffectElementTagNameMap] = class extends (
+    fxClass as typeof ConcreteEffectElementConstructor
+  ) {
+    constructor() {
+      super();
+      try {
+        const internals = this.attachInternals();
+        FxElementStates.set(this, internals.states);
+      } catch (e) {
+        // attachInternals may be unavailable in some environments; isolate.
+        console.warn("[devtools] attachInternals unavailable (isolated):", e);
+      }
+    }
+
+  connectedCallback() {
+    super.connectedCallback();
+
+    const shadow = this.shadowRoot || this.attachShadow({ mode: "open" });
+
+    DevEffectElementStyleSheets.then((sheets) => {
+      try {
+        // Avoid duplicates if possible
+        const existing = new Set(shadow.adoptedStyleSheets);
+        const next = sheets.filter((s) => !existing.has(s));
+        if (next.length) shadow.adoptedStyleSheets.push(...next);
+      } catch (e) {
+        console.warn("[devtools] adoptedStyleSheets failed (isolated):", e);
+      }
+    });
+
+    // Insert selector label once
+    if (!shadow.querySelector(":scope > code.selector")) {
+      shadow.insertBefore(toSelectorExpression(this), shadow.firstChild);
+    }
+
+    if (!shadow.querySelector("slot")) {
+      shadow.append(document.createElement("slot"));
+    }
+  }
+
+  toFxNote(): FxNote {
+    const result = super.toFxNote() as FxNote;
+    // Bind note → element for projections.
+    FxNoteMap.set(result, this);
+    return result;
+  }
+} as any;
+
+});
+
+const toSelectorExpression = (e: Element) => {
+
+  const element = (tag: string, attrs?: Record<string, string>, text?: string) => {
+    const elm = document.createElement(tag);
+    if (attrs) for (const name in attrs) elm.setAttribute(name, attrs[name]);
+    if (text != null) elm.textContent = text;
+    return elm;
+  };
+
+  const container = element("code", { class: "selector" });
+  const tagLabel = element("var", { class: "tag" });
+  tagLabel.textContent = e.tagName.toLowerCase();
+  container.append(tagLabel);
+
+  if (!e.hasAttributes()) return container;
+
+  const df = document.createDocumentFragment();
+  Array.from(e.attributes).forEach(({ name, value }) => {
+    df.append(
+      element("code", undefined, "["),
+      element("var", { class: "name" }, name),
+      element("code", undefined, '="'),
+      element("var", { class: "value" }, value),
+      element("code", undefined, '"]')
+    );
+  });
+
+  container.append(df);
+  return container;
+
+}
+
+// fx-switch: expose named slots in shadowRoot for visual inspection
+if (EffectElementTagNameMap["fx-switch"]) {
+  const Base = EffectElementTagNameMap["fx-switch"] as any;
+  EffectElementTagNameMap["fx-switch"] = class FxSwitchDevtools extends Base {
+    connectedCallback(): void {
+      super.connectedCallback?.();
+
+      try {
+        const shadow = this.shadowRoot;
+        if (!shadow) return;
+
+        // replace default slot with explicit named slots for each case label
+        const existingSlot = shadow.querySelector("slot");
+        existingSlot?.remove();
+
+        const slots = Array.from<HTMLElement>(this.querySelectorAll("*[slot]")).map((elm) => {
+          const s = document.createElement("slot");
+          s.name = elm.slot;
+          return s;
+        });
+
+        shadow.append(...slots);
+
+        // ensure at least one slot exists
+        if (!slots.length) shadow.append(document.createElement("slot"));
+      } catch (e) {
+        console.error("[devtools] fx-switch enhancement failed (isolated):", e);
+      }
+    }
+  } as any;
+}
+
+// fx-effect: theme stylesheet (purely visual)
+if (EffectElementTagNameMap["fx-effect"]) {
+  const Base = EffectElementTagNameMap["fx-effect"] as any;
+  EffectElementTagNameMap["fx-effect"] = class FxEffectDevtools extends Base {
+    static observedAttributes = ["theme", ...(Base.observedAttributes ?? [])];
+
+    private themeCSS?: CSSStyleSheet;
+
+    private loadTheme(src: string) {
+      try {
+        if (!src || !this.shadowRoot) return;
+
+        if (!this.themeCSS) {
+          this.themeCSS = new CSSStyleSheet();
+          this.shadowRoot.adoptedStyleSheets.push(this.themeCSS);
+        }
+        fetch(src)
+          .then((r) => r.text())
+          .then((t) => this.themeCSS!.replace(t))
+          .catch((e) => console.warn("[devtools] theme fetch failed (isolated):", e));
+      } catch (e) {
+        console.warn("[devtools] theme load failed (isolated):", e);
+      }
+    }
+
+    attributeChangedCallback(name: string, oldValue: string, newValue: string) {
+      super.attributeChangedCallback?.(name, oldValue, newValue);
+      if (name === "theme" && oldValue !== newValue) this.loadTheme(newValue);
+    }
+
+    connectedCallback(): void {
+      super.connectedCallback?.();
+      if (this.hasAttribute("theme")) this.loadTheme(this.getAttribute("theme")!);
+    }
+  } as any;
+}
+
+// fx-collapse: pulse related graph node (optional adapter interaction)
+if (EffectElementTagNameMap["fx-collapse"]) {
+  const Base = EffectElementTagNameMap["fx-collapse"] as any;
+  EffectElementTagNameMap["fx-collapse"] = class FxCollapseDevtools extends Base {
+    constructor() {
+      super();
+      this.addEventListener("changestate", (e: Event) => {
+        try {
+          const state = (e as CustomEvent<string>).detail;
+          if (state !== "running") return;
+
+          const streamKey = (e.currentTarget as HTMLElement).getAttribute("dripper");
+          if (!streamKey) return;
+
+          const nodeElement = document.getElementById(`node-${streamKey}`);
+          if (!nodeElement) return;
+
+          nodeElement.classList.add("is-emitting");
+          setTimeout(() => nodeElement.classList.remove("is-emitting"), 1500);
+        } catch (err) {
+          console.error("[devtools] fx-collapse pulse failed (isolated):", err);
+        }
+      });
+    }
+  } as any;
+}
+
+// ---------------------------------------------------------------------------
+// Step → FxDOM CustomState projection
+// ---------------------------------------------------------------------------
+
+export type StepPhase =
+  | "enter"
+  | "exit"
+  | "suspend"
+  | "resume"
+  | "result"
+  | "cancel";
+
+export type StepRecord = {
+  phase: StepPhase;
+  note: FxNote;
+  data?: any;
+};
+
+const setFxState = (el: HTMLElement, state: string, on: boolean) => {
+  const st = FxElementStates.get(el);
+  if (st) {
+    if (on) st.add(state);
+    else st.delete(state);
+  } else {
+    // attachInternals unavailable fallback（任意）
+    if (on) el.classList.add(`is-${state}`);
+    else el.classList.remove(`is-${state}`);
   }
 };
 
-const observedProps = new Set<Prop<any>>();
-
-export const observeProp = (prop: Prop<any>) => {
-  if (observedProps.has(prop)) return;
-  observedProps.add(prop);
-  const registerProp = clock.observeCommit(devtoolsObserver);
-  registerProp(prop);
+const clearFxStates = (el: HTMLElement, states: string[]) => {
+  for (const s of states) setFxState(el, s, false);
 };
 
-export const unobserveProp = (prop: Prop<any>) => {
-  if (!observedProps.has(prop)) return;
-  observedProps.delete(prop);
-  clock.unobserveCommit(devtoolsObserver)(prop);
+export const stepToFxState = (step: StepRecord) => {
+  try {
+    const el = getFxElement(step.note);
+    if (!el) return;
+
+    // 状態語彙（必要最低限）
+    // running: 実行中
+    // paused : suspend 中（yield/wait）
+    // completed/failed/cancelled/terminated: 終了状態
+    switch (step.phase) {
+      case "enter": {
+        clearFxStates(el, ["completed", "failed", "cancelled", "terminated"]);
+        setFxState(el, "running", true);
+        setFxState(el, "paused", false);
+        break;
+      }
+      case "suspend": {
+        // suspend は「境界で止まっている」
+        setFxState(el, "paused", true);
+        break;
+      }
+      case "resume": {
+        setFxState(el, "paused", false);
+        setFxState(el, "running", true);
+        break;
+      }
+      case "exit": {
+        // note と note の間（あなたの境界）で running を落とす
+        setFxState(el, "running", false);
+        setFxState(el, "paused", false);
+
+        const terminated = !!step.data?.terminated;
+        const failed = !!step.data?.failed; // もし runner が入れるなら
+        // 現状の run() だと terminated は入っている。failed は入っていないので必要なら拡張。
+
+        if (terminated) setFxState(el, "terminated", true);
+        else if (failed) setFxState(el, "failed", true);
+        else setFxState(el, "completed", true);
+
+        break;
+      }
+      case "cancel": {
+        setFxState(el, "running", false);
+        setFxState(el, "paused", false);
+        setFxState(el, "cancelled", true);
+        break;
+      }
+
+      // result は状態遷移不要（必要なら last-result 的な投影を追加）
+      case "result":
+      default:
+        break;
+    }
+
+    // 必要なら UI 側に通知（旧実装互換）
+    el.dispatchEvent(
+      new CustomEvent("changestate", {
+        bubbles: true,
+        detail: step.phase,
+      })
+    );
+  } catch (error) {
+    // MUST isolate
+    console.error("[devtools] Step observer error (isolated):", error);
+  }
 };
 
-export const clearObservers = () => {
-  observedProps.forEach((prop) => {
-    clock.unobserveCommit(devtoolsObserver)(prop);
-  });
-  observedProps.clear();
-  recentObservedPlans.splice(0, recentObservedPlans.length);
+export const executeByElement = (
+  root: FxEffectElement,
+  app: AppContext = {},
+  ctx?: Partial<ExecContext>
+) => {
+  const handle = defaultExecuteByElement(root, app, ctx);
+  handle.observeStep(stepToFxState);   // ここが追加観測
+  return handle;
 };
 
-export const getRecentObservedPlans = (): readonly PlanSnapshot[] => recentObservedPlans;
+
+// ---------------------------------------------------------------------------
+// Optional: FRP graph monitoring helpers (Informative only)
+// ---------------------------------------------------------------------------
 
 export function dumpGraphDOT(
   entries: Record<string, Stream<any> | Prop<any> | unknown>,
@@ -212,23 +497,16 @@ export function dumpGraphDOT(
     return "plain";
   }
 
-  function visit(obj: Vertex|Prop<any>, label: string) {
+  function visit(obj: Vertex | Prop<any>, label: string) {
     if (visited.has(obj)) return visited.get(obj)!;
 
     if (isChainedProp<any>(obj)) {
       const value = obj();
-      let valueLabel: string;
-      switch (typeof value) {
-        case "symbol":
-          valueLabel = "symbol(" + (value.description || "") + ")";
-          break;
-        case "string":
-          valueLabel = `\\"${value.replace(/"/g, '\\"')}\\"`;
-          break;
-        default:
-          valueLabel = String(value);
-          break;
-      }
+      const valueLabel =
+        typeof value === "symbol" ? `symbol(${value.description || ""})` :
+        typeof value === "string" ? `\\"${value.replace(/"/g, '\\"')}\\"` :
+        String(value);
+
       const id = addNode(label + "|" + valueLabel, {
         id: label,
         shape: "record",
@@ -263,19 +541,13 @@ export function dumpGraphDOT(
     }
 
     const props = obj.props;
-    if (props) {
-      edges.push(...props.map((p) => `${id} -> ${visit(p, names.get(p) || "none")}`));
-    }
+    if (props) edges.push(...props.map((p) => `${id} -> ${visit(p, names.get(p) || "none")}`));
     return id;
   }
 
-  vertex_map.forEach(([name, streamOrProp]) => {
-    visit(streamOrProp, name);
-  });
+  vertex_map.forEach(([name, streamOrProp]) => visit(streamOrProp, name));
 
-  const digraph_attrs = Object.entries(graphAttrs)
-    .map((v) => v.join("="))
-    .join(";\n");
+  const digraph_attrs = Object.entries(graphAttrs).map((v) => v.join("=")).join(";\n");
   return `digraph BlookyGraph {\ngraph [\n${digraph_attrs}\n];\n${nodes.join("\n")}\n${edges.join("\n")}\n}`;
 }
 
@@ -322,141 +594,4 @@ export function dripGraph<A>(
   };
 }
 
-export function attachDevToolsPanel(container?: HTMLElement): HTMLElement {
-  const target = container || document.body;
-
-  const panel = document.createElement("div");
-  panel.id = "blooky-devtools-panel";
-  panel.style.cssText = `
-    position: fixed;
-    right: 12px;
-    bottom: 12px;
-    width: 320px;
-    max-height: 400px;
-    overflow-y: auto;
-    background: rgba(0, 0, 0, 0.9);
-    color: #fff;
-    padding: 12px;
-    border-radius: 8px;
-    font-family: monospace;
-    font-size: 12px;
-    z-index: 99999;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
-  `;
-
-  const header = document.createElement("div");
-  header.textContent = "Blooky DevTools";
-  header.style.cssText = `
-    font-weight: bold;
-    margin-bottom: 8px;
-    border-bottom: 1px solid #444;
-    padding-bottom: 4px;
-  `;
-  panel.appendChild(header);
-
-  const controls = document.createElement("div");
-  controls.style.marginBottom = "8px";
-
-  const clearBtn = document.createElement("button");
-  clearBtn.textContent = "Clear";
-  clearBtn.style.cssText = `
-    background: #333;
-    color: #fff;
-    border: 1px solid #666;
-    padding: 4px 8px;
-    cursor: pointer;
-    border-radius: 4px;
-    margin-right: 4px;
-  `;
-  clearBtn.onclick = () => {
-    timeline.clear();
-    recentObservedPlans.splice(0, recentObservedPlans.length);
-    while (panel.children.length > 2) panel.removeChild(panel.lastChild!);
-  };
-  controls.appendChild(clearBtn);
-
-  panel.appendChild(controls);
-  target.appendChild(panel);
-
-  return panel;
-}
-
-export function renderGraphSVG(entries: Record<string, Stream<any> | Prop<any>>): string {
-  const dot = dumpGraphDOT(entries);
-  return `<!-- ${dot} -->`;
-}
-
-export function createStepLogger(): (step: ExecutionStep) => void {
-  const steps: ExecutionStep[] = [];
-
-  return (step: ExecutionStep) => {
-    try {
-      steps.push(step);
-
-      const panel = document.getElementById("blooky-devtools-steps");
-      if (panel) {
-        const entry = document.createElement("div");
-        entry.textContent = `${step.phase}: ${step.note.type}`;
-        entry.style.cssText = `
-          padding: 4px;
-          border-bottom: 1px solid #333;
-        `;
-        panel.appendChild(entry);
-      }
-    } catch (error) {
-      console.error("[devtools] Step logger error (isolated):", error);
-    }
-  };
-}
-
-export { timeline, devtoolsObserver };
-
-export function initDevTools(container?: HTMLElement): {
-  panel: HTMLElement;
-  observeProp: typeof observeProp;
-  unobserveProp: typeof unobserveProp;
-  clearObservers: typeof clearObservers;
-  observeBridgeTick: typeof observeBridgeTick;
-  disconnectBridgeTicks: () => void;
-  timeline: typeof timeline;
-} {
-  const panel = attachDevToolsPanel(container);
-  const disconnectBridgeTicks = connectClockBridgeTicks();
-
-  return {
-    panel,
-    observeProp,
-    unobserveProp,
-    clearObservers,
-    observeBridgeTick,
-    disconnectBridgeTicks,
-    timeline,
-  };
-}
-
-const injectDevToolsStyles = () => {
-  if (typeof document === "undefined") return;
-  if (document.getElementById("blooky-devtools-styles")) return;
-
-  const style = document.createElement("style");
-  style.id = "blooky-devtools-styles";
-  style.textContent = `
-    .devtools-tick-entry {
-      padding: 6px 8px;
-      margin-bottom: 4px;
-      background: rgba(255, 255, 255, 0.05);
-      border-left: 3px solid #4a9eff;
-      border-radius: 3px;
-      font-size: 11px;
-    }
-
-    .devtools-tick-entry:hover {
-      background: rgba(255, 255, 255, 0.1);
-    }
-  `;
-  document.head.appendChild(style);
-};
-
-if (typeof document !== "undefined") {
-  injectDevToolsStyles();
-}
+export { fxdom, EffectElementTagNameMap };
