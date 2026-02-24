@@ -95,7 +95,6 @@
 :host(:state(executing)),
 :host(:state(running)) {
   border-left: 3px solid #F59E0B;
-  animation: pulse 2s infinite;
 }
 
 :host(:state(completed)) {

@@ -25,10 +25,8 @@ export const createDefaultProfile = (deps: {
     const session: YieldSession = { kind: "yield-session", id, until };
     deps.yieldHub.start(id);
 
-    // locator と input の解決：あなたの until.target / until.input 型に合わせて実装
-    const locator: YieldLocator = resolveYieldLocator(until, ctx, resolveRef); // ←要実装
-    
-    const input = until.input === undefined ? undefined : resolveRef(until.input, ctx); // ←既存 resolveRef を使う
+    const locator: YieldLocator = resolveYieldLocator(until, ctx, resolveRef);
+    const input = until.input === undefined ? undefined : resolveRef(until.input, ctx);
 
     // driver に主権移譲（ここで template/remote/worker が分岐される）
     void Promise.resolve(
@@ -85,15 +83,17 @@ export const createDefaultProfile = (deps: {
   };
 
   const applyExitBoundary = async(note: FxNote, ctx: PerfCtx, result: unknown) => {
+    // resultに(Prop/getterではない)関数そのものを値として返すパターンは認められないので注意
+    const value = resolveRef(result, ctx);
     // 1) Context 公開
     if(note.id) {
-      ctx.appContext["#"+note.id] = result;
+      ctx.appContext["#"+note.id] = value;
     }
     // 2) done があれば FRP 接続（必要なときだけ）
     const done = (note as any).done;
     if (done !== undefined) {
       const dripper = resolveRef<DripperStream<any>>(done, ctx);
-      await deps.commit(drip(result)(dripper));
+      await deps.commit(drip(value)(dripper));
     }
   };
 

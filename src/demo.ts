@@ -15,11 +15,11 @@ fxdom.defineEffectElements(EffectElementTagNameMap);
 
 // --- 1. 実行フローの定義 ---
 interface EffectContext {
-  confirmQuestionActivated$: DripperStream<ActivatedResult>
-  $confirmAnswerResolved: Prop<string>,
+  confirmQuestionActivated$: DripperStream<FxResult<string>>
+  $confirmAnswerResolved: Prop<boolean>,
   $selectedConfirmAnswer: Prop<string>,
   $triggerSave: Prop<boolean>,
-  statusMessageStream$: DripperStream<string>,
+  statusMessageStream$: DripperStream<FxResult<string>>,
   $finalMessage: Prop<string>,
   save$: DripperStream<void>,
   identity: (v:any)=>any
@@ -89,20 +89,20 @@ const AppUIRenderer = prime(({ $count, increment$, decrement$, save$, $statusMes
 }));
 
 // confirm dialog
-type ActivatedResult = 
-  | { ok: true, result: string }
+type FxResult<T> = 
+  | { ok: true, value: T }
   | { ok: false, error: Error };
-const confirmQuestionActivated$ = stream<ActivatedResult>();
+const confirmQuestionActivated$ = stream<FxResult<string>>();
 const confirmButtonClicked$ = stream<MouseEvent>();
 const $selectedConfirmAnswer = pipe(
   confirmButtonClicked$,
   map((evt) => (evt.target as HTMLButtonElement).value),
   hold("yet")
 );
-const $confirmAnswerResolved = ($selectedConfirmAnswer);
-const $confirmQuestionDialogbox = hold<JSHTMLNodeSource>(null)(map<ActivatedResult,JSHTMLNodeSource>((res) => 
+const $confirmAnswerResolved = remap<string,boolean>((resolved)=>resolved !== "yet")($selectedConfirmAnswer);
+const $confirmQuestionDialogbox = hold<JSHTMLNodeSource>(null)(map<FxResult<string>,JSHTMLNodeSource>((res) => 
 [
-  { p: res.ok === true ? [res.result] : res.error.message },
+  { p: res.ok === true ? res.value : res.error.message },
   { button: "OK", $: { onclick: confirmButtonClicked$, value: "yes" } },
   { button: "Cancel", $: { onclick: confirmButtonClicked$, value: "no" } },
 ])(confirmQuestionActivated$));
@@ -113,10 +113,10 @@ const decrement$ = stream();
 const save$ = stream();
 const $triggerSave = hold(false)(map(() => true)(save$));
 
-const statusMessageStream$ = stream<string>();
+const statusMessageStream$ = stream<FxResult<string>>();
 const changeCountStream = merge([map(() => 1)(increment$), map(() => -1)(decrement$)], ((a, b) => a + b));
 const $count = accum((current: number, val: number) => current + val, 0)(changeCountStream);
-const $statusMessage = hold('Ready.')(statusMessageStream$);
+const $statusMessage = hold('Ready.')(map<FxResult<string>,string>((r)=> r.ok === true ? r.value : r.error.message )(statusMessageStream$));
 const $finalMessage = remap<number, string>((v) => `Saved Count:${v}`)($count);
 const $colorOfCount = remap<number, string>((count) => count % 3 ? "blue" : "red")($count);
 

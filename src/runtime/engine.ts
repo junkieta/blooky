@@ -227,23 +227,28 @@ export function execute(args: {
     }
   };
 
-  const done = (async () => {
-    let finalValue: unknown = undefined;
+  const done = new Promise((resolve,reject)=>{
+    queueMicrotask(() => {
+      (async () => {
+        let finalValue: unknown = undefined;
 
-    try {
-      finalValue = await run(rootNote, execContext.executionId || "root", appContext, execContext.cancelToken);
-    } catch (e) {
-      if (e instanceof Terminated) {
-        finalValue = e.value;
-      } else {
-        throw e;
-      }
-    }
+        try {
+          finalValue = await run(rootNote, execContext.executionId || "root", appContext, execContext.cancelToken);
+        } catch (e) {
+          if (e instanceof Terminated) {
+            finalValue = e.value;
+          } else {
+            reject(e);
+            return;
+          }
+        }
 
-    (appContext as any)[RETURN_VALUE] = finalValue;
-    if (rootNote.id) (appContext as any)["#" + rootNote.id] = finalValue;
-    return appContext;
-  })();
+        (appContext as any)[RETURN_VALUE] = finalValue;
+        if (rootNote.id) (appContext as any)["#" + rootNote.id] = finalValue;
+        resolve(appContext);
+      })().catch(reject);
+    });
+  });
 
   return {
     cancel: () => execContext.cancelToken.cancel("user"),

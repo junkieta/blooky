@@ -460,7 +460,7 @@ export const executeByElement = (
   ctx?: Partial<ExecContext>
 ) => {
   const handle = defaultExecuteByElement(root, app, ctx);
-  handle.observeStep(stepToFxState);   // ここが追加観測
+  handle.observeStep(stepToFxState);
   return handle;
 };
 

@@ -15,10 +15,9 @@ import {
 import { prepare as prepareImpl, execute as executeImpl, FxRefSymbol, RETURN_VALUE } from "./runtime/engine";
 import { createRegistry, registerDefault } from "./runtime/registry";
 import { createDefaultProfile } from "./runtime/profile";
-import { createBrowserLocalProfile, LocalYieldHub } from "./runtime/profile-dom-local";
 import { DripPlan } from "./blooky-fp-types";
 import { clock } from "./runtime/clock";
-import { TemplateYieldDriver, CompositeYieldDriver } from "./runtime/yield";
+import { TemplateYieldDriver, CompositeYieldDriver, LocalYieldHub } from "./runtime/yield";
 
 // registry は1回だけ作る
 const registry = createRegistry();
@@ -49,7 +48,7 @@ export const execute = (prepared: PreparedFx): ExecutionHandle => {
   // remote driver は transport があるなら常に注入可能
   // drivers["remote"] = new RemoteYieldDriver({ hub, client: remoteClient });
   const yieldDriver = new CompositeYieldDriver(drivers);
-  const profile = (isBrowser ? createBrowserLocalProfile : createDefaultProfile)({
+  const profile = createDefaultProfile({
     resolve: prepared.execContext.resolve,
     commit,
     yieldHub: hub,
