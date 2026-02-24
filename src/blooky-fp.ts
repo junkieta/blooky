@@ -382,11 +382,16 @@ const drip = <A>(value:A) => (dripper:DripperStream<A>) : DripPlan => Object.ass
  * @param equals 
  * @returns 
  */
-const conflict = (plan: DripPlan): Set<Prop<any>> => {
-  const seen = new Set<Prop<any>>();
-  const dup  = new Set<Prop<any>>();
-  for (const [p] of plan) (seen.has(p) ? dup : seen).add(p);
-  return dup;
+const conflict = (plan: DripPlan): Map<Prop<any>,any[]> => {
+    const seen = new WeakMap<Prop<any>,any>();
+    const result = new Map<Prop<any>,any[]>();
+    for (const [p,v] of plan) {
+        if(seen.has(p))
+            result.set(p, result.has(p) ? result.get(p)!.concat(v) : [seen.get(p), v])
+        else
+            seen.set(p,v);
+    }
+    return result;
 };
 
 /**

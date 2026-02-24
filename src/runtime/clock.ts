@@ -30,9 +30,9 @@ export class SubmitError extends Error {
   name = "SubmitError";
 }
 
-export class SubmitConflictError extends SubmitError {
-  name = "SubmitConflictError";
-  constructor(readonly conflicts: Set<Prop<any>>) {
+export class ConflictError extends SubmitError {
+  name = "ConflictError";
+  constructor(readonly conflicts: Map<Prop<any>,any[]>) {
     super("Conflict in CommitPlan");
   }
 }
@@ -86,6 +86,44 @@ const buildCommitIntent = (t: number, reservations: Reservation[]): DripPlan => 
   // clock派生 (beat$) + submitされたplans を合成
   // ※ここで必要なら "clock由来の派生plan" を追加する（仕様上は runtime の責務）
   return drip(t)(beat$).concat(...reservations.map(({ plan }) => plan));
+};
+
+type Eq = (a: unknown, b: unknown) => boolean;
+
+/**
+ * DripPlan を正規化しつつ、異値重複のみ conflicts として収集する。
+ * - 同値重複は dedup（MAY）
+ * - 異値重複は conflicts に記録（first も含める）
+ */
+const normalizePlan = (
+  plan: DripPlan,
+  equals: Eq = Object.is
+): { commitPlanMap: Map<Prop<any>, any>, conflicts: Map<Prop<any>, any[]> } => {
+  const commitPlanMap = new Map<Prop<any>, any>();
+  const conflicts = new Map<Prop<any>, any[]>();
+
+  for (const [p, v] of plan) {
+    if (!commitPlanMap.has(p)) {
+      commitPlanMap.set(p, v);
+      continue;
+    }
+
+    const prev = commitPlanMap.get(p);
+    if (equals(prev, v)) {
+      // 同値重複は無視（dedup）
+      continue;
+    }
+
+    // 異値：conflicts に first+others を集める
+    const arr = conflicts.get(p);
+    if (arr) {
+      arr.push(v);
+    } else {
+      conflicts.set(p, [prev, v]); // ← first を入れる
+    }
+  }
+
+  return { commitPlanMap, conflicts };
 };
 
 const notifyClockObservers = (commitIntent: CommitDripPlan): Error[] => {
@@ -164,17 +202,14 @@ const advanceClock = () => {
     const commitIntent = buildCommitIntent(t, reservations);
 
     // 2) conflict を事前検出（conflict があれば commit も observer も呼ばない）
-    const conflicts = conflict(commitIntent);
+    const { commitPlanMap, conflicts } = normalizePlan(commitIntent/**, equals */);
     if (conflicts.size) {
-      const err = new SubmitConflictError(conflicts);
+      const err = new ConflictError(conflicts);
       reservations.forEach(({ reject }) => reject(err));
       // 次tickへ（予約は失敗確定）
       advanceClock();
       return;
     }
-
-    // observerに渡すためconflict無しを保証した後Mapに変換
-    const commitPlanMap = new Map(commitIntent);
 
     // 3) Bridge Tick Payload を確定（pre-commit）
     const observedTick = buildObservedTick(commitPlanMap);
