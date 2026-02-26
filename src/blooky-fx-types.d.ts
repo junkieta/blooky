@@ -115,8 +115,7 @@ export type FxSwitchNote = FxNoteBase<"switch", {
 }>;
 export type FxCallNote = FxNoteBase<"call", { 
   action: FxRef<(v: any) => unknown>; 
-  arg?: FxRef<any>; 
-  context?: FxRef<any>; 
+  input?: FxRef<any>; 
   done?: FxRef<DripperStream<any>>;
 }>;
 export type FxYieldNote = FxNoteBase<"yield", { 
@@ -291,4 +290,8 @@ export interface YieldHub {
 
 export interface YieldDriver {
   requestYield(req: YieldRequest): void | Promise<void>;
+}
+
+interface FxCallAction<A = void, B = unknown> {
+  call(context: Readonly<AppContext>, input: A): B | Promise<B>
 }

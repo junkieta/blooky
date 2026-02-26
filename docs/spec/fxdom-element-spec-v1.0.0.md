@@ -246,6 +246,17 @@ Profile/Host 自体の closed set や独立 conformance は規定しない。
 
 > 注：`input` は **単一入力**のための最小語彙として提供される。複数引数や構造化は Profile 側の解決規約に委ねる。
 
+#### `<fx-call>` Normalization to `call.action` / `call.input`（Normative）
+
+`<fx-call>` の `action` 属性は、score-fx における `call` note の `note.data.action` に対応しなければならない（MUST）。
+`action` は ContextRef に正規化されなければならない（MUST）。
+
+`<fx-call>` の input 属性が存在する場合、note.data.input に正規化されなければならない（MUST）。
+
+`done` は output port であり、`note.data.action` の意味を変更してはならない（MUST NOT）。
+
+call.action の decode 結果は FxCallAction を満たさなければならない（MUST）。
+
 ### DOM constraints
 
 * 子要素を持ってはならない（MUST NOT）
@@ -548,7 +559,7 @@ fxdom はその意味論（実行方法・待機方法・再開条件）を定�
 
 ### Attributes
 
-* `input`（optional）: 返却値参照（opaque）
+* `value`（optional）: 返却値参照（opaque）
 
 ### Flow boundary constraint (Normative)
 
@@ -616,6 +627,21 @@ Remote locator の意味（接続方式、認証、フォーマット、変換�
 ただし実装は remote を **Score 取得・実行境界の生成**として扱ってよい（MAY）。
 
 > 実装例：WebSocket 経由で fxdom 互換 JSON/DOM を取得して Score 化する、等。
+
+#### 6.4 `for` Normalization to `yield.score`（Normative）
+
+`<fx-yield>` の `for` 属性は、score-fx における `yield` note の
+`note.data.score` へ正規化されなければならない（MUST）。
+
+すなわち、fxdom 実装は `<fx-yield for="X" ...>` を解釈する際に、
+`X` を **`yield.score` に格納される参照トークン（opaque reference token）**として扱わなければならない（MUST）。
+
+* `for` の locator 構文検証は §6.1〜§6.3 に従わなければならない（MUST）。
+* `for` に対して、§6.1〜§6.3 で定義されない CSS selector 等の拡張解釈を行ってはならない（MUST NOT）。
+* `input` が存在する場合、note.data.input に正規化されなければならない（MUST）。
+* `done` は output port であり、`note.data.score` の意味を変更してはならない（MUST NOT）。
+
+**Note（Informative）**：`yield.score` は Semantics 層において解釈されない（opaque）。`yield.score` の解決は Host/Runner の責務である。
 
 ---
 
@@ -750,7 +776,7 @@ fxdom 実装が v1.0.0 に適合するためには、少なくとも次を満た
 ### A.4 yield (remote locator)
 
 ```html
-<fx-yield for="wss://example.com/fx/confirm" input="$payload" done="$result" />
+<fx-yield for="wss://example.com/fx/confirm" input="$payload" done="result$" />
 ```
 
 ---

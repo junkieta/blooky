@@ -99,7 +99,7 @@ export const fx = {
   }),
   call: (
     action: FxRef<(v: any) => unknown>,
-    opt: Pick<FxCallNote, "arg" | "context" | "done" | "catcher" | "id"> = {}
+    opt: Pick<FxCallNote, "input" | "done" | "id"> = {}
   ): FxCallNote => ({
     type: "call",
     action,

@@ -163,19 +163,19 @@ class FxCallElement extends EffectElement {
   static [JSHTML_ATTR_HANDLER] = { fn: attrValueToContextKey, arg: attrValueToContextKey, done: attrValueToContextKey }
 
   toFxNote(): FxNote {
-    const fnAttr = this.getAttribute("fn");
-    // fn属性がなければ何もしない
-    if (!fnAttr) return fx.none();
+    const actionAttr = this.getAttribute("action");
+    // action属性がなければ何もしない
+    if (!actionAttr) return fx.none();
 
-    let arg: FxRef<any> = undefined;
+    let input: FxRef<any> = undefined;
     
-    // arg属性があればコンテキスト参照として設定
-    if(this.hasAttribute("arg")) {
-      arg = ref(this.getAttribute("arg")!);
+    // input属性があればコンテキスト参照として設定
+    if(this.hasAttribute("input")) {
+      input = ref(this.getAttribute("input")!);
     // テキストコンテンツがあればJSONとしてパースして引数に設定
     } else if(/\S/.test(this.textContent)) {
       const rawText = this.textContent.trim();
-      arg = () => {
+      input = () => {
         try {
           return JSON.parse(rawText);
         } catch (e) {
@@ -193,11 +193,9 @@ class FxCallElement extends EffectElement {
       }
     }
     
-    return fx.call(ref(fnAttr), {
-      arg: arg,
+    return fx.call(ref(actionAttr), {
+      input,
       done: this.hasAttribute("done") ? ref(this.getAttribute("done")!) : undefined,
-      // catcher属性があれば、エラーハンドラとしてコンテキスト参照を設定
-      catcher: this.hasAttribute("catcher") ? ref(this.getAttribute("catcher")!) : undefined,
       id: this.id,
     });
   }

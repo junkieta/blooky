@@ -37,7 +37,7 @@ const EffectRenderer = prime(({
   "fx-effect": [
     {
       "template": [
-        { "fx-call": jshtml.$({ fn: "identity", arg: "$_", done: confirmQuestionActivated$ }) },
+        { "fx-call": jshtml.$({ action: "identity", input: "$_", done: confirmQuestionActivated$ }) },
         { "fx-wait": jshtml.$({ until: $confirmAnswerResolved }) },
         { "fx-return": jshtml.$({ value: $selectedConfirmAnswer }) }
       ],  
@@ -49,16 +49,16 @@ const EffectRenderer = prime(({
       "fx-switch": [
         {
           "fx-sequence": [
-            { "fx-call": '"Saving..."', $: { fn: "identity", done: statusMessageStream$ } },
+            { "fx-call": '"Saving..."', $: { action: "identity", done: statusMessageStream$ } },
             { "fx-wait": jshtml.$({ ms: 1500 }) },
-            { "fx-call": jshtml.$({ fn: "identity", arg: $finalMessage, done: statusMessageStream$ }) },
-            { "fx-call": '"save complete"', $: { fn: "log" } },
+            { "fx-call": jshtml.$({ action: "identity", input: $finalMessage, done: statusMessageStream$ }) },
+            { "fx-call": '"save complete"', $: { action: "log" } },
           ],
           $: { slot: "yes" }
         },
         {
           "fx-call": '"Save cancelled."',
-          $: { slot: "default", fn: "identity", done: statusMessageStream$ }
+          $: { slot: "default", action: "identity", done: statusMessageStream$ }
         }
       ],
       $: { by: "#confirmResult" }
