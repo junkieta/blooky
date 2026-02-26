@@ -1,12 +1,8 @@
 # blooky-context Specification v1.0.0
 
-**Status:** 🔒 Draft (Submission Candidate)
+**Status:** 🔒 Final / Frozen
 **Scope:** Context Boundary, Context Reference Model, Context Reference Codec
 **Applies to:** fv.prime / fxdom / fx runtime / devtools / remote transports
-
-**Compatibility Note（Normative Clarification）**
-本仕様は、既存の凍結済み仕様群（例：blooky-fv v1.0.0 等）を変更しない。
-既存仕様への準拠要求は、本仕様を **規範参照（normative reference）**として追加することで満たされる。
 
 ---
 

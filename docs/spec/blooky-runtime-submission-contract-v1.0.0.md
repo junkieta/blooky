@@ -5,6 +5,7 @@
 **Depends on:**
 
 * blooky-fp v1.0.0
+* blooky-context v1.0.0
 * blooky-bridge v1.0.0（Atomic Commit / Conflict Prohibition）
 
 ---

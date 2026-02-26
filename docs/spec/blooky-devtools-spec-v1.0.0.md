@@ -6,8 +6,10 @@
 
 * score-fx Protocol Specification v1.0.0
 * blooky-bridge Specification v1.0.0 (including Appendix E)
-  **Scope:** Monitoring / Projection / Dev-only Injection
-  **Non-goal:** Execution control, Timeline ownership, Ordering semantics
+* blooky-context v1.0.0
+
+**Scope:** Monitoring / Projection / Dev-only Injection
+**Non-goal:** Execution control, Timeline ownership, Ordering semantics
 
 ---
 

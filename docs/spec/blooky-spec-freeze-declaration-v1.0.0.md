@@ -39,6 +39,10 @@ v1.0.0 の主要仕様と責務は以下である。
   FRP → DOM 投影と Context 伝搬、Event → submit adapter を規定する。
   commit 意味論を持たず、ObservedPlan(view) を DOM 更新にのみ用いる。
 
+* **blooky-context v1.0.0**
+  Context Boundary / ContextRef / ContextValue / Codec（bind/encode/decode）を規定する。
+  Context のスコープ解決（decode 探索順序）、エラー分類（ENCODE_UNBOUND / DECODE_MISSING_KEY / VALUE_CONSTRAINT）および wire 正規形を固定する。
+
 * **fxdom v1.0.0**
   DOM で score-fx の Score 構造を宣言する要素語彙。
   実行アルゴリズム・effect 適用・tick/commit を規定しない。
@@ -46,15 +50,17 @@ v1.0.0 の主要仕様と責務は以下である。
 * **blooky-devtools v1.0.0**
   Monitoring / Projection。意味論を追加せず、Bridge の ordering に従属する。
 
+
+
 ---
 
 ## 2. Dependency Graph（Normative）
 
-* fxdom v1.0.0 **depends on** score-fx v1.0.0
+* fxdom v1.0.0 **depends on** score-fx v1.0.0, blooky-context v1.0.0
 * blooky-fx Bridge v1.0.0 **depends on** score-fx v1.0.0
-* Runtime Submission Contract v1.0.0 **depends on** blooky-fp v1.0.0, Bridge v1.0.0
-* blooky-fv v1.0.0 **depends on** blooky-fp v1.0.0, Runtime Submission Contract v1.0.0（interface/view）
-* devtools v1.0.0 **depends on** Bridge v1.0.0（ordering: tick_index）および score-fx v1.0.0（語彙参照）
+* Runtime Submission Contract v1.0.0 **depends on** blooky-fp v1.0.0, Bridge v1.0.0, blooky-context v1.0.0
+* blooky-fv v1.0.0 **depends on** blooky-fp v1.0.0, Runtime Submission Contract v1.0.0（interface/view）, blooky-context v1.0.0
+* devtools v1.0.0 **depends on** Bridge v1.0.0（ordering: tick_index）および score-fx v1.0.0（語彙参照）, blooky-context v1.0.0
 
 依存先の語彙・境界を再定義してはならない（MUST NOT）。
 
@@ -102,5 +108,3 @@ v1.0.0 の observer 呼び出しは次に固定される：
 🔒 **END OF blooky Specifications Freeze Declaration v1.0.0**
 
 ---
-
-必要なら、この「Freeze Declaration」に **“実装者向け最短運用ルール（例：PR で must-change を禁止、v1.0.1 は誤字のみ等）”** を Informative として追記できますが、v1.0.0 の規範には入れません。
