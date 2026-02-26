@@ -329,7 +329,38 @@ Semantics は`action`の種別を判別してはならない（MUST NOT）。呼
 
 ---
 
-### 4.6.4 ContextRef Compatibility（Informative / Recommended）
+### 4.6.4 Outcome Contract（Normative）
+
+本 Registry における実行結果の共通表現を以下とする：
+
+```ts
+type Outcome<T> =
+  | { kind: "value"; value: T }
+  | { kind: "error"; error: unknown }
+  | { kind: "crash"; error: unknown; source: "action" | "child_boundary" | "runner" | "host" }
+  | { kind: "timeout" }
+  | { kind: "cancel"; reason?: unknown }
+```
+
+#### Emission Constraints（Normative）
+
+`Runner は call の結果として Outcome.kind = value | error | crash | timeout | cancel を返してよい（MAY）。`
+`Runner は yield の結果として Outcome.kind = value | crash | timeout | cancel を返してよい（MAY）。`
+`Runner は yield において kind:"error" を直接返してはならない（MUST NOT）。`
+`yield` における `kind:"timeout"` および `kind:"cancel"` は、
+当該親境界の制御結果を表さなければならない（MUST）。
+子境界の内部事情（例：子内部の timeout/cancel/error）を
+親 `yield` の kind へ昇格してはならない（MUST NOT）。
+それらは必要に応じて `kind:"value"` の payload として表現されうる（MAY）。
+
+#### Error/Crash Boundary（Normative）
+
+`kind:"error"` は契約内で返された失敗値を表す。
+`kind:"crash"` は契約外の失敗（throw/reject/runner fault 等）を表す。
+
+---
+
+### 4.6.5 ContextRef Compatibility（Informative / Recommended）
 
 score-fx における参照解決は、
 ContextRef の解決規則 blooky-context §3.4（decode）および §1.5.1（探索規則） に従うことが望ましい（SHOULD）。
@@ -339,25 +370,22 @@ Wire 表現は blooky-context Appendix A に従うことが望ましい（SHOULD
 
 ---
 
-### 4.7 Error is a Value
+### 4.7 Error is a Value / Crash is Runtime Failure
 
 #### 4.7.1 原則
 
-* Semantics は **例外を throw してはならない（MUST NOT）**
-* エラーは **値として表現される**
+* Semantics は例外を throw してはならない（MUST NOT）。
+* 契約内の失敗は値として表現されなければならない（MUST）。
+* Runner は契約外失敗（throw/reject 等）を `Outcome.kind:"crash"` に正規化しなければならない（MUST）。
 
-#### 4.7.2 `call` の規範
+#### 4.7.2 call / yield の規範
 
-* `call` は失敗時も `result(value)` を返す
-* 推奨形式は以下のいずれかである：
-
-```ts
-{ ok: true, value: T }
-{ ok: false, error: E }
-```
-
-この形式は **慣習であり型強制ではない**が、
-throw による制御は **明確に禁止**される。
+* Runner は call / yield の結果を Outcome として扱う。
+* `kind:"error"` は FxCallAction が返した契約内失敗値を表す。
+* `kind:"crash"` は Runner が捕捉した契約外失敗を表す。
+* Runner は yield において `kind:"error"` を返してはならない（MUST NOT）。
+* 子境界の失敗は、必要に応じて `kind:"value"` の payload として表現されうる（MAY）。詳細は §4.6.4 に従う。
+* kind の発行制約は §4.6.4 Emission Constraints に従う（MUST）。
 
 ---
 
