@@ -89,7 +89,7 @@ fxdom の各要素は **FxNote を生成する宣言的ノード**である。
 fxdom は参照値の全体系を規定しない。
 ただし `<fx-yield for="…">` に関しては **locator 構文**を最小限規定する（§6）。
 
-他の属性値（`fn`, `by`, `until`, `ms`, `value`, `done` など）の解決は **実装（Profile/Host）**に委ねる。
+他の属性値（`action`, `by`, `until`, `ms`, `value`, `input`, `done` など）の解決は **実装（Profile/Host）**に委ねる。
 
 **Profile Slot note（Normative）**:
 fxdom における Profile/Host は、参照解決のための実装差し替え点である。
@@ -240,11 +240,11 @@ Profile/Host 自体の closed set や独立 conformance は規定しない。
 
 ### Attributes
 
-* `fn`（required）: 呼び出す関数参照（opaque）
-* `value`（optional）: 入力値参照（opaque）
+* `action`（required）: 呼び出す関数参照（opaque）
+* `input`（optional）: 入力値参照（opaque）
 * `done`（optional）: 出力接続口（opaque）
 
-> 注：`value` は **単一入力**のための最小語彙として提供される。複数引数や構造化は Profile 側の解決規約に委ねる。
+> 注：`input` は **単一入力**のための最小語彙として提供される。複数引数や構造化は Profile 側の解決規約に委ねる。
 
 ### DOM constraints
 
@@ -291,7 +291,7 @@ fxdom はその意味論（実行方法・待機方法・再開条件）を定�
   Flow locator。
   解決方法・実行方法は fxdom では規定しない。
 
-* `value`（任意）
+* `input`（任意）
   子 Flow へ渡される入力値。
   解決方法は fxdom では規定しない。
 
@@ -305,7 +305,7 @@ fxdom はその意味論（実行方法・待機方法・再開条件）を定�
 
 * `for` 属性は必須である（MUST）
 * 子要素を持ってはならない（MUST NOT）
-* `value` と `done` は同時に指定してよい（MAY）
+* `input` と `done` は同時に指定してよい（MAY）
 
 ---
 
@@ -443,7 +443,7 @@ fxdom はその意味論（実行方法・待機方法・再開条件）を定�
 
 ```html
 <fx-if test="$isOk">
-  <fx-call fn="log" value="OK branch" />
+  <fx-call action="log" input="OK branch" />
 </fx-if>
 ```
 
@@ -465,8 +465,8 @@ fxdom はその意味論（実行方法・待機方法・再開条件）を定�
 
 ```html
 <fx-if test="$isOk">
-  <fx-call slot="then" fn="log" value="OK branch" />
-  <fx-call slot="else" fn="log" value="NG branch" />
+  <fx-call slot="then" action="log" input="OK branch" />
+  <fx-call slot="else" action="log" input="NG branch" />
 </fx-if>
 ```
 
@@ -474,8 +474,8 @@ fxdom はその意味論（実行方法・待機方法・再開条件）を定�
 
 ```html
 <fx-if test="$isOk">
-  <fx-call fn="log" value="OK branch" />
-  <fx-call slot="else" fn="log" value="NG branch" />
+  <fx-call action="log" input="OK branch" />
+  <fx-call slot="else" action="log" input="NG branch" />
 </fx-if>
 ```
 
@@ -548,7 +548,7 @@ fxdom はその意味論（実行方法・待機方法・再開条件）を定�
 
 ### Attributes
 
-* `value`（optional）: 返却値参照（opaque）
+* `input`（optional）: 返却値参照（opaque）
 
 ### Flow boundary constraint (Normative)
 
@@ -578,7 +578,7 @@ fxdom はその意味論（実行方法・待機方法・再開条件）を定�
 fxdom は `label` / `value(label)` 等の表示補助属性を定義しない。
 表示補助が必要な場合、HTML 標準の `title` を用いてよい（MAY）。
 
-> これは「全要素共通語彙」の話であり、個別要素の必須属性（`fn`, `by`, `test` 等）を否定しない。
+> これは「全要素共通語彙」の話であり、個別要素の必須属性（`action`, `by`, `test` 等）を否定しない。
 
 ### 5.2 `slot` is used as-is
 
@@ -625,7 +625,7 @@ fxdom は「参照の全体系」を規定しない。
 ただし設計方針として：
 
 * **ContextRef（キー参照）**の利用を前提としてよい
-* `fn`, `by`, `test`, `until`, `ms`, `value`, `done` は **opaque な参照**として扱われうる
+* `action`, `by`, `test`, `until`, `ms`, `value`, `done` は **opaque な参照**として扱われうる
 * それらの解決規約は **Profile/Host** の責務
 
 fxdom は「DOM 外参照禁止」のような一般語彙で ContextRef を否定しない。
@@ -635,6 +635,23 @@ fxdom は「DOM 外参照禁止」のような一般語彙で ContextRef を否�
 - **AppContext**: 実行時の値辞書（`Record<string | symbol, unknown>` 相当）
 - **ContextRef**: fxdom 上のキー参照表現（例: `"$count"`）
 - **Resolution**: ContextRef を AppContext に対して解決する処理（Host/Runner の責務）
+
+---
+
+### ContextValue Interpretation（Normative）
+
+fxdom が ContextValue を扱う場合、その解釈は
+**blooky-context Specification v1.0.0** に従わなければならない（MUST）。
+
+* ContextRef は decode により解決されなければならない（MUST）。
+* Literal は静的値として扱われなければならない（MUST）。
+
+Host または Runner が属性値を encode する場合、
+その encode は blooky-context §3.3 に従わなければならない（MUST）。
+
+encode 失敗（ENCODE_UNBOUND）は属性値の適用前に伝播しなければならない（MUST）。
+
+fxdom 自身は親スコープへの encode を試みてはならない（MUST NOT）。
 
 ---
 
@@ -692,12 +709,12 @@ fxdom 実装が v1.0.0 に適合するためには、少なくとも次を満た
 ```html
 <fx-switch by="$confirmResult">
   <fx-sequence slot="yes">
-    <fx-call fn="log" value="Saving..." />
+    <fx-call action="log" input="Saving..." />
     <fx-wait ms="1500" />
-    <fx-call fn="log" value="save complete" />
+    <fx-call action="log" input="save complete" />
   </fx-sequence>
 
-  <fx-call slot="default" fn="log" value="Save cancelled." />
+  <fx-call slot="default" action="log" input="Save cancelled." />
 </fx-switch>
 ```
 
@@ -706,18 +723,18 @@ fxdom 実装が v1.0.0 に適合するためには、少なくとも次を満た
 ```html
 <fx-if test="$isOk">
   <!-- slot無しは全て then 扱い（MUST） -->
-  <fx-call fn="log" value="OK branch" />
+  <fx-call action="log" input="OK branch" />
 
-  <fx-call slot="else" fn="log" value="NG branch" />
+  <fx-call slot="else" action="log" input="NG branch" />
 </fx-if>
 ```
 
-### A.3 yield (local template + value input)
+### A.3 yield (local template + input)
 
 ```html
 <template id="fxConfirm">
   <fx-sequence>
-    <fx-call fn="confirm" value="$_" done="doneOfConfirm$" />
+    <fx-call action="confirm" input="$_" done="doneOfConfirm$" />
     <fx-wait until="$confirmAnswerResolved" />
     <fx-return value="$selectedConfirmAnswer" />
   </fx-sequence>
@@ -726,14 +743,14 @@ fxdom 実装が v1.0.0 に適合するためには、少なくとも次を満た
 <fx-yield
   for="#fxConfirm"
   done="confirmResult$"
-  value="Confirmation needed: Save this count?">
+  input="Confirmation needed: Save this count?">
 </fx-yield>
 ```
 
 ### A.4 yield (remote locator)
 
 ```html
-<fx-yield for="wss://example.com/fx/confirm" value="$payload" done="$result" />
+<fx-yield for="wss://example.com/fx/confirm" input="$payload" done="$result" />
 ```
 
 ---

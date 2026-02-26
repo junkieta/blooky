@@ -5,6 +5,7 @@
 **Depends on:**
 - blooky-fp v1.0.0
 - blooky-bridge v1.0.0
+- blooky-context v1.0.0
 
 **Scope:** FRP → DOM Projection Adapter, Event → Runtime Adapter
 
@@ -252,6 +253,21 @@ const prime = <T>(fn: (ctx: T) => JSHTMLNodeSource) =>
 - context は子孫ノードへ伝搬される（MUST）
 
 ---
+
+### 5.3 Context Boundary Compliance（Normative）
+
+`prime(ctx)` に与えられる `ctx` は、
+**blooky-context Specification v1.0.0** に定義される Context として扱われなければならない（MUST）。
+
+fv が ContextRef を解決する場合、その解決は
+blooky-context §3.4（decode）および §1.5.1（探索規則）に従わなければならない（MUST）。
+
+Context の構造は prime 実行後に変更してはならない（MUST NOT）。
+
+本仕様は Context インスタンスの新規生成を要求しない。
+
+---
+
 
 ## 6. Custom Element Hooks
 

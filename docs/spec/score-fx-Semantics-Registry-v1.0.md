@@ -246,7 +246,7 @@ Semantics は：
 
 | kind    | 分類      | SubNotes | Semantics が発行してよい Event | note.data 最小                    |
 | ------- | --------- | -------- | ------------------------- | -------------------------------------- |
-| `call`  | Execution | ❌ leaf | `result`, `effect`（任意）| `fn`（ref）, `args`（ref/serializable） |
+| `call`  | Execution | ❌ leaf | `result`, `effect`（任意）| `action`（ref）, `input`（ref/serializable） |
 | `wait`  | Boundary  | ❌ leaf | `suspend`                 | `until`（opaque condition）             |
 | `yield` | Boundary  | ❌ leaf | `suspend`                 | `score`（ref）, `input`（ref）          |
 
@@ -302,10 +302,40 @@ Semantics は：
 以下は **opaque** として扱われなければならない：
 
 * `suspend(condition)` の `condition`
-* `call.fn`
+* `call.action`
 * `yield.score`
 
 Semantics はそれらの構造や評価方法に **一切依存してはならない**。
+
+### 4.6.3 FxCallAction Interface（Normative）
+
+`call` note の `action` が満たすべきインターフェースは以下のとおりである：
+
+```ts
+interface FxCallAction<A = void, B = unknown> {
+  call(context: Readonly<AppContext>, input: A): B | Promise<B>
+}
+```
+
+Runner は `action.call(context, input)` の形式で呼び出さなければならない（MUST）。
+
+この呼び出し形式により、以下のいずれも有効なactionとなる：
+
+* **アロー関数**：`this`が束縛済みのため`context`は渡されない。`input`のみを使用する実装に適する。
+* **通常関数**：`this`として`context`を受け取る。
+* **FxCallActionを実装したオブジェクト**：`call`メソッドで`context`と`input`の両方を明示的に受け取る。
+
+Semantics は`action`の種別を判別してはならない（MUST NOT）。呼び出し形式の統一がその判別を不要にする。
+
+---
+
+### 4.6.4 ContextRef Compatibility（Informative / Recommended）
+
+score-fx における参照解決は、
+ContextRef の解決規則 blooky-context §3.4（decode）および §1.5.1（探索規則） に従うことが望ましい（SHOULD）。
+
+remote 実行で ContextValue を輸送する場合、
+Wire 表現は blooky-context Appendix A に従うことが望ましい（SHOULD）。
 
 ---
 

@@ -67,6 +67,20 @@ Runtime の submit() が reject で返す error の型・意味は、
 
 Runtime は submit() の reject において `SubmitError` 以外を返してはならない（MUST NOT）。
 
+### 1.4 Context Decode Compliance（Normative）
+
+Runtime が ContextRef を解決する場合、その decode 規則は
+**blooky-context Specification v1.0.0 §3.4 および §1.5.1** に従わなければならない（MUST）。
+
+* 未登録 key は DECODE_MISSING_KEY として分類されなければならない（MUST）。
+* decode 失敗を黙殺してはならない（MUST NOT）。
+
+Context エラーは、実行構造エラーとは独立した内部分類として管理されなければならない（MUST）。
+
+本規範は submit() の reject 契約を変更しない（MUST NOT interpret as extending submit reject conditions）。
+
+---
+
 ### Additional Runtime Policy（Normative）
 
 Bridge が `CommitExecutionError` として分類する停止級（fatal）エラーは、
