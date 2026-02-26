@@ -80,6 +80,10 @@ Context エラーは、実行構造エラーとは独立した内部分類とし
 
 本規範は submit() の reject 契約を変更しない（MUST NOT interpret as extending submit reject conditions）。
 
+### 1.5 Outcome Reference（Normative）
+
+Outcome の分類・意味は score-fx Semantics Registry §4.6.4 に従う（MUST）。
+
 ---
 
 ### Additional Runtime Policy（Normative）
