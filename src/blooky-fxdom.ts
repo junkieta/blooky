@@ -160,7 +160,7 @@ class FxWaitElement extends EffectElement {
 class FxCallElement extends EffectElement {
 
   /** @inheritdoc */
-  static [JSHTML_ATTR_HANDLER] = { fn: attrValueToContextKey, arg: attrValueToContextKey, done: attrValueToContextKey }
+  static [JSHTML_ATTR_HANDLER] = { action: attrValueToContextKey, input: attrValueToContextKey, done: attrValueToContextKey }
 
   toFxNote(): FxNote {
     const actionAttr = this.getAttribute("action");
@@ -186,7 +186,7 @@ class FxCallElement extends EffectElement {
             {
               expected: "JSON",
               actual: rawText,
-              suggestions: ["Ensure the element body contains valid JSON, or use the 'arg' attribute for context reference."],
+              suggestions: ["Ensure the element body contains valid JSON, or use the 'input' attribute for context reference."],
             }
           );
         }
@@ -299,20 +299,20 @@ class FxLoopElement extends EffectElement {
 class FxYieldElement extends EffectElement {
   /** @inheritdoc */
   static [JSHTML_ATTR_HANDLER] = {
-    score: attrValueToContextKey,
+    for: attrValueToContextKey,
     input: attrValueToContextKey,
     done: attrValueToContextKey
   }
   
   toFxNote(): FxNote {
     const id = this.id;
-    const scoreAttr = this.getAttribute("score");
+    const forAttr = this.getAttribute("for");
     
-    // score属性は必須
-    if (!scoreAttr) {
-      throw createFxDomError("MISSING_REQUIRED_ATTRIBUTE", "<fx-yield> requires a 'score' attribute to specify the yield key.", {
+    // for属性は必須
+    if (!forAttr) {
+      throw createFxDomError("MISSING_REQUIRED_ATTRIBUTE", "<fx-yield> requires a 'for' attribute to specify the yield key.", {
         attribute: "for",
-        suggestions: ["Add the 'score' attribute to specify which key to yield to."],
+        suggestions: ["Add the 'for' attribute to specify which key to yield to."],
         expected: "string (context key)",
         actual: "missing"
       });
@@ -343,7 +343,7 @@ class FxYieldElement extends EffectElement {
     }
     
     return fx.yield({
-      score: ref<string>(scoreAttr),
+      score: ref<string>(forAttr),
       input: value,
       done: this.hasAttribute("done") ? ref(this.getAttribute("done")!) : undefined,
       id

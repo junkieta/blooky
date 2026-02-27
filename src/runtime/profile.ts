@@ -69,12 +69,11 @@ export const createDefaultProfile = (deps: {
 
     if (e?.kind !== "call") return { kind: "none" };
 
-    const fn = resolveRef(e.action, ctx) as any;
-    const arg = e.arg === undefined ? undefined : resolveRef(e.arg, ctx);
-    const thisArg = e.context === undefined ? undefined : resolveRef(e.context, ctx);
+    const action = resolveRef(e.action, ctx) as any;
+    const input = e.input === undefined ? undefined : resolveRef(e.input, ctx);
 
     try {
-      const out = fn.call(thisArg, arg);
+      const out = action.call(ctx.appContext, input);
       const value = out && typeof out.then === "function" ? await out : out;
       return { kind: "result", value: { ok: true, value } };
     } catch (error) {

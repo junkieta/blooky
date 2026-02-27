@@ -40,7 +40,7 @@ const semYield: Semantics = function* (note) {
 const semCall: Semantics = function* (note) {
   if (note.type !== "call") return;
   // effect-only：applyEffectがresultを返しうる（runnerがFSMへresult合成）
-  yield { type: "effect", ref: { kind: "call", action: note.action, arg: note.arg, context: note.context, done: note.done } };
+  yield { type: "effect", ref: { kind: "call", action: note.action, input: note.input, done: note.done } };
 };
 
 const runSequence: StructureRunner = async (note, _ctx, deps) => {

@@ -44,7 +44,7 @@ const EffectRenderer = prime(({
       $: { id: "fxConfirm" }
     },
     { "fx-wait": jshtml.$({ "until": $triggerSave }) },
-    { "fx-yield": '"Confirmation needed: Save this count?"', $: { score: "#fxConfirm", id: "confirmResult" } },
+    { "fx-yield": '"Confirmation needed: Save this count?"', $: { for: "#fxConfirm", id: "confirmResult" } },
     {
       "fx-switch": [
         {
