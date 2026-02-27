@@ -118,8 +118,8 @@ const runSwitch: StructureRunner = async (note, ctx, deps) => {
 };
 
 const overlayContext = (
-  parent: Record<string | symbol, any>,
-  patch: Record<string | symbol, any>
+  parent: Record<string, any>,
+  patch: Record<string, any>
 ) => {
   const scoped = Object.create(parent);
   for (const k of Reflect.ownKeys(patch)) {
@@ -130,7 +130,7 @@ const overlayContext = (
       configurable: true,
     });
   }
-  return scoped as Record<string | symbol, any>;
+  return scoped as Record<string, any>;
 };
 
 const runContext: StructureRunner = async (note, ctx, deps) => {

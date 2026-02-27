@@ -12,7 +12,7 @@ import {
   type FxContextNote,
   type FxLoopNote,
 } from "./blooky-fx-types";
-import { prepare as prepareImpl, execute as executeImpl, FxRefSymbol, RETURN_VALUE } from "./runtime/engine";
+import { prepare as prepareImpl, execute as executeImpl, FxRefSymbol } from "./runtime/engine";
 import { createRegistry, registerDefault } from "./runtime/registry";
 import { createDefaultProfile } from "./runtime/profile";
 import { DripPlan } from "./blooky-fp-types";
@@ -119,4 +119,3 @@ export const fx = {
   }),
 };
 
-export { RETURN_VALUE };

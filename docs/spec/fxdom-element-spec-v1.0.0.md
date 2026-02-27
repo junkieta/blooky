@@ -658,7 +658,7 @@ fxdom は「DOM 外参照禁止」のような一般語彙で ContextRef を否�
 
 ### Context Vocabulary Mapping（Normative）
 
-- **AppContext**: 実行時の値辞書（`Record<string | symbol, unknown>` 相当）
+- **AppContext**: 実行時の値辞書（`Record<string, unknown>` 相当）
 - **ContextRef**: fxdom 上のキー参照表現（例: `"$count"`）
 - **Resolution**: ContextRef を AppContext に対して解決する処理（Host/Runner の責務）
 

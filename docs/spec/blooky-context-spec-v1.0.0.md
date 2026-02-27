@@ -66,17 +66,11 @@ Context はデータの入れ物ではなく、結合の定義である。
 ## 1.4 ContextKey（Normative）
 
 ```ts
-type ContextKey = string | symbol
+type ContextKey = string
 ```
 
 * ContextKey は同一スコープ内で一意でなければならない（MUST）。
 * 親子スコープ間で同一 key が存在する場合の解決規則は §1.5 に従う（MUST）。
-
-### 1.4.1 symbol 利用時の責務（Normative Clarification）
-
-* ContextKey に `symbol` を使用してよい（MAY）。
-* Host は symbol を利用する場合、必要に応じて表示名または輸送用マッピングを提供しなければならない（MUST）。
-* remote transport を行う場合の正規形は Appendix A に従わなければならない（MUST）。
 
 ---
 
@@ -131,8 +125,6 @@ type ContextValue = ContextRef | Literal
 ```ts
 type LiteralPrimitive = undefined | null | boolean | number | bigint | string
 ```
-
-symbol は LiteralPrimitive に含めてはならない（MUST NOT）。
 
 ---
 
@@ -280,15 +272,7 @@ type ContextValueWire = {
 
 ---
 
-## A.5 symbol key（Normative）
-
-* wire 送信可能な symbol は **global symbol（Symbol.keyFor により文字列化可能）**に限る（MUST）。
-* 非global symbol を wire 送信してはならない（MUST NOT）。
-* `ContextKeyWire.kind:"symbol"` の `value` は `Symbol.keyFor(symbol)` の結果でなければならない（MUST）。
-
----
-
-# 6. Design Guarantees
+# 5. Design Guarantees
 
 * Context は fv v1.0.0 と整合する
 * encode/decode の非対称性が明示される

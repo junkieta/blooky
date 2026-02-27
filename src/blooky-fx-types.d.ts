@@ -24,7 +24,7 @@ export type FxRef<T> = FxRefKey | Prop<T> | T;
 
 
 // ─── AppContext: アプリケーションコンテキスト ───
-export type AppContext = Record<string | symbol, any>;
+export type AppContext = Record<string, any>;
 
 
 export type CancelReason = 
@@ -167,7 +167,7 @@ export type StepObserver = (step: ExecutionStep) => void | Promise<void>
 export interface ExecutionHandle {
   cancel: () => void;
   observeStep: (fn: StepObserver) => () => void
-  done: Promise<AppContext>;
+  done: Promise<unknown>;
 }
 
 // ─── FxFactoryMap ───
@@ -238,7 +238,7 @@ export type YieldConditionRef = {
 
 export type PerfCtx = {
   note: FxNote;
-  appContext: Record<string | symbol, any>;
+  appContext: AppContext;
   execContext: ExecContext;
   executionId: string;
 };
@@ -246,7 +246,7 @@ export type PerfCtx = {
 export type Semantics = (note: FxNote, ctx: PerfCtx) => Generator<SemanticEvent, void, void>;
 export type RunChild = (
   n: FxNote,
-  overrideAppContext?: Record<string | symbol, any>,
+  overrideAppContext?: AppContext,
   overrideCancelToken?: CancelToken
 ) => Promise<unknown>;
 export type StepSink = (step: ExecutionStep) => void;

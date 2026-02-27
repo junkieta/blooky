@@ -19,8 +19,6 @@ import type {
 } from "../blooky-fx-types";
 import { Prop } from "../blooky-fp-types";
 
-export const RETURN_VALUE = Symbol("RETURN_VALUE");
-
 const NotResolved = Symbol.for("NotResolved");
 
 const isCancelledError = (e: unknown): e is Error =>
@@ -45,7 +43,7 @@ function createCancelToken(parent?: CancelToken): CancelToken {
   };
 }
 
-const createProxyContext = (appContext: AppContext, idRecord: Record<string | symbol, any>): AppContext =>
+const createProxyContext = (appContext: AppContext, idRecord: Record<string, any>): AppContext =>
   new Proxy(appContext, {
     get(target, key) {
       if (key in idRecord) return idRecord[key as any];
@@ -99,9 +97,8 @@ const defaultResolve = <T>(ref: FxRef<T>, appContext: AppContext): Prop<T> => {
 };
 
 export function prepare(flow: FxNote, initialAppContext: AppContext, parent?: Partial<ExecContext>): PreparedFx {
-  const localRecord: Record<string | symbol, any> = {
+  const localRecord: Record<string, any> = {
     $_: "$_" in (initialAppContext as any) ? (initialAppContext as any).$_ : NotResolved,
-    [RETURN_VALUE]: RETURN_VALUE in (initialAppContext as any) ? (initialAppContext as any)[RETURN_VALUE] : NotResolved,
   };
 
   flatten(flow).forEach((n) => {
@@ -136,7 +133,7 @@ export function execute(args: {
   const run = async (
     note: FxNote,
     parentId: string,
-    appCtx: Record<string | symbol, any>,
+    appCtx: Record<string, any>,
     cancelToken: CancelToken
   ): Promise<unknown> => {
     const ctx: PerfCtx = {
@@ -243,9 +240,8 @@ export function execute(args: {
           }
         }
 
-        (appContext as any)[RETURN_VALUE] = finalValue;
         if (rootNote.id) (appContext as any)["#" + rootNote.id] = finalValue;
-        resolve(appContext);
+        resolve(finalValue);
       })().catch(reject);
     });
   });

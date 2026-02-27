@@ -342,7 +342,7 @@ Bridge Profile は、Bridge が以下を解釈するための契約である：
 ```ts
 export type TickId = string | number;
 
-export type AppContext = Record<string | symbol, unknown>;
+export type AppContext = Record<string, unknown>;
 
 interface BridgeProfile {
   /**

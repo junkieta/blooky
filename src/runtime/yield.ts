@@ -73,8 +73,8 @@ export class CompositeYieldDriver implements YieldDriver {
 
 
 // fxdom/yield-driver-template.ts
-import { executeByElement, type FxEffectElement } from "../blooky-fxdom"; // 実際の型に合わせて
-import { isFxRefKey, RETURN_VALUE } from "./engine";
+import { type FxEffectElement } from "../blooky-fxdom"; // 実際の型に合わせて
+import { isFxRefKey } from "./engine";
 
 type Deps = {
   hub: YieldHub;
@@ -111,7 +111,7 @@ export class TemplateYieldDriver implements YieldDriver {
       // clone
       const frag = template.content.cloneNode(true) as DocumentFragment;
       // 実行（input を渡したいなら appContext や attribute 経由など、方針を決める）
-      const app: Record<string | symbol, any> = Object.create(req.ctx.appContext);
+      const app: Record<string, any> = Object.create(req.ctx.appContext);
 
       // 実行対象のルートを決める（fx-effect 推奨。fx-context なら入口を追加）
       const host = document.createElement("fx-context") as FxEffectElement;
@@ -129,11 +129,27 @@ export class TemplateYieldDriver implements YieldDriver {
         cancelToken: req.ctx.execContext.cancelToken,
         executionId: `${req.ctx.executionId}:yield:${id}`,
       });
-      const yieldedApp = await handle.done; // ← 例：handle.result が Promise<unknown> だと仮定
+      const result = await handle.done;
 
       host.remove();
       // 5) resolve
-      this.deps.hub.resolve(id, yieldedApp[RETURN_VALUE]);
+      this.deps.hub.resolve(id, result);
+      /*
+      switch (result.kind) {
+        case "value":
+          this.deps.hub.resolve(id, result.done.value);
+          break;
+        case "error":
+          this.deps.hub.reject(id, result.done.error);
+          break;
+        case "timeout":
+          this.deps.hub.reject(id, new Error(`[yield/template] timeout${result.done.ms ? ` (${result.done.ms}ms)` : ""}`));
+          break;
+        case "cancel":
+          this.deps.hub.reject(id, new Error(`[yield/template] cancelled`));
+          break;
+      }      
+      */
     } catch (e) {
       this.deps.hub.reject(id, e);
     }
