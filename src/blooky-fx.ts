@@ -32,7 +32,7 @@ export const prepare = (
 };
 
 export const execute = (prepared: PreparedFx): ExecutionHandle => {
-  const commit = (plan: DripPlan) => clock.submitPlan(plan);
+  const commit = (plan: DripPlan<any>) => clock.submitPlan(plan);
   const hub = new LocalYieldHub();
   const drivers: any = {};
   // template driver は DOM が必要（ただし profile は分岐不要。driver を差し替えるだけ）
