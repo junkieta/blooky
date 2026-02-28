@@ -18,6 +18,7 @@ import type {
   RunnerProfile
 } from "../blooky-fx-types";
 import { Prop } from "../blooky-fp-types";
+import { decode, bind } from "../blooky-context";
 
 const NotResolved = Symbol.for("NotResolved");
 
@@ -76,9 +77,10 @@ export const isFxRefKey = (v: unknown): v is FxRefKey =>
   !!v && typeof v === "object" && (v as any)[FxRefSymbol] === true && typeof (v as any).key === "string";
 
 
+
 /**
  * 最低限のデフォルト resolver（resolveValue を切り離すため）
- * - FxRefKey: appContext[key]
+ * - FxRefKey: decode(appContext, {kind:"ctx", key})
  * - Prop: callable をそのまま
  * - value: 定数
  */
@@ -87,9 +89,16 @@ const defaultResolve = <T>(ref: FxRef<T>, appContext: AppContext): Prop<T> => {
   if (typeof ref === "function") return ref as any;
 
   // FxRefKey
-  if (ref && typeof ref === "object" && (ref as any)[FxRefSymbol] === true && typeof (ref as any).key === "string") {
-    const k = (ref as any).key;
-    return (() => (appContext as any)[k]) as any;
+  if (
+    ref &&
+    typeof ref === "object" &&
+    (ref as any)[FxRefSymbol] === true &&
+    typeof (ref as any).key === "string"
+  ) {
+    const k = (ref as any).key as string;
+
+    return (() => decode(appContext as any, { kind: "ctx", key: k })) as any;
+    
   }
 
   // constant
@@ -101,10 +110,13 @@ export function prepare(flow: FxNote, initialAppContext: AppContext, parent?: Pa
     $_: "$_" in (initialAppContext as any) ? (initialAppContext as any).$_ : NotResolved,
   };
 
+
   flatten(flow).forEach((n) => {
     if (!n.id) return;
     localRecord["#" + n.id] = NotResolved;
   });
+
+  Object.seal(localRecord);
 
   const appContext = createProxyContext(initialAppContext, localRecord);
   const cancelToken = createCancelToken(parent?.cancelToken);
@@ -225,6 +237,10 @@ export function execute(args: {
   };
 
   const done = new Promise((resolve,reject)=>{
+    // codec登録
+    for (const k of Object.keys(appContext)) {
+      bind(appContext, k, appContext[k]);
+    }
     queueMicrotask(() => {
       (async () => {
         let finalValue: unknown = undefined;
