@@ -53,14 +53,14 @@ const isLiteralPrimitive = (v: unknown): v is LiteralPrimitive =>
 const isObjectLike = (v: unknown): v is object =>
   (typeof v === "object" && v !== null) || typeof v === "function";
 
-const assertContextObject = (ctx: unknown): asserts ctx is ContextObject => {
+function assertContextObject(ctx: unknown): asserts ctx is ContextObject {
   if (!ctx || typeof ctx !== "object") {
     throw new ContextCodecError(
       "VALUE_CONSTRAINT",
       "[context] Context must be a non-null object."
     );
   }
-};
+}
 
 const getOrInitMeta = (ctx: object): ContextMeta => {
   const existing = META.get(ctx);
