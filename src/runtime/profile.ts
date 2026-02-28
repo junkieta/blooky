@@ -1,11 +1,11 @@
 import { drip } from "../blooky-fp";
-import { DripperStream, DripPlan, Prop } from "../blooky-fp-types";
+import { DripperStream, DripPlan, Prop, PropPlan } from "../blooky-fp-types";
 import type { CancelToken, FxNote, FxRef, PerfCtx, RunnerProfile, SuspendOutcome, SuspendUntil, YieldConditionRef, YieldDriver, YieldHub, YieldLocator, YieldSession } from "../blooky-fx-types";
 import { resolveYieldLocator } from "./yield";
 
 export const createDefaultProfile = (deps: {
   resolve: <T>(ref: FxRef<T>) => Prop<T>;
-  commit: (plan: DripPlan) => Promise<void>|void;
+  commit: (plan: DripPlan<any>) => Promise<void>|void;
   observeCommit: (f: (plan: Map<Prop<any>, any>) => void) => (p: Prop<any>) => () => void;
   yieldHub: YieldHub;
   yieldDriver: YieldDriver;
@@ -165,8 +165,7 @@ export const createDefaultProfile = (deps: {
     // 2) done があれば FRP 接続（必要なときだけ）
     const done = (note as any).done;
     if (done !== undefined) {
-      const dripper = resolveRef<DripperStream<any>>(done, ctx);
-      await deps.commit(drip(value)(dripper));
+      await deps.commit({ dripper: resolveRef<DripperStream<any>>(done, ctx), value });
     }
   };
 
