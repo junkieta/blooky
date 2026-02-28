@@ -51,6 +51,7 @@ export const execute = (prepared: PreparedFx): ExecutionHandle => {
   const profile = createDefaultProfile({
     resolve: prepared.execContext.resolve,
     commit,
+    observeCommit: clock.observeCommit,
     yieldHub: hub,
     yieldDriver,
   });

@@ -1,12 +1,12 @@
 import { drip } from "../blooky-fp";
 import { DripperStream, DripPlan, Prop } from "../blooky-fp-types";
 import type { CancelToken, FxNote, FxRef, PerfCtx, RunnerProfile, SuspendOutcome, SuspendUntil, YieldConditionRef, YieldDriver, YieldHub, YieldLocator, YieldSession } from "../blooky-fx-types";
-import { clock } from "./clock";
 import { resolveYieldLocator } from "./yield";
 
 export const createDefaultProfile = (deps: {
   resolve: <T>(ref: FxRef<T>) => Prop<T>;
-  commit: (plan: DripPlan) => Promise<void>|void
+  commit: (plan: DripPlan) => Promise<void>|void;
+  observeCommit: (f: (plan: Map<Prop<any>, any>) => void) => (p: Prop<any>) => () => void;
   yieldHub: YieldHub;
   yieldDriver: YieldDriver;
 }): RunnerProfile => {
@@ -42,6 +42,57 @@ export const createDefaultProfile = (deps: {
   
   const isYield = (u: unknown): u is YieldConditionRef =>
     !!u && typeof u === "object" && (u as any).kind === "yield";
+
+  const watchPropUntilTrue = (p: Prop<boolean>) => {
+    let done = false;
+    let unobserve: (() => void) | undefined;
+
+    const dispose = () => {
+      if (done) return;
+      done = true;
+      unobserve?.();
+      unobserve = undefined;
+    };
+
+    const promise = new Promise<void>((resolve, reject) => {
+      const check = () => {
+        try {
+          if (p()) {
+            dispose();
+            resolve();
+          }
+        } catch (e) {
+          dispose();
+          reject(e);
+        }
+      };
+
+      // 即時条件充足なら subscribe せず抜ける
+      check();
+      if (done) return;
+
+      // observeCommit は pre-commit で呼ばれるため、
+      // callback 引数の plan に載る「次値」を優先して判定する。
+      unobserve = deps.observeCommit((plan) => {
+        try {
+          if (plan.has(p) && !!plan.get(p)) {
+            dispose();
+            resolve();
+            return;
+          }
+          check();
+        } catch (e) {
+          dispose();
+          reject(e);
+        }
+      })(p);
+
+      // subscribe 直後に充足した場合の取りこぼし対策
+      check();
+    });
+
+    return { promise, dispose };
+  };
 
   const awaitSuspend = async (until: SuspendUntil, ctx: PerfCtx, cancel: CancelToken): Promise<SuspendOutcome> => {
 
@@ -140,55 +191,4 @@ const waitCancel = async (cancelToken: CancelToken) => {
     await new Promise((r) => setTimeout(r, 16));
   }
   throw new Error(`cancelled:${cancelToken.reason ?? "user"}`);
-};
-
-const watchPropUntilTrue = (p: Prop<boolean>) => {
-  let done = false;
-  let unobserve: (() => void) | undefined;
-
-  const dispose = () => {
-    if (done) return;
-    done = true;
-    unobserve?.();
-    unobserve = undefined;
-  };
-
-  const promise = new Promise<void>((resolve, reject) => {
-    const check = () => {
-      try {
-        if (p()) {
-          dispose();
-          resolve();
-        }
-      } catch (e) {
-        dispose();
-        reject(e);
-      }
-    };
-
-    // 即時条件充足なら subscribe せず抜ける
-    check();
-    if (done) return;
-
-    // clock.observeCommit は pre-commit で呼ばれるため、
-    // callback 引数の plan に載る「次値」を優先して判定する。
-    unobserve = clock.observeCommit((plan) => {
-      try {
-        if (plan.has(p) && !!plan.get(p)) {
-          dispose();
-          resolve();
-          return;
-        }
-        check();
-      } catch (e) {
-        dispose();
-        reject(e);
-      }
-    })(p);
-
-    // subscribe 直後に充足した場合の取りこぼし対策
-    check();
-  });
-
-  return { promise, dispose };
 };
