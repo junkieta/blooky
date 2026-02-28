@@ -1,3 +1,4 @@
+import { bind, ContextCodecError } from "../blooky-context";
 import type { Registry, Semantics, StructureRunner, YieldConditionRef } from "../blooky-fx-types";
 import type { CancelToken } from "../blooky-fx-types";
 import { Cancelled } from "./engine";
@@ -122,12 +123,23 @@ const overlayContext = (
   patch: Record<string, any>
 ) => {
   const scoped = Object.create(parent);
-  for (const k of Reflect.ownKeys(patch)) {
+  for (const k of Reflect.ownKeys(patch) as string[]) {
+    // ContextKey = string 方針をここで強制
+    if (typeof k !== "string") {
+      throw new Error(`[context] overlayContext: non-string key is not allowed: ${String(k)}`);
+    }
+    
+    const v = (patch as any)[k];
+    
+    // 1) codec metadata
+    bind(scoped, k, v);
+
+    // 2) actual property (keep it immutable to avoid meta/value divergence)
     Object.defineProperty(scoped, k, {
-      value: (patch as any)[k as any],
-      writable: true,
+      value: v,
       enumerable: true,
-      configurable: true,
+      writable: false,
+      configurable: false,
     });
   }
   return scoped as Record<string, any>;
