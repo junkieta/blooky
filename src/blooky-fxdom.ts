@@ -134,17 +134,14 @@ class FxWaitElement extends EffectElement {
 
   toFxNote(): FxNote {
     const msAttr = this.getAttribute("ms");
-    let ms : FxRef<number>;
+    let ms : FxRef<number>|undefined = undefined;
     
-    // ms属性がない場合、待機時間は0とする
-    if(!msAttr)
-      ms = () => 0;
-    // ms属性が数値の場合、静的な値を返すPropとする
-    else if(!isNaN(parseInt(msAttr)))
-      ms = () => parseInt(msAttr);
-    // ms属性が文字列の場合、コンテキストへの参照とする
-    else
-      ms = ref<number>(msAttr);
+    if(msAttr !== null) {
+      // ms属性が数値の場合、静的な値を返すPropとする
+      // isFiniteでtrueでなければ参照とみなしてrefを返す
+      const n = Number(msAttr);
+      ms = Number.isFinite(n) ? () => n : ref<number>(msAttr);
+    }
       
     // until属性がある場合、コンテキストへの参照とする
     const until = this.hasAttribute("until") ? ref<boolean>(this.getAttribute("until")!) : undefined;

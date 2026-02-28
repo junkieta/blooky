@@ -19,9 +19,24 @@ const semReturn: Semantics = function* (note) {
 
 const semWait: Semantics = function* (note) {
   if (note.type !== "wait") return;
-  yield { type: "effect", ref: { kind: "wait", ms: note.ms, until: note.until } };
-};
 
+  if (note.ms !== undefined && note.until !== undefined) {
+    throw new Error("fx-wait: specify either ms or until");
+  }
+
+  // 例: note.ms があるなら timer にする
+  if (note.ms !== undefined) {
+    yield { type: "suspend", until: { kind: "timer", ms: note.ms } };
+    return;
+  }
+
+  // 例: note.until が FxRef<boolean> なら ref にする
+  if (note.until !== undefined) {
+    yield { type: "suspend", until: { kind: "ref", ref: note.until } };
+    return;
+  }
+
+};
 
 const semYield: Semantics = function* (note) {
   if (note.type !== "yield") return;

@@ -301,8 +301,6 @@ export type DispatchDeps = {
   emit: StepSink;
 };
 
-const isYield = (u: unknown): u is YieldConditionRef =>
-  !!u && typeof u === "object" && (u as any).kind === "yield";
 
 const dispatchSemEvent = async (ev: SemanticEvent, deps: DispatchDeps) => {
   if (deps.cancelToken.cancelled()) throw new Cancelled(deps.cancelToken.reason ?? "user");
@@ -321,18 +319,20 @@ const dispatchSemEvent = async (ev: SemanticEvent, deps: DispatchDeps) => {
     }
 
     case "suspend": {
-      // yield 専用
-      if (!isYield(ev.until)) throw new Error("Unsupported suspend condition (expected yield)");
       deps.emit({ phase: "suspend", note: deps.ctx.note, data: { until: ev.until } });
 
-      const session = await deps.profile.startYield(ev.until, deps.ctx);
-      await deps.profile.awaitYield(session, deps.ctx, deps.cancelToken);
-      const value = await deps.profile.getYieldResult(session, deps.ctx);
+      // Profile に委譲：戻り値で「値あり/なし」を表現
+      const out = await deps.profile.awaitSuspend(ev.until, deps.ctx, deps.cancelToken);
 
       deps.emit({ phase: "resume", note: deps.ctx.note, data: { until: ev.until } });
-      deps.emit({ phase: "result", note: deps.ctx.note, data: { value } });
 
-      return { kind: "result" as const, value };
+      if (out.kind === "result") {
+        deps.emit({ phase: "result", note: deps.ctx.note, data: { value: out.value } });
+        return { kind: "result" as const, value: out.value };
+      }
+
+      // 値を返さない wait は continue
+      return { kind: "continue" as const };
     }
 
     case "result":

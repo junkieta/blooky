@@ -175,7 +175,6 @@ export type FxFactoryMap = {
   [K in FxNoteType]: (...args: any[]) => Extract<FxNote, { type: K }>;
 };
 
-
 export type EffectOutcome =
   | { kind: "none" }
   | { kind: "result"; value: unknown };
@@ -186,6 +185,10 @@ export type YieldSession = {
   until: YieldConditionRef;
 };
 
+type SuspendOutcome =
+  | { kind: "continue" }
+  | { kind: "result"; value: unknown };
+
 export interface RunnerProfile {
   resolveRef<T>(ref: FxRef<T>, ctx: PerfCtx): T;
 
@@ -193,6 +196,9 @@ export interface RunnerProfile {
     note: Extract<FxNote, { type: "condition" | "switch" }>,
     ctx: PerfCtx
   ): FxNote | null;
+
+  // Yield or Wait
+  awaitSuspend(until: SuspendUntil, ctx: PerfCtx, cancel: CancelToken): Promise<SuspendOutcome>;
 
   // Yield lifecycle
   startYield(until: YieldConditionRef, ctx: PerfCtx): Promise<YieldSession>;
@@ -216,9 +222,19 @@ export type ConditionRef = unknown;
 
 export type SemanticEvent =
   | { type: "result"; value: unknown }
-  | { type: "suspend"; until: ConditionRef }
+  | { type: "suspend"; until: SuspendUntil }
+//  | { type: "suspend"; until: ConditionRef }
   | { type: "effect"; ref: unknown }
   | { type: "terminate"; value?: unknown };
+
+export type YieldUntil = YieldConditionRef;
+
+// fx-wait 用（必要最小限の例）
+export type WaitUntil =
+  | { kind: "timer"; ms: FxRef<number> }              // ms 待つ
+  | { kind: "ref"; ref: FxRef<Prop<boolean>> };       // resolveRef で boolean を得て監視（Profileが意味づけ）
+
+export type SuspendUntil = YieldUntil | WaitUntil;
 
 // ─────────────────────────────────────────────
 // Yield (remote 対応) 固定型
