@@ -21,19 +21,21 @@ const semReturn: Semantics = function* (note) {
 const semWait: Semantics = function* (note) {
   if (note.type !== "wait") return;
 
-  if (note.ms !== undefined && note.until !== undefined) {
+  const {ms,until} = note;
+  if (ms !== undefined && until !== undefined) {
     throw new Error("fx-wait: specify either ms or until");
   }
-
-  // 例: note.ms があるなら timer にする
-  if (note.ms !== undefined) {
-    yield { type: "suspend", until: { kind: "timer", ms: note.ms } };
+  if (ms === undefined && until === undefined) {
+    throw new Error("fx-wait: specify either ms or until");
+  }
+  // note.ms があるなら timer にする
+  if (ms !== undefined) {
+    yield { type: "suspend", until: { kind: "timer", ms } };
     return;
   }
-
-  // 例: note.until が FxRef<boolean> なら ref にする
-  if (note.until !== undefined) {
-    yield { type: "suspend", until: { kind: "ref", ref: note.until } };
+  // note.until が FxRef<boolean> なら ref にする
+  if (until !== undefined) {
+    yield { type: "suspend", until: { kind: "ref", ref: until } };
     return;
   }
 
@@ -109,7 +111,7 @@ const runLoop: StructureRunner = async (note, ctx, deps) => {
   if (note.type !== "loop") return undefined;
   let i = 0;
   let last: unknown = undefined;
-  const p = ctx.execContext.resolver(note.cond as any, ctx);
+  const p = ctx.runtime.resolver(note.cond as any, ctx);
   while (p()) {
     if (deps.cancelToken.cancelled()) {
       throw new Cancelled(deps.cancelToken.reason ?? "user");

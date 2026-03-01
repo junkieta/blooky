@@ -1,6 +1,7 @@
 import { isChainedProp } from "../blooky-fp";
 import { DripperStream, DripPlan, Prop, PropPlan } from "../blooky-fp-types";
 import type { CancelToken, FxNote, FxRef, PerfCtx, RunnerProfile, SuspendOutcome, SuspendUntil, YieldConditionRef, YieldDriver, YieldHub, YieldLocator, YieldSession } from "../blooky-fx-types";
+import { isFxRefKey } from "./engine";
 import { resolveYieldLocator } from "./yield";
 
 export const createDefaultProfile = (deps: {
@@ -10,7 +11,7 @@ export const createDefaultProfile = (deps: {
   yieldDriver: YieldDriver;
 }): RunnerProfile => {
   const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
-  const resolveRef = <T>(ref: FxRef<T>, _ctx?: PerfCtx): Prop<T> => _ctx.execContext.resolver(ref, _ctx);
+  const resolveRef = <T>(ref: FxRef<T>, _ctx?: PerfCtx): Prop<T> => _ctx.runtime.resolver(ref, _ctx);
 
   const resolveSelection: RunnerProfile["resolveSelection"] = (note, ctx) => {
     if (note.type === "condition") return resolveRef(note.if, ctx)() ? note.then : note.else ?? null;
@@ -100,16 +101,15 @@ export const createDefaultProfile = (deps: {
 
   const applyEffect: RunnerProfile["applyEffect"] = async (ref, ctx) => {
     const e: any = ref;
-
     if (e?.kind !== "call") return { kind: "none" };
 
-    // action は 関数自体を参照する可能性が高い
     const action = resolveRef(e.action, ctx) as any;
     const input = e.input === undefined ? undefined : resolveRef(e.input, ctx)();
-
     try {
-      const out = action.call(ctx.appContext, input);
+      const callable = action.FX_CALL_ACTION_PROP ? action() : action;
+      const out = callable.call(ctx.appContext, input);
       const value = out && typeof out.then === "function" ? await out : out;
+      
       return { kind: "result", value: { ok: true, value } };
     } catch (error) {
       return { kind: "result", value: { ok: false, error } };
@@ -121,7 +121,7 @@ export const createDefaultProfile = (deps: {
     const value = resolveRef(result, ctx)();
     // 1) Context 公開
     if(note.id) {
-      ctx.execContext.idSlots["#"+note.id] = value;
+      ctx.runtime.idSlots["#"+note.id] = value;
     }
     // 2) done があれば FRP 接続（必要なときだけ）
     const done = (note as any).done;
