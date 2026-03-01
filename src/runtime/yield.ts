@@ -98,7 +98,8 @@ export class TemplateYieldDriver implements YieldDriver {
     try {
       let template: HTMLTemplateElement | null = null;
 
-      if (locator.kind === "template-el") template = locator.el;
+      if (locator.kind === "template-el")
+        template = locator.el;
       else if (locator.kind === "template") {
         const get = this.deps.getTemplateById ?? ((x) => document.getElementById(x) as any);
         template = get(locator.templateId);
@@ -106,27 +107,20 @@ export class TemplateYieldDriver implements YieldDriver {
         throw new Error(`[yield/template] invalid locator.kind=${(locator as any).kind}`);
       }
 
-      if (!template) throw new Error("[yield/template] template not found");
-
-      // clone
-      const frag = template.content.cloneNode(true) as DocumentFragment;
-      // 実行（input を渡したいなら appContext や attribute 経由など、方針を決める）
-      const app: Record<string, any> = Object.create(req.ctx.appContext);
+      if (!template || template.tagName !== "TEMPLATE") throw new Error("[yield/template] template not found");
 
       // 実行対象のルートを決める（fx-effect 推奨。fx-context なら入口を追加）
       const host = document.createElement("fx-context") as FxEffectElement;
       host.id = "YIELDED" + id;
-      host.setContext(app);
-      host.appendChild(frag);
-
+      host.setContext(req.ctx.appContext);
+      host.appendChild(template.content.cloneNode(true));
       // connected 要件のため attach
       this.deps.attachParent.appendChild(host);
 
-      if (input !== undefined) (app as any)["$_"] = input;
-
-      const handle = query(host.toFxNote(), app, {
-        resolver: req.ctx.execContext.resolver,
-        cancelToken: req.ctx.execContext.cancelToken,
+      const runtime = req.ctx.runtime;
+      const handle = query(host.toFxNote(), req.ctx.appContext, {
+        idSlots: input ? { $_: input } : undefined,
+        cancelToken: runtime.cancelToken,
         executionId: `${req.ctx.executionId}:yield:${id}`,
       });
       const result = await handle.done;
@@ -201,7 +195,7 @@ export const resolveYieldLocator = (
   const raw = (t as any).ref;
   const resolved =
     isFxRefKey(raw) || typeof raw === "function"
-      ? ctx.execContext.resolver(raw as FxRef<unknown>, ctx)() || document.getElementById(raw.key?.slice(1))
+      ? ctx.runtime.resolver(raw as FxRef<unknown>, ctx)() || document.getElementById(raw.key?.slice(1))
       : raw;
 
   if (typeof raw === "string") return { kind: "template", templateId: raw };

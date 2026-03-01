@@ -1,7 +1,7 @@
 import { jshtml, mutations, prime } from "./blooky-fv";
 import { filter, hold, isChainedProp, isDripperStream, isStream, isVertex, map, vertex } from "./blooky-fp";
 import { EffectElementTagNameMap as DefaultEffectElementTagNameMap, EffectElement, FxEffectElement as ConcreteEffectElementConstructor, fxdom } from "./blooky-fxdom";
-import { FxNote, FxMiddleware, ExecContext } from "./blooky-fx-types";
+import { FxNote, FxMiddleware, FxRuntime } from "./blooky-fx-types";
 import { DebugController } from "./fx/debugger";
 
 const FxNoteMap = new WeakMap<FxNote, EffectElement>();
@@ -76,7 +76,7 @@ const debugMiddleware: FxMiddleware = async ({ step, node, executionId }, next) 
 };
 
 // ExecContextForDebug の更新
-const ExecContextForDebug: Partial<ExecContext> = {
+const ExecContextForDebug: Partial<FxRuntime> = {
   middlewares: [debugMiddleware],
   debugController: globalDebugController,
 };
@@ -167,7 +167,7 @@ EffectElementTagNameMap["fx-effect"] = class extends (
   static observedAttributes = ["theme"];
 
   private themeCSS?: CSSStyleSheet;
-  protected _execContext?: Partial<ExecContext> | undefined = ExecContextForDebug;
+  protected _execContext?: Partial<FxRuntime> | undefined = ExecContextForDebug;
 
   loadTheme(src: string) {
     if (!src || !this.shadowRoot) return;

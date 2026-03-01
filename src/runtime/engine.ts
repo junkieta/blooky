@@ -15,7 +15,8 @@ import type {
   SemanticEvent,
   StepSink,
   YieldConditionRef,
-  RunnerProfile
+  RunnerProfile,
+  FxCallAction
 } from "../blooky-fx-types";
 import { Prop } from "../blooky-fp-types";
 import { decode, bind } from "../blooky-context";
@@ -44,34 +45,6 @@ function createCancelToken(parent?: CancelToken): CancelToken {
   };
 }
 
-const createProxyContext = (appContext: AppContext, idRecord: Record<string, any>): AppContext =>
-  new Proxy(appContext, {
-    get(target, key) {
-      if (key in idRecord) return idRecord[key as any];
-      return Reflect.get(target, key);
-    },
-    set(_, key, value) {
-      if (key in idRecord) {
-        idRecord[key as any] = value;
-        return true;
-      }
-      return false;
-    },
-    has(target, key) {
-      return key in idRecord || Reflect.has(target, key);
-    },
-    ownKeys(target) {
-      return [...new Set([...Reflect.ownKeys(target), ...Reflect.ownKeys(idRecord)])];
-    },
-    getOwnPropertyDescriptor(target, key) {
-      if (key in idRecord) {
-        return { value: idRecord[key as any], enumerable: true, writable: true, configurable: true };
-      }
-      return Reflect.getOwnPropertyDescriptor(target, key);
-    },
-  });
-
-
 export const FxRefSymbol = Symbol("FxRefSymbol") as typeof FxRefSymbolDec;
 export const isFxRefKey = (v: unknown): v is FxRefKey =>
   !!v &&
@@ -79,6 +52,8 @@ export const isFxRefKey = (v: unknown): v is FxRefKey =>
   (v as any)[FxRefSymbol] === true &&
   typeof (v as any).key === "string";
 
+export const isFxCallActionObject = (v: unknown): v is FxCallAction => 
+  !!v && (typeof v === "object" && typeof (v as FxCallAction).call === "function");
 
 
 /**
@@ -88,28 +63,26 @@ export const isFxRefKey = (v: unknown): v is FxRefKey =>
  * - value: 定数
  */
 const defaultResolve = <T>(ref: FxRef<T>, ctx: PerfCtx): Prop<T> => {
-  // Prop<T> は callable を想定
-  if (typeof ref === "function")
-    return ref as any;
-
-  // FxRefKey
   if (isFxRefKey(ref)) {
     const k = ref.key;
-    if(k.startsWith("#"))
-      return () => ctx.execContext.idSlots[k] || document.getElementById(k.slice(1));
-    const v = decode(ctx.appContext as any, { kind: "ctx", key: k });
-    return (typeof v === "function" ? v : () => v) as Prop<T>;
+    if(k.startsWith("#") || k.startsWith("$_"))
+      return () => ctx.runtime.idSlots[k] ?? (typeof document !== "undefined" ? document.getElementById(k.slice(1)) : null);
+    const v = decode(ctx.appContext as any, { kind: "ctx", key: k }) as FxRef<T>;
+    return defaultResolve(v, ctx);
   }
-
-  // constant
-  return (() => ref as T) as any;
+  
+  if (typeof ref === "function")
+    return ref as any;
+  
+  const p = () => ref as T;
+  return isFxCallActionObject(ref)
+    ? Object.assign(p, { FX_CALL_ACTION_PROP: true })
+    : p;
 };
 
-export function prepare(flow: FxNote, initialAppContext: AppContext, parent?: Partial<FxRuntime>): PreparedFx {
-  const idSlots: Record<string, any> = {
-    $_: "$_" in (initialAppContext as any) ? (initialAppContext as any).$_ : NotResolved,
-  };
+export function prepare(flow: FxNote, initialAppContext: AppContext = {}, parent?: Partial<FxRuntime>): PreparedFx {
 
+  const idSlots: Record<string, any> = Object.create(parent?.idSlots ?? null);
 
   flatten(flow).forEach((n) => {
     if (n.id) idSlots["#" + n.id] = NotResolved;
@@ -118,14 +91,28 @@ export function prepare(flow: FxNote, initialAppContext: AppContext, parent?: Pa
   // 書き込みはツリー内のid情報に基づいたキーだけに閉じる
   Object.seal(idSlots);
 
-  const appContext = createProxyContext(initialAppContext, idSlots);
   const cancelToken = createCancelToken(parent?.cancelToken);
   const runtime: FxRuntime = {
-    resolver: defaultResolve,
+    resolver: parent?.resolver ?? defaultResolve,
     cancelToken,
     idSlots,
     executionId: parent?.executionId ?? `exec-${Date.now()}-${Math.random().toString(36).slice(2)}`,
   };
+
+  const names = Object.getOwnPropertyNames(initialAppContext);
+  const descriptors = names.reduce((descs, name)=>{
+    descs[name] = {
+      value: initialAppContext[name],
+      writable: false,
+      enumerable: true,
+      configurable: false,
+    };
+    return descs;
+  }, {} as PropertyDescriptorMap);
+  
+  const appContext = Object.create(null, descriptors);
+
+  names.forEach((key)=>bind(appContext, key, appContext[key]));
 
   return { rootNote: flow, runtime, appContext };
 }
@@ -149,7 +136,7 @@ export function execute(args: {
   ): Promise<unknown> => {
     const ctx: PerfCtx = {
       note,
-      execContext,
+      runtime: execContext,
       appContext: appCtx,
       executionId: `${parentId}:${note.type}`
     };
@@ -236,10 +223,6 @@ export function execute(args: {
   };
 
   const done = new Promise((resolve,reject)=>{
-    // codec登録
-    for (const k of Object.keys(appContext)) {
-      bind(appContext, k, appContext[k]);
-    }
     queueMicrotask(() => {
       (async () => {
         let finalValue: unknown = undefined;
@@ -316,7 +299,6 @@ export type DispatchDeps = {
   emit: StepSink;
 };
 
-
 const dispatchSemEvent = async (ev: SemanticEvent, deps: DispatchDeps) => {
   if (deps.cancelToken.cancelled()) throw new Cancelled(deps.cancelToken.reason ?? "user");
 
@@ -352,14 +334,14 @@ const dispatchSemEvent = async (ev: SemanticEvent, deps: DispatchDeps) => {
 
     case "result":
       {
-        const value = deps.ctx.execContext.resolver(ev.value as FxRef<unknown>, deps.ctx)();
+        const value = deps.ctx.runtime.resolver(ev.value as FxRef<unknown>, deps.ctx)();
         deps.emit({ phase: "result", note: deps.ctx.note, data: { value } });
         return { kind: "result" as const, value };
       }
 
     case "terminate":
       {
-        const value = deps.ctx.execContext.resolver(ev.value as FxRef<unknown>, deps.ctx)();
+        const value = deps.ctx.runtime.resolver(ev.value as FxRef<unknown>, deps.ctx)();
         deps.emit({ phase: "terminate", note: deps.ctx.note, data: { value } });
         throw new Terminated(value);
       }

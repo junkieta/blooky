@@ -11,6 +11,7 @@ import {
   type FxYieldNote,
   type FxContextNote,
   type FxLoopNote,
+  FxCallAction,
 } from "./blooky-fx-types";
 import { prepare as prepareImpl, execute as executeImpl, FxRefSymbol } from "./runtime/engine";
 import { createRegistry, registerDefault } from "./runtime/registry";
@@ -97,7 +98,7 @@ export const fx = {
     ...(id ? { id } : {}),
   }),
   call: (
-    action: FxRef<(v: any) => unknown>,
+    action: FxRef<FxCallAction>,
     opt: Pick<FxCallNote, "input" | "done" | "id"> = {}
   ): FxCallNote => ({
     type: "call",

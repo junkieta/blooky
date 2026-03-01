@@ -114,7 +114,7 @@ export type FxSwitchNote = FxNoteBase<"switch", {
   default?: FxNote; 
 }>;
 export type FxCallNote = FxNoteBase<"call", { 
-  action: FxRef<(v: any) => unknown>; 
+  action: FxRef<FxCallAction>; 
   input?: FxRef<any>; 
   done?: FxRef<DripperStream<any>>;
 }>;
@@ -256,7 +256,7 @@ export type YieldConditionRef = {
 export type PerfCtx = {
   note: FxNote;
   appContext: AppContext;
-  execContext: FxRuntime;
+  runtime: FxRuntime;
   executionId: string;
 };
 
