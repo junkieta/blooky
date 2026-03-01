@@ -6,7 +6,7 @@
   defaultFxStylesheet,
   FxEffectElement,
 } from "./blooky-fxdom";
-import type { AppContext, ExecContext, FxNote } from "./blooky-fx-types";
+import type { AppContext, FxRuntime, FxNote } from "./blooky-fx-types";
 
 import { clock } from "./runtime/clock";
 import type { ObservedTick, CommitDripPlan } from "./runtime/clock";
@@ -457,7 +457,7 @@ export const stepToFxState = (step: StepRecord) => {
 export const executeByElement = (
   root: FxEffectElement,
   app: AppContext = {},
-  ctx?: Partial<ExecContext>
+  ctx?: Partial<FxRuntime>
 ) => {
   const handle = defaultExecuteByElement(root, app, ctx);
   handle.observeStep(stepToFxState);

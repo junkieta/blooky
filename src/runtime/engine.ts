@@ -1,7 +1,7 @@
 import type {
   FxNote,
   AppContext,
-  ExecContext,
+  FxRuntime,
   PreparedFx,
   ExecutionHandle,
   ExecutionStep,
@@ -74,7 +74,10 @@ const createProxyContext = (appContext: AppContext, idRecord: Record<string, any
 
 export const FxRefSymbol = Symbol("FxRefSymbol") as typeof FxRefSymbolDec;
 export const isFxRefKey = (v: unknown): v is FxRefKey =>
-  !!v && typeof v === "object" && (v as any)[FxRefSymbol] === true && typeof (v as any).key === "string";
+  !!v &&
+  typeof v === "object" &&
+  (v as any)[FxRefSymbol] === true &&
+  typeof (v as any).key === "string";
 
 
 
@@ -84,51 +87,47 @@ export const isFxRefKey = (v: unknown): v is FxRefKey =>
  * - Prop: callable をそのまま
  * - value: 定数
  */
-const defaultResolve = <T>(ref: FxRef<T>, appContext: AppContext): Prop<T> => {
+const defaultResolve = <T>(ref: FxRef<T>, ctx: PerfCtx): Prop<T> => {
   // Prop<T> は callable を想定
-  if (typeof ref === "function") return ref as any;
+  if (typeof ref === "function")
+    return ref as any;
 
   // FxRefKey
-  if (
-    ref &&
-    typeof ref === "object" &&
-    (ref as any)[FxRefSymbol] === true &&
-    typeof (ref as any).key === "string"
-  ) {
-    const k = (ref as any).key as string;
-
-    return (() => decode(appContext as any, { kind: "ctx", key: k })) as any;
-    
+  if (isFxRefKey(ref)) {
+    const k = ref.key;
+    if(k.startsWith("#"))
+      return () => ctx.execContext.idSlots[k] || document.getElementById(k.slice(1));
+    const v = decode(ctx.appContext as any, { kind: "ctx", key: k });
+    return (typeof v === "function" ? v : () => v) as Prop<T>;
   }
 
   // constant
   return (() => ref as T) as any;
 };
 
-export function prepare(flow: FxNote, initialAppContext: AppContext, parent?: Partial<ExecContext>): PreparedFx {
-  const localRecord: Record<string, any> = {
+export function prepare(flow: FxNote, initialAppContext: AppContext, parent?: Partial<FxRuntime>): PreparedFx {
+  const idSlots: Record<string, any> = {
     $_: "$_" in (initialAppContext as any) ? (initialAppContext as any).$_ : NotResolved,
   };
 
 
   flatten(flow).forEach((n) => {
-    if (!n.id) return;
-    localRecord["#" + n.id] = NotResolved;
+    if (n.id) idSlots["#" + n.id] = NotResolved;
   });
 
-  Object.seal(localRecord);
+  // 書き込みはツリー内のid情報に基づいたキーだけに閉じる
+  Object.seal(idSlots);
 
-  const appContext = createProxyContext(initialAppContext, localRecord);
+  const appContext = createProxyContext(initialAppContext, idSlots);
   const cancelToken = createCancelToken(parent?.cancelToken);
-  const execContext: ExecContext = {
-    resolve:
-      parent?.resolve ??
-      (<T,>(ref: FxRef<T>) => defaultResolve(ref, appContext)),
+  const runtime: FxRuntime = {
+    resolver: defaultResolve,
     cancelToken,
+    idSlots,
     executionId: parent?.executionId ?? `exec-${Date.now()}-${Math.random().toString(36).slice(2)}`,
   };
 
-  return { rootNote: flow, execContext, appContext };
+  return { rootNote: flow, runtime, appContext };
 }
 
 export function execute(args: {
@@ -137,7 +136,7 @@ export function execute(args: {
   profile: RunnerProfile;
 }): ExecutionHandle {
   const { prepared, registry, profile } = args;
-  const { rootNote, execContext, appContext } = prepared;
+  const { rootNote, runtime: execContext, appContext } = prepared;
 
   const stepObservers = new Set<StepObserver>();
   const notifyStep = notifyStepObserver(stepObservers);
@@ -256,7 +255,7 @@ export function execute(args: {
           }
         }
 
-        if (rootNote.id) (appContext as any)["#" + rootNote.id] = finalValue;
+        if (rootNote.id) execContext.idSlots["#" + rootNote.id] = finalValue;
         resolve(finalValue);
       })().catch(reject);
     });
@@ -353,14 +352,14 @@ const dispatchSemEvent = async (ev: SemanticEvent, deps: DispatchDeps) => {
 
     case "result":
       {
-        const value = deps.profile.resolveRef(ev.value as FxRef<unknown>, deps.ctx);
+        const value = deps.ctx.execContext.resolver(ev.value as FxRef<unknown>, deps.ctx)();
         deps.emit({ phase: "result", note: deps.ctx.note, data: { value } });
         return { kind: "result" as const, value };
       }
 
     case "terminate":
       {
-        const value = deps.profile.resolveRef(ev.value as FxRef<unknown>, deps.ctx);
+        const value = deps.ctx.execContext.resolver(ev.value as FxRef<unknown>, deps.ctx)();
         deps.emit({ phase: "terminate", note: deps.ctx.note, data: { value } });
         throw new Terminated(value);
       }
