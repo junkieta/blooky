@@ -53,6 +53,21 @@ const isLiteralPrimitive = (v: unknown): v is LiteralPrimitive =>
 const isObjectLike = (v: unknown): v is object =>
   (typeof v === "object" && v !== null) || typeof v === "function";
 
+export const isContextRef = (v: unknown): v is ContextRef =>
+  !!v &&
+  typeof v === "object" &&
+  (v as any).kind === "ctx" &&
+  typeof (v as any).key === "string";
+
+export const isLiteral = (v: unknown): v is Literal =>
+  !!v &&
+  typeof v === "object" &&
+  (v as any).kind === "literal" &&
+  isLiteralPrimitive((v as any).value);
+
+export const isContextValue = (v: unknown): v is ContextValue =>
+  isContextRef(v) || isLiteral(v);
+
 function assertContextObject(ctx: unknown): asserts ctx is ContextObject {
   if (!ctx || typeof ctx !== "object") {
     throw new ContextCodecError(
@@ -74,20 +89,6 @@ const getOrInitMeta = (ctx: object): ContextMeta => {
   return created;
 };
 
-export const isContextRef = (v: unknown): v is ContextRef =>
-  !!v &&
-  typeof v === "object" &&
-  (v as any).kind === "ctx" &&
-  typeof (v as any).key === "string";
-
-export const isLiteral = (v: unknown): v is Literal =>
-  !!v &&
-  typeof v === "object" &&
-  (v as any).kind === "literal" &&
-  isLiteralPrimitive((v as any).value);
-
-export const isContextValue = (v: unknown): v is ContextValue =>
-  isContextRef(v) || isLiteral(v);
 
 /**
  * bind(ctx, key, value)

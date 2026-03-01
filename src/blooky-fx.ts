@@ -1,7 +1,7 @@
 import {
   type FxNote,
   type AppContext,
-  type ExecContext,
+  type FxRuntime,
   type PreparedFx,
   type ExecutionHandle,
   type FxRef,
@@ -26,7 +26,7 @@ registerDefault(registry);
 export const prepare = (
   flow: FxNote,
   initialAppContext: AppContext = {},
-  parent?: Partial<ExecContext>
+  parent?: Partial<FxRuntime>
 ): PreparedFx => {
   return prepareImpl(flow, initialAppContext, parent);
 };
@@ -47,20 +47,18 @@ export const execute = (prepared: PreparedFx): ExecutionHandle => {
   }
   // remote driver は transport があるなら常に注入可能
   // drivers["remote"] = new RemoteYieldDriver({ hub, client: remoteClient });
-  const yieldDriver = new CompositeYieldDriver(drivers);
   const profile = createDefaultProfile({
-    resolve: prepared.execContext.resolve,
     commit,
     observeCommit: clock.observeCommit,
     yieldHub: hub,
-    yieldDriver,
+    yieldDriver: new CompositeYieldDriver(drivers),
   });
   return executeImpl({
     prepared, registry, profile
   });
 };
 
-export const query = (note: FxNote, app: AppContext = {}, ctx?: Partial<ExecContext>) =>
+export const query = (note: FxNote, app: AppContext = {}, ctx?: Partial<FxRuntime>) =>
   execute(prepare(note, app, ctx));
 
 export const ref = <T = unknown>(key: string): FxRefKey =>

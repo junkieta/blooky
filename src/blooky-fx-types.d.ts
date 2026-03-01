@@ -147,17 +147,18 @@ export type FxNote =
 
 export type FxNoteType = FxNote["type"];
 
-// ─── ExecContext: prepare で生成される実行設定 ───
-export interface ExecContext {
-  resolve: <T>(ref: FxRef<T>) => Prop<T>;
+// ─── FxRuntime: prepare で生成される実行設定 ───
+export interface FxRuntime {
+  resolver: <T>(ref: FxRef<T>, ctx: PerfCtx) => Prop<T>;
   cancelToken: CancelToken;
   executionId?: string;
+  idSlots: Record<string, any>
 }
 
 // ─── PreparedFx ───
 export interface PreparedFx {
   readonly rootNote: FxNote;
-  readonly execContext: ExecContext;
+  readonly runtime: FxRuntime;
   readonly appContext: AppContext;
 }
 
@@ -175,9 +176,6 @@ export type FxFactoryMap = {
   [K in FxNoteType]: (...args: any[]) => Extract<FxNote, { type: K }>;
 };
 
-export type EffectOutcome =
-  | { kind: "none" }
-  | { kind: "result"; value: unknown };
 
 export type YieldSession = {
   kind: "yield-session";
@@ -185,12 +183,15 @@ export type YieldSession = {
   until: YieldConditionRef;
 };
 
+export type EffectOutcome =
+  | { kind: "none" }
+  | { kind: "result"; value: unknown };
+
 type SuspendOutcome =
   | { kind: "continue" }
   | { kind: "result"; value: unknown };
 
 export interface RunnerProfile {
-  resolveRef<T>(ref: FxRef<T>, ctx: PerfCtx): T;
 
   resolveSelection(
     note: Extract<FxNote, { type: "condition" | "switch" }>,
@@ -255,7 +256,7 @@ export type YieldConditionRef = {
 export type PerfCtx = {
   note: FxNote;
   appContext: AppContext;
-  execContext: ExecContext;
+  execContext: FxRuntime;
   executionId: string;
 };
 

@@ -125,7 +125,7 @@ export class TemplateYieldDriver implements YieldDriver {
       if (input !== undefined) (app as any)["$_"] = input;
 
       const handle = query(host.toFxNote(), app, {
-        resolve: req.ctx.execContext.resolve,
+        resolver: req.ctx.execContext.resolver,
         cancelToken: req.ctx.execContext.cancelToken,
         executionId: `${req.ctx.executionId}:yield:${id}`,
       });
@@ -194,15 +194,14 @@ export class RemoteYieldDriver implements YieldDriver {
 // base.resolveRef を引数でもらう（default profile の resolveRef を使う想定）
 export const resolveYieldLocator = (
   until: YieldConditionRef,
-  ctx: PerfCtx,
-  resolveRef: <T>(ref: FxRef<T>, ctx: PerfCtx) => T
+  ctx: PerfCtx
 ): YieldLocator => {
   if (until.kind !== "yield") throw new Error("unsupported yield condition");
   const t = until.target;
   const raw = (t as any).ref;
   const resolved =
     isFxRefKey(raw) || typeof raw === "function"
-      ? resolveRef(raw as FxRef<unknown>, ctx) || document.getElementById(raw.key?.slice(1))
+      ? ctx.execContext.resolver(raw as FxRef<unknown>, ctx)() || document.getElementById(raw.key?.slice(1))
       : raw;
 
   if (typeof raw === "string") return { kind: "template", templateId: raw };
