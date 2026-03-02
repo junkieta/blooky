@@ -260,7 +260,7 @@ const prime = <T>(fn: (ctx: T) => JSHTMLNodeSource) =>
 **blooky-context Specification v1.0.0** に定義される Context として扱われなければならない（MUST）。
 
 fv が ContextRef を解決する場合、その解決は
-blooky-context §3.4（decode）および §1.5.1（探索規則）に従わなければならない（MUST）。
+blooky-context §3.4（decode）に従わなければならない（MUST）。
 
 Context の構造は prime 実行後に変更してはならない（MUST NOT）。
 
