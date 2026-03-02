@@ -13,8 +13,6 @@
 [![Status](https://img.shields.io/badge/status-community%20preview-yellow.svg)]()
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-
-
 ### 1. 統一された抽象
 
 ```
@@ -49,10 +47,6 @@ blooky-devtools # 開発ツール
 ```
 
 ## Quick Start
-
-```bash
-npm install blooky
-```
 
 ```typescript
 import { stream, accum } from 'blooky-fp';
