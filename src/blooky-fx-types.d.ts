@@ -86,7 +86,6 @@ export interface INoteDefinition<T extends FxNote['type']> {
 type FxNoteBase<T extends string, P = {}> = P & {
   type: T;
   id?: string;
-  catcher?: FxRef<(error: Error) => unknown>;
 };
 
 export type FxNoneNote = FxNoteBase<"none">;
@@ -183,13 +182,20 @@ export type YieldSession = {
   until: YieldConditionRef;
 };
 
-export type EffectOutcome =
-  | { kind: "none" }
-  | { kind: "result"; value: unknown };
+export type OutcomeBase<T> = 
+  | { kind: "value"; value: T }
+  | { kind: "error"; error: unknown }
+  | { kind: "crash"; error: unknown; source: "action" | "child_boundary" | "runner" | "host" }
+  | { kind: "timeout" }
+  | { kind: "cancel"; reason?: unknown }
 
-type SuspendOutcome =
+export type EffectOutcome<T> =
+  | { kind: "none" }
+  | OutcomeBase<T>;
+
+export type SuspendOutcome<T> =
   | { kind: "continue" }
-  | { kind: "result"; value: unknown };
+  | Exclude<OutcomeBase<T>, { kind: "error" }>;
 
 export interface RunnerProfile {
 
@@ -199,15 +205,10 @@ export interface RunnerProfile {
   ): FxNote | null;
 
   // Yield or Wait
-  awaitSuspend(until: SuspendUntil, ctx: PerfCtx, cancel: CancelToken): Promise<SuspendOutcome>;
-
-  // Yield lifecycle
-  startYield(until: YieldConditionRef, ctx: PerfCtx): Promise<YieldSession>;
-  awaitYield(session: YieldSession, ctx: PerfCtx, cancelToken: CancelToken): Promise<void>;
-  getYieldResult(session: YieldSession, ctx: PerfCtx): Promise<unknown>;
+  awaitSuspend(until: SuspendUntil, ctx: PerfCtx, cancel: CancelToken): Promise<SuspendOutcome<unknown>>;
 
   projectEffect(ref: unknown, ctx: PerfCtx): unknown;
-  applyEffect(ref: unknown, ctx: PerfCtx): Promise<EffectOutcome>;
+  applyEffect(ref: unknown, ctx: PerfCtx): Promise<EffectOutcome<unknown>>;
 
   /**
    * note の exit 境界で呼ばれる（note と note の間）

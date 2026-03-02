@@ -165,6 +165,7 @@ export function execute(args: {
         });
 
         notifyStep({ phase: "exit", note: note, data: { result: value } });
+        await profile.applyExitBoundary(note, ctx, value);
         return value;
       }
 
@@ -303,33 +304,27 @@ const dispatchSemEvent = async (ev: SemanticEvent, deps: DispatchDeps) => {
   if (deps.cancelToken.cancelled()) throw new Cancelled(deps.cancelToken.reason ?? "user");
 
   switch (ev.type) {
+
     case "effect": {
       const projected = deps.profile.projectEffect(ev.ref, deps.ctx);
       deps.emit({ phase: "effect", note: deps.ctx.note, data: projected });
 
-      const applied = await deps.profile.applyEffect(ev.ref, deps.ctx);
-      if (applied.kind === "result") {
-        deps.emit({ phase: "result", note: deps.ctx.note, data: { value: applied.value } });
-        return { kind: "result" as const, value: applied.value };
-      }
-      return { kind: "continue" as const };
+      const value = await deps.profile.applyEffect(ev.ref, deps.ctx);
+      if (value.kind === "none") return { kind: "continue" as const };
+      deps.emit({ phase: "result", note: deps.ctx.note, data: { value } });
+      return { kind: "result" as const, value };
     }
 
     case "suspend": {
       deps.emit({ phase: "suspend", note: deps.ctx.note, data: { until: ev.until } });
 
-      // Profile に委譲：戻り値で「値あり/なし」を表現
       const out = await deps.profile.awaitSuspend(ev.until, deps.ctx, deps.cancelToken);
-
       deps.emit({ phase: "resume", note: deps.ctx.note, data: { until: ev.until } });
 
-      if (out.kind === "result") {
-        deps.emit({ phase: "result", note: deps.ctx.note, data: { value: out.value } });
-        return { kind: "result" as const, value: out.value };
-      }
+      if (out.kind === "continue") return out;
 
-      // 値を返さない wait は continue
-      return { kind: "continue" as const };
+      deps.emit({ phase: "result", note: deps.ctx.note, data: { value: out } });
+      return { kind: "result" as const, value: out };
     }
 
     case "result":

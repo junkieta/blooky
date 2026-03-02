@@ -7,6 +7,7 @@ import { JSHTMLNodeSource } from "./blooky-fv-types";
 import { DripperStream, Prop } from "./blooky-fp-types";
 import { clock } from "./runtime/clock";
 import { FxEffectElement } from "./blooky-fxdom";
+import { EffectOutcome } from "./blooky-fx-types";
 
 const {prime,jshtml} = createFV(clock);
 
@@ -89,9 +90,7 @@ const AppUIRenderer = prime(({ $count, increment$, decrement$, save$, $statusMes
 }));
 
 // confirm dialog
-type FxResult<T> = 
-  | { ok: true, value: T }
-  | { ok: false, error: Error };
+type FxResult<T> = EffectOutcome<T>;
 const confirmQuestionActivated$ = stream<FxResult<string>>();
 const confirmButtonClicked$ = stream<MouseEvent>();
 const $selectedConfirmAnswer = pipe(
@@ -102,7 +101,7 @@ const $selectedConfirmAnswer = pipe(
 const $confirmAnswerResolved = remap<string,boolean>((resolved)=>resolved !== "yet")($selectedConfirmAnswer);
 const $confirmQuestionDialogbox = hold<JSHTMLNodeSource>(null)(map<FxResult<string>,JSHTMLNodeSource>((res) => 
 [
-  { p: res.ok === true ? res.value : res.error.message },
+  { p: res.kind === "value" ? res.value : JSON.stringify(res) },
   { button: "OK", $: { onclick: confirmButtonClicked$, value: "yes" } },
   { button: "Cancel", $: { onclick: confirmButtonClicked$, value: "no" } },
 ])(confirmQuestionActivated$));
@@ -116,7 +115,7 @@ const $triggerSave = hold(false)(map(() => true)(save$));
 const statusMessageStream$ = stream<FxResult<string>>();
 const changeCountStream = merge([map(() => 1)(increment$), map(() => -1)(decrement$)], ((a, b) => a + b));
 const $count = accum((current: number, val: number) => current + val, 0)(changeCountStream);
-const $statusMessage = hold('Ready.')(map<FxResult<string>,string>((r)=> r.ok === true ? r.value : r.error.message )(statusMessageStream$));
+const $statusMessage = hold('Ready.')(map<FxResult<string>,string>((r)=> r.kind === "value" ? r.value : JSON.stringify(r) )(statusMessageStream$));
 const $finalMessage = remap<number, string>((v) => `Saved Count:${v}`)($count);
 const $colorOfCount = remap<number, string>((count) => count % 3 ? "blue" : "red")($count);
 
