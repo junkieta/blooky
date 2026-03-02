@@ -182,13 +182,9 @@ export const decode = (ctx: unknown, ref: ContextRef): unknown => {
     );
   }
 
-  let cur: object | null = ctx;
-  while (cur && typeof cur === "object") {
-    const meta = META.get(cur);
-    if (meta && meta.keyToValue.has(ref.key)) {
-      return meta.keyToValue.get(ref.key);
-    }
-    cur = Object.getPrototypeOf(cur);
+  const meta = META.get(ctx);
+  if (meta && meta.keyToValue.has(ref.key)) {
+    return meta.keyToValue.get(ref.key);
   }
 
   throw new ContextCodecError(
