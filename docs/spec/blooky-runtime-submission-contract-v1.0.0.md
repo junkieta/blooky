@@ -71,7 +71,7 @@ Runtime は submit() の reject において `SubmitError` 以外を返しては
 ### 1.4 Context Decode Compliance（Normative）
 
 Runtime が ContextRef を解決する場合、その decode 規則は
-**blooky-context Specification v1.0.0 §3.4 および §1.5.1** に従わなければならない（MUST）。
+**blooky-context Specification v1.0.0 §3.4 ** に従わなければならない（MUST）。
 
 * 未登録 key は DECODE_MISSING_KEY として分類されなければならない（MUST）。
 * decode 失敗を黙殺してはならない（MUST NOT）。

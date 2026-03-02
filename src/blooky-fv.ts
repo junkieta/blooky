@@ -52,7 +52,7 @@ export interface FVRuntime {
   unobserveCommit(f: (plan: ObservedDripPlan) => void): (p: Prop<any>) => void;
 
   /** fv からの「更新計画」を受け取り、適切な境界で commit する（or スケジュールする） */
-  submitPlan(plan: DripPlan): Promise<any>;
+  submitPlan<A>(plan: DripPlan<A>): Promise<any>;
 
 };
 
@@ -258,7 +258,7 @@ export const createFV = (rt: FVRuntime) => {
    * Dripper をDOMイベントリスナーに変換する（実行は runtime.submitPlan に委譲）
    */
 const listenerForSubmit =
-  <A extends Event>(d: Dripper<A>) =>
+  <A extends Event>(dripper: Dripper<A>) =>
   (ev: A) => {
     const target = (ev.currentTarget || ev.target) as EventTarget | null;
     if (!target) {
@@ -266,7 +266,7 @@ const listenerForSubmit =
       return;
     }
 
-    const plan = drip(ev)(d);
+    const plan = { dripper, value: ev };
 
     // キャンセル可能（fv側の責務）
     const ok = target.dispatchEvent(

@@ -1,6 +1,6 @@
-import { stream, drip, hold, commit, conflict } from "../blooky-fp";
+import { stream, drip, hold, commit, vertex } from "../blooky-fp";
 import { FVRuntime, ObservedDripPlan } from "../blooky-fv";
-import { DripPlan, Prop } from "../blooky-fp-types";
+import { DripperStream, DripPlan, Prop, PropPlan } from "../blooky-fp-types";
 
 export type CommitDripPlan = Map<Prop<any>,any>;
 
@@ -16,6 +16,8 @@ type TickObserver = (tick: ObservedTick) => void;
 type Clock = Prop<number> & FVRuntime & {
   observeTick: (f: TickObserver) => () => void;
   unobserveTick: (f: TickObserver) => void;
+  setConflictReducer: <V>(dripper: DripperStream<V>, reducer: (a:V,b:V)=>V) => void
+  deleteConflictReducer: <V>(dripper: DripperStream<V>) => void
 };
 
 type FatalHandler = (error: CommitExecutionError) => void;
@@ -30,12 +32,20 @@ export class SubmitError extends Error {
   name = "SubmitError";
 }
 
-export class ConflictError extends SubmitError {
-  name = "ConflictError";
+export class CommitConflictError extends SubmitError {
+  name = "CommitConflictError";
   constructor(readonly conflicts: Map<Prop<any>,any[]>) {
     super("Conflict in CommitPlan");
   }
 }
+
+export class DripConflictError extends SubmitError {
+  name = "DripConflictError";
+  constructor(readonly conflicts: Map<DripperStream<any>,any[]>) {
+    super("Conflict in DripPlan");
+  }
+}
+
 
 class CommitExecutionError extends Error {
   readonly name = "CommitExecutionError";
@@ -45,18 +55,17 @@ class CommitExecutionError extends Error {
 }
 
 type Reservation = {
-  plan: DripPlan;
-  resolve: (v: DripPlan) => void;
+  plan: DripPlan<any>;
+  resolve: (v: ObservedDripPlan) => void;
   reject: (v: unknown) => void;
 };
 
 const tickQueue: Reservation[] = [];
 let fatalState: CommitExecutionError | null = null;
 
-const clockObservers = new Map<
-  (plan: ObservedDripPlan) => void,
-  Set<Prop<unknown>>
->();
+const conflictReducers = new WeakMap<DripperStream<any>, (a:any,b:any)=>any>();
+
+const clockObservers = new Map<(plan: ObservedDripPlan) => void, Set<Prop<unknown>>>();
 
 const tickObservers = new Set<TickObserver>();
 let tickIndexCounter = 0;
@@ -82,10 +91,35 @@ const enterFatalState = (error: CommitExecutionError) => {
   fatalHandler(error);
 };
 
-const buildCommitIntent = (t: number, reservations: Reservation[]): DripPlan => {
-  // clock派生 (beat$) + submitされたplans を合成
-  // ※ここで必要なら "clock由来の派生plan" を追加する（仕様上は runtime の責務）
-  return drip(t)(beat$).concat(...reservations.map(({ plan }) => plan));
+const buildCommitIntent = (t: number, reservations: Reservation[]) => {
+  const conflicts = new Map<DripperStream<any>, any[]>();
+  const reservedPlans = new Map<DripperStream<any>, any>();
+  reservations.forEach(({plan})=>{
+    const {dripper,value} = plan;
+    if(!reservedPlans.has(dripper)) {
+      reservedPlans.set(dripper, value);
+    }
+    else if(conflictReducers.has(dripper)) {
+      const reducer = conflictReducers.get(dripper)!;
+      const existsPlan = reservedPlans.get(dripper)!;
+      reservedPlans.set(dripper, reducer(existsPlan, value));
+    }
+    else if(conflicts.has(dripper)) {
+      conflicts.set(dripper,conflicts.get(dripper)!.concat(value));
+    }
+    else {
+      conflicts.set(dripper,[reservedPlans.get(dripper)!, value]);
+    }
+  });
+
+  const reservedPropPlans = [...reservedPlans.entries()].flatMap(([dripper,value])=>drip({dripper,value}));
+  // ※ここで "clock由来の派生plan" を追加する（仕様上は runtime の責務）
+  const beatPropPlan = drip({ dripper: beat$, value: t });
+  return {
+    commitIntent: beatPropPlan.concat(reservedPropPlans),
+    conflicts
+  }
+
 };
 
 type Eq = (a: unknown, b: unknown) => boolean;
@@ -96,7 +130,7 @@ type Eq = (a: unknown, b: unknown) => boolean;
  * - 異値重複は conflicts に記録（first も含める）
  */
 const normalizePlan = (
-  plan: DripPlan,
+  plan: PropPlan<any>[],
   equals: Eq = Object.is
 ): { commitPlanMap: Map<Prop<any>, any>, conflicts: Map<Prop<any>, any[]> } => {
   const commitPlanMap = new Map<Prop<any>, any>();
@@ -126,35 +160,6 @@ const normalizePlan = (
   return { commitPlanMap, conflicts };
 };
 
-const notifyClockObservers = (commitIntent: CommitDripPlan): Error[] => {
-  const errors: Error[] = [];
-  const prop_all = new Set(commitIntent.keys());
-  // commitIntent は conflict-free を前提に Map 化（subset）
-  clockObservers.forEach((props, f) => {
-    // subset: props に含まれるものだけ抜く
-    const subset = prop_all.intersection(props);
-    if (!subset.size) return;
-
-    try {
-      const maybePromise = (f as (plan: ObservedDripPlan) => unknown)(
-        new Map([...subset].map((p)=>[p,commitIntent.get(p)!])) as any
-      );
-      // Observer async failure is isolated from submit/commit result.
-      if (
-        maybePromise &&
-        typeof (maybePromise as any).then === "function" &&
-        typeof (maybePromise as any).catch === "function"
-      ) {
-        (maybePromise as Promise<unknown>).catch((err) => {
-          console.error("clockObserver: async thrown error", err);
-        });
-      }
-    } catch (err) {
-      errors.push(err as Error);
-    }
-  });
-  return errors;
-};
 
 const buildObservedTick = (commitPlan: CommitDripPlan): ObservedTick => {
   const tick_index = tickIndexCounter++;
@@ -166,26 +171,50 @@ const buildObservedTick = (commitPlan: CommitDripPlan): ObservedTick => {
   };
 };
 
-const notifyTickObservers = (observedTick: ObservedTick): Error[] => {
+const notifyAllObservers = (commitPlanMap: CommitDripPlan) => {
   const errors: Error[] = [];
-  tickObservers.forEach((f) => {
-    try {
-      const maybePromise = (f as (tick: ObservedTick) => unknown)(observedTick);
-      if (
-        maybePromise &&
-        typeof (maybePromise as any).then === "function" &&
-        typeof (maybePromise as any).catch === "function"
-      ) {
-        (maybePromise as Promise<unknown>).catch((err) => {
-          console.error("bridgeTickObserver: async thrown error", err);
-        });
-      }
-    } catch (err) {
-      errors.push(err as Error);
-    }
+  // Bridge Tick Payload を確定（pre-commit）
+  const observedTick = buildObservedTick(commitPlanMap);
+  // ObservedTick を通知（pre-commit）
+  tickObservers.forEach((f) => handleObserver(async()=>f(observedTick), errors));
+  if(errors.length) {
+    console.error("bridgeTickObserver: thrown errors", ...errors);
+    // 隔離方針：observer例外は commit 成否に影響させない
+  }
+
+  // ObservedDripPlan を通知
+  const prop_all = new Set(commitPlanMap.keys());
+  clockObservers.forEach((props, f) => {
+    // subset: props に含まれるものだけ抜く
+    const subset = prop_all.intersection(props);
+    // commitPlanMap は conflict-free を前提に Map 化（subset）
+    if (subset.size)
+      handleObserver(async()=>f(new Map([...subset].map((p)=>[p,commitPlanMap.get(p)!])) as any), errors);
   });
-  return errors;
-};
+  if (errors.length) {
+    console.error("clockObserver: thrown errors", ...errors);
+    // 隔離方針：observer例外は commit 成否に影響させない
+  }
+}
+
+const handleObserver = (observer:()=>Promise<unknown>, errors: Error[]) => {
+  try {
+    const maybePromise = observer();
+    // Observer async failure is isolated from submit/commit result.
+    if (
+      maybePromise &&
+      typeof (maybePromise as any).then === "function" &&
+      typeof (maybePromise as any).catch === "function"
+    ) {
+      (maybePromise as Promise<unknown>).catch((err) => {
+        console.error("clockObserver: async thrown error", err);
+      });
+    }
+  } catch(err) {
+    errors.push(err);
+  }
+}
+
 
 const advanceClock = () => {
   if (clockRunning) return;
@@ -198,39 +227,34 @@ const advanceClock = () => {
 
     const reservations = tickQueue.splice(0);
 
-    // 1) CommitPlan (= commit-intent) を確定
-    const commitIntent = buildCommitIntent(t, reservations);
+    // CommitPlan (= commit-intent) を確定
+    const builtPlan = buildCommitIntent(t, reservations);
 
-    // 2) conflict を事前検出（conflict があれば commit も observer も呼ばない）
-    const { commitPlanMap, conflicts } = normalizePlan(commitIntent/**, equals */);
-    if (conflicts.size) {
-      const err = new ConflictError(conflicts);
+    // DripConflict を事前検出（conflict があれば commit も observer も呼ばない）
+    if(builtPlan.conflicts.size) {
+      const err = new DripConflictError(builtPlan.conflicts);
       reservations.forEach(({ reject }) => reject(err));
       // 次tickへ（予約は失敗確定）
       advanceClock();
       return;
     }
 
-    // 3) Bridge Tick Payload を確定（pre-commit）
-    const observedTick = buildObservedTick(commitPlanMap);
-
-    // 3) ObservedTick を通知（pre-commit）
-    const tickObsErrors = notifyTickObservers(observedTick);
-    if (tickObsErrors.length) {
-      console.error("bridgeTickObserver: thrown errors", ...tickObsErrors);
-      // 隔離方針：observer例外は commit 成否に影響させない
+    // CommitConflict を事前検出（drip同様、conflict があれば commit も observer も呼ばない）
+    const { commitPlanMap, conflicts } = normalizePlan(builtPlan.commitIntent/**, equals */);
+    if (conflicts.size) {
+      const err = new CommitConflictError(conflicts);
+      reservations.forEach(({ reject }) => reject(err));
+      // 次tickへ（予約は失敗確定）
+      advanceClock();
+      return;
     }
 
-    // 4) ObservedPlan（subset view）を通知（pre-commit）
-    const obsErrors = notifyClockObservers(commitPlanMap);
-    if (obsErrors.length) {
-      console.error("clockObserver: thrown errors", ...obsErrors);
-      // 隔離方針：observer例外は commit 成否に影響させない
-    }
+    // Observer呼び出し（TickObserver, ClockObserver）
+    notifyAllObservers(commitPlanMap);
 
-    // 5) commit（本来 throw しない前提。throw したら停止級）
+    // commit（本来 throw しない前提。throw したら停止級）
     try {
-      commit(commitIntent);
+      commit([...commitPlanMap]);
     } catch (err) {
       const fatal = new CommitExecutionError(err);
       // fatal は submit reject 経路に載せず、停止経路へ移行。
@@ -238,15 +262,16 @@ const advanceClock = () => {
     }
 
     // 6) resolve（commit 成功）
-    reservations.forEach(({ resolve }) => resolve(commitIntent));
+    reservations.forEach(({ resolve }) => resolve(commitPlanMap));
 
-    advanceClock();
+    // clockが別のPropに派生していれば、常に次のtickを呼ぶ(clockを更新する)
+    if (tickQueue.length || vertex(beat$).props.length > 1) advanceClock();
   });
 };
 
-const tick = (plan: DripPlan) => {
+const tick = (plan: DripPlan<any>) => {
   if (fatalState) throw fatalState;
-  return new Promise<DripPlan>((resolve, reject) => {
+  return new Promise<ObservedDripPlan>((resolve, reject) => {
     tickQueue.push({ plan, resolve, reject });
     advanceClock();
   });
@@ -284,6 +309,14 @@ export const clock: Clock = Object.assign(hold(0)(beat$), {
 
   unobserveTick(f: TickObserver) {
     tickObservers.delete(f);
+  },
+
+  setConflictReducer<V>(dripper: DripperStream<V>, reducer: (a:V,b:V) => V) {
+    conflictReducers.set(dripper, reducer);
+  },
+
+  deleteConflictReducer<V>(dripper: DripperStream<V>) {
+    conflictReducers.delete(dripper);
   },
 
   submitPlan: tick,

@@ -1,7 +1,7 @@
 // runtime/yield-hub-local.ts
 
 import { query } from "../blooky-fx";
-import { FxRef, PerfCtx, YieldConditionRef, YieldDriver, YieldHub, YieldLocator, YieldRequest, YieldTargetRef } from "../blooky-fx-types";
+import { FxRef, PerfCtx, YieldConditionRef, YieldDriver, YieldHub, YieldLocator, YieldRequest } from "../blooky-fx-types";
 
 type Entry =
   | { state: "pending"; p: Promise<void>; resolve: () => void; reject: (e: unknown) => void }
@@ -73,7 +73,7 @@ export class CompositeYieldDriver implements YieldDriver {
 
 
 // fxdom/yield-driver-template.ts
-import { type FxEffectElement } from "../blooky-fxdom"; // 実際の型に合わせて
+import { FxContextElement } from "../blooky-fxdom"; // 実際の型に合わせて
 import { isFxRefKey } from "./engine";
 
 type Deps = {
@@ -95,10 +95,12 @@ export class TemplateYieldDriver implements YieldDriver {
 
   async requestYield(req: YieldRequest): Promise<void> {
     const { id, locator, input } = req;
+    let dispose : ()=>void = () => {};
     try {
       let template: HTMLTemplateElement | null = null;
 
-      if (locator.kind === "template-el") template = locator.el;
+      if (locator.kind === "template-el")
+        template = locator.el;
       else if (locator.kind === "template") {
         const get = this.deps.getTemplateById ?? ((x) => document.getElementById(x) as any);
         template = get(locator.templateId);
@@ -106,52 +108,31 @@ export class TemplateYieldDriver implements YieldDriver {
         throw new Error(`[yield/template] invalid locator.kind=${(locator as any).kind}`);
       }
 
-      if (!template) throw new Error("[yield/template] template not found");
-
-      // clone
-      const frag = template.content.cloneNode(true) as DocumentFragment;
-      // 実行（input を渡したいなら appContext や attribute 経由など、方針を決める）
-      const app: Record<string, any> = Object.create(req.ctx.appContext);
+      if (!template || template.tagName !== "TEMPLATE") throw new Error("[yield/template] template not found");
 
       // 実行対象のルートを決める（fx-effect 推奨。fx-context なら入口を追加）
-      const host = document.createElement("fx-context") as FxEffectElement;
+      const host = document.createElement("fx-context") as FxContextElement;
       host.id = "YIELDED" + id;
-      host.setContext(app);
-      host.appendChild(frag);
-
+      host.setContext(req.ctx.appContext);
+      host.appendChild(template.content.cloneNode(true));
+      // gc
+      dispose = host.remove.bind(host);
       // connected 要件のため attach
       this.deps.attachParent.appendChild(host);
 
-      if (input !== undefined) (app as any)["$_"] = input;
-
-      const handle = query(host.toFxNote(), app, {
-        resolve: req.ctx.execContext.resolve,
-        cancelToken: req.ctx.execContext.cancelToken,
+      const runtime = req.ctx.runtime;
+      const handle = query(host.toFxNote(), req.ctx.appContext, {
+        idSlots: input ? { $_: input } : undefined,
+        cancelToken: runtime.cancelToken,
         executionId: `${req.ctx.executionId}:yield:${id}`,
       });
       const result = await handle.done;
 
-      host.remove();
-      // 5) resolve
       this.deps.hub.resolve(id, result);
-      /*
-      switch (result.kind) {
-        case "value":
-          this.deps.hub.resolve(id, result.done.value);
-          break;
-        case "error":
-          this.deps.hub.reject(id, result.done.error);
-          break;
-        case "timeout":
-          this.deps.hub.reject(id, new Error(`[yield/template] timeout${result.done.ms ? ` (${result.done.ms}ms)` : ""}`));
-          break;
-        case "cancel":
-          this.deps.hub.reject(id, new Error(`[yield/template] cancelled`));
-          break;
-      }      
-      */
     } catch (e) {
       this.deps.hub.reject(id, e);
+    } finally {
+      dispose();
     }
   }
 }
@@ -194,15 +175,14 @@ export class RemoteYieldDriver implements YieldDriver {
 // base.resolveRef を引数でもらう（default profile の resolveRef を使う想定）
 export const resolveYieldLocator = (
   until: YieldConditionRef,
-  ctx: PerfCtx,
-  resolveRef: <T>(ref: FxRef<T>, ctx: PerfCtx) => T
+  ctx: PerfCtx
 ): YieldLocator => {
   if (until.kind !== "yield") throw new Error("unsupported yield condition");
   const t = until.target;
   const raw = (t as any).ref;
   const resolved =
     isFxRefKey(raw) || typeof raw === "function"
-      ? resolveRef(raw as FxRef<unknown>, ctx) || document.getElementById(raw.key?.slice(1))
+      ? ctx.runtime.resolver(raw as FxRef<unknown>, ctx)() || document.getElementById(raw.key?.slice(1))
       : raw;
 
   if (typeof raw === "string") return { kind: "template", templateId: raw };

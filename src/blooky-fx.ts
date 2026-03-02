@@ -1,7 +1,7 @@
 import {
   type FxNote,
   type AppContext,
-  type ExecContext,
+  type FxRuntime,
   type PreparedFx,
   type ExecutionHandle,
   type FxRef,
@@ -11,6 +11,7 @@ import {
   type FxYieldNote,
   type FxContextNote,
   type FxLoopNote,
+  FxCallAction,
 } from "./blooky-fx-types";
 import { prepare as prepareImpl, execute as executeImpl, FxRefSymbol } from "./runtime/engine";
 import { createRegistry, registerDefault } from "./runtime/registry";
@@ -26,13 +27,13 @@ registerDefault(registry);
 export const prepare = (
   flow: FxNote,
   initialAppContext: AppContext = {},
-  parent?: Partial<ExecContext>
+  parent?: Partial<FxRuntime>
 ): PreparedFx => {
   return prepareImpl(flow, initialAppContext, parent);
 };
 
 export const execute = (prepared: PreparedFx): ExecutionHandle => {
-  const commit = (plan: DripPlan) => clock.submitPlan(plan);
+  const commit = (plan: DripPlan<any>) => clock.submitPlan(plan);
   const hub = new LocalYieldHub();
   const drivers: any = {};
   // template driver は DOM が必要（ただし profile は分岐不要。driver を差し替えるだけ）
@@ -47,20 +48,18 @@ export const execute = (prepared: PreparedFx): ExecutionHandle => {
   }
   // remote driver は transport があるなら常に注入可能
   // drivers["remote"] = new RemoteYieldDriver({ hub, client: remoteClient });
-  const yieldDriver = new CompositeYieldDriver(drivers);
   const profile = createDefaultProfile({
-    resolve: prepared.execContext.resolve,
     commit,
     observeCommit: clock.observeCommit,
     yieldHub: hub,
-    yieldDriver,
+    yieldDriver: new CompositeYieldDriver(drivers),
   });
   return executeImpl({
     prepared, registry, profile
   });
 };
 
-export const query = (note: FxNote, app: AppContext = {}, ctx?: Partial<ExecContext>) =>
+export const query = (note: FxNote, app: AppContext = {}, ctx?: Partial<FxRuntime>) =>
   execute(prepare(note, app, ctx));
 
 export const ref = <T = unknown>(key: string): FxRefKey =>
@@ -99,7 +98,7 @@ export const fx = {
     ...(id ? { id } : {}),
   }),
   call: (
-    action: FxRef<(v: any) => unknown>,
+    action: FxRef<FxCallAction>,
     opt: Pick<FxCallNote, "input" | "done" | "id"> = {}
   ): FxCallNote => ({
     type: "call",

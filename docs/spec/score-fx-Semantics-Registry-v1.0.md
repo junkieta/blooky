@@ -363,7 +363,7 @@ type Outcome<T> =
 ### 4.6.5 ContextRef Compatibility（Informative / Recommended）
 
 score-fx における参照解決は、
-ContextRef の解決規則 blooky-context §3.4（decode）および §1.5.1（探索規則） に従うことが望ましい（SHOULD）。
+ContextRef の解決規則 blooky-context §3.4（decode） に従うことが望ましい（SHOULD）。
 
 remote 実行で ContextValue を輸送する場合、
 Wire 表現は blooky-context Appendix A に従うことが望ましい（SHOULD）。

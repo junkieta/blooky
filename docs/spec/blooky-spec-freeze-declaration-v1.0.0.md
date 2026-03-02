@@ -41,7 +41,7 @@ v1.0.0 の主要仕様と責務は以下である。
 
 * **blooky-context v1.0.0**
   Context Boundary / ContextRef / ContextValue / Codec（bind/encode/decode）を規定する。
-  Context のスコープ解決（decode 探索順序）、エラー分類（ENCODE_UNBOUND / DECODE_MISSING_KEY / VALUE_CONSTRAINT）および wire 正規形を固定する。
+  エラー分類（ENCODE_UNBOUND / DECODE_MISSING_KEY / VALUE_CONSTRAINT）および wire 正規形を固定する。
 
 * **fxdom v1.0.0**
   DOM で score-fx の Score 構造を宣言する要素語彙。

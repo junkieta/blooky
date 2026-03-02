@@ -69,22 +69,7 @@ Context はデータの入れ物ではなく、結合の定義である。
 type ContextKey = string
 ```
 
-* ContextKey は同一スコープ内で一意でなければならない（MUST）。
-* 親子スコープ間で同一 key が存在する場合の解決規則は §1.5 に従う（MUST）。
-
----
-
-## 1.5 Scope & Resolution（Normative）
-
-### 1.5.1 decode の探索規則
-
-* decode は現在の Context から親 Context へ向かう探索順序に従わなければならない（MUST）。
-* 同一 key が複数スコープに存在する場合、より内側（子）が優先される（MUST）。
-
-### 1.5.2 非対称性（Normative Clarification）
-
-* decode はスコープチェーンを探索するが、encode は探索しない。
-* encode/decode の往復可能性は保証されない（MUST NOT assume）。
+* ContextKey は同一スコープ内でのみ解決される（MUST）。
 
 ---
 
@@ -163,21 +148,28 @@ decode(ctx: Context, ref: ContextRef): unknown
   * 未bindなら失敗（MUST）
 
 * encode は当該 Context インスタンスに束縛された値のみを参照化しなければならない（MUST）。
-
-* encode は親子スコープを跨いで参照化してはならない（MUST NOT）。
+* encode は当該 Context 以外を参照してはならない（MUST NOT）。
 
 ---
 
 ## 3.4 decode（Normative）
 
 * decode は ContextRef.key に対応する値を返す（MUST）。
-* decode は §1.5.1 の探索規則に従う（MUST）。
+* decode は当該 Context インスタンスのみを参照する（MUST）。
 * 未登録 key は失敗しなければならない（MUST）。
 * decode 失敗を黙殺または暗黙フォールバックしてはならない（MUST NOT）。
 
 ---
 
-## 3.5 Error Categories（Normative）
+## 3.5 Determinism Requirement（Normative）
+
+* 同一 Context インスタンスと同一 ContextRef に対する decode の結果は、常に同一でなければならない（MUST）。
+* 同一 Context インスタンスと同一 value に対する encode の結果は、常に同一でなければならない（MUST）。
+* 実装は、反復呼び出しにおいて時刻・乱数・外部状態に依存して encode/decode 結果を変化させてはならない（MUST NOT）。
+
+---
+
+## 3.6 Error Categories（Normative）
 
 本仕様における失敗は、識別可能な **エラーカテゴリコード**で分類されなければならない（MUST）。
 
@@ -216,8 +208,7 @@ remote transport を行う実装は、本 Appendix に定義される ContextVal
 
 ```ts
 type ContextKeyWire =
-  | { kind: "string", value: string }
-  | { kind: "symbol", value: string } // global symbol only: Symbol.keyFor(symbol)
+  { kind: "string", value: string }
 
 type ContextRefWire = {
   kind: "ctx",
@@ -272,10 +263,10 @@ type ContextValueWire = {
 
 ---
 
-# 5. Design Guarantees
+# 6. Design Guarantees
 
 * Context は fv v1.0.0 と整合する
-* encode/decode の非対称性が明示される
+* encode/decode の単一スコープ決定性を保証する
 * symbol 利用時の責務が明確
 * Wire 互換が担保される
 * エラー分類が仕様全体で一覧化される

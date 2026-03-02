@@ -223,7 +223,7 @@ export type JSHTMLAttrBuilder = {
 
 export type BlookyCommitEvent<T extends "start" | "completed" | "failed" | "canceled"> =
   CustomEvent<
-    { plan: DripPlan } & (
+    { plan: DripPlan<any> } & (
       T extends "completed" ? { resolve: unknown } :
       T extends "failed" ? { reject: unknown } :
       {}

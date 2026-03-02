@@ -372,17 +372,17 @@ const flowLazy = <A>(v:A) => (s:Stream<A>) : FlowingState => {
  * ```
  * 
  * @param value - 流し込む値
- * @returns Dripperを受け取りDripPlanを返す関数
+ * @returns データフローを経由して生成されるProp更新計画
  */
-const drip = <A>(value:A) => (dripper:DripperStream<A>) : DripPlan => Object.assign(flowLazy(value)(dripper)[0], { dripper,value });
+const drip = <A>({dripper,value}: DripPlan<A>) : PropPlan<any>[] => flowLazy(value)(dripper)[0];
 
 /**
- * DripPlanの競合を収集する
+ * PropPlanの競合を収集する
  * @param plan 
  * @param equals 
  * @returns 
  */
-const conflict = (plan: DripPlan): Map<Prop<any>,any[]> => {
+const conflict = (plan: PropPlan<any>[]): Map<Prop<any>,any[]> => {
     const seen = new WeakMap<Prop<any>,any>();
     const result = new Map<Prop<any>,any[]>();
     for (const [p,v] of plan) {
@@ -398,7 +398,7 @@ const conflict = (plan: DripPlan): Map<Prop<any>,any[]> => {
  * 更新計画に基づいて値をPropに反映させる
  * @param plan 
  */
-const commit = (plan: DripPlan) => plan.forEach(([p,v]) => PROP_UPDATE.get(p)!(v));
+const commit = (plan: PropPlan<any>[]) => plan.forEach(([p,v]) => PROP_UPDATE.get(p)!(v));
 
 export {
     // Core

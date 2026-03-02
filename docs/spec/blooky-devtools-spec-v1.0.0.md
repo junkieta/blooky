@@ -160,14 +160,7 @@ FxNote と FxDOM Element の関連付けは外部テーブルで保持する（S
 
 ---
 
-### 4.3 Context Visualization（Informative）
-
-devtools は ContextKey が symbol である場合、
-Host が提供する表示名または Symbol.keyFor に基づく文字列表現を用いることが望ましい（SHOULD）。
-
----
-
-### 4.4 Injection Model（Dynamic Extends）
+### 4.3 Injection Model（Dynamic Extends）
 
 DevTools は FxDOM 要素を extends してよい（MAY）。
 

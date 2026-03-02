@@ -1,3 +1,4 @@
+import { bind } from "../blooky-context";
 import type { Registry, Semantics, StructureRunner, YieldConditionRef } from "../blooky-fx-types";
 import type { CancelToken } from "../blooky-fx-types";
 import { Cancelled } from "./engine";
@@ -20,19 +21,21 @@ const semReturn: Semantics = function* (note) {
 const semWait: Semantics = function* (note) {
   if (note.type !== "wait") return;
 
-  if (note.ms !== undefined && note.until !== undefined) {
+  const {ms,until} = note;
+  if (ms !== undefined && until !== undefined) {
     throw new Error("fx-wait: specify either ms or until");
   }
-
-  // 例: note.ms があるなら timer にする
-  if (note.ms !== undefined) {
-    yield { type: "suspend", until: { kind: "timer", ms: note.ms } };
+  if (ms === undefined && until === undefined) {
+    throw new Error("fx-wait: specify either ms or until");
+  }
+  // note.ms があるなら timer にする
+  if (ms !== undefined) {
+    yield { type: "suspend", until: { kind: "timer", ms } };
     return;
   }
-
-  // 例: note.until が FxRef<boolean> なら ref にする
-  if (note.until !== undefined) {
-    yield { type: "suspend", until: { kind: "ref", ref: note.until } };
+  // note.until が FxRef<boolean> なら ref にする
+  if (until !== undefined) {
+    yield { type: "suspend", until: { kind: "ref", ref: until } };
     return;
   }
 
@@ -108,8 +111,8 @@ const runLoop: StructureRunner = async (note, ctx, deps) => {
   if (note.type !== "loop") return undefined;
   let i = 0;
   let last: unknown = undefined;
-
-  while (deps.profile.resolveRef(note.cond as any, ctx)) {
+  const p = ctx.runtime.resolver(note.cond as any, ctx);
+  while (p()) {
     if (deps.cancelToken.cancelled()) {
       throw new Cancelled(deps.cancelToken.reason ?? "user");
     }
@@ -137,12 +140,23 @@ const overlayContext = (
   patch: Record<string, any>
 ) => {
   const scoped = Object.create(parent);
-  for (const k of Reflect.ownKeys(patch)) {
+  for (const k of Reflect.ownKeys(patch) as string[]) {
+    // ContextKey = string 方針をここで強制
+    if (typeof k !== "string") {
+      throw new Error(`[context] overlayContext: non-string key is not allowed: ${String(k)}`);
+    }
+    
+    const v = (patch as any)[k];
+    
+    // 1) codec metadata
+    bind(scoped, k, v);
+
+    // 2) actual property (keep it immutable to avoid meta/value divergence)
     Object.defineProperty(scoped, k, {
-      value: (patch as any)[k as any],
-      writable: true,
+      value: v,
       enumerable: true,
-      configurable: true,
+      writable: false,
+      configurable: false,
     });
   }
   return scoped as Record<string, any>;
