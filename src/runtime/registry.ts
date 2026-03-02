@@ -1,4 +1,4 @@
-import { bind, ContextCodecError } from "../blooky-context";
+import { bind } from "../blooky-context";
 import type { Registry, Semantics, StructureRunner, YieldConditionRef } from "../blooky-fx-types";
 import type { CancelToken } from "../blooky-fx-types";
 import { Cancelled } from "./engine";

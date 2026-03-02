@@ -1,7 +1,7 @@
 // runtime/yield-hub-local.ts
 
 import { query } from "../blooky-fx";
-import { FxRef, PerfCtx, YieldConditionRef, YieldDriver, YieldHub, YieldLocator, YieldRequest, YieldTargetRef } from "../blooky-fx-types";
+import { FxRef, PerfCtx, YieldConditionRef, YieldDriver, YieldHub, YieldLocator, YieldRequest } from "../blooky-fx-types";
 
 type Entry =
   | { state: "pending"; p: Promise<void>; resolve: () => void; reject: (e: unknown) => void }
@@ -73,7 +73,7 @@ export class CompositeYieldDriver implements YieldDriver {
 
 
 // fxdom/yield-driver-template.ts
-import { type FxEffectElement } from "../blooky-fxdom"; // 実際の型に合わせて
+import { FxContextElement } from "../blooky-fxdom"; // 実際の型に合わせて
 import { isFxRefKey } from "./engine";
 
 type Deps = {
@@ -95,6 +95,7 @@ export class TemplateYieldDriver implements YieldDriver {
 
   async requestYield(req: YieldRequest): Promise<void> {
     const { id, locator, input } = req;
+    let dispose : ()=>void = () => {};
     try {
       let template: HTMLTemplateElement | null = null;
 
@@ -110,10 +111,12 @@ export class TemplateYieldDriver implements YieldDriver {
       if (!template || template.tagName !== "TEMPLATE") throw new Error("[yield/template] template not found");
 
       // 実行対象のルートを決める（fx-effect 推奨。fx-context なら入口を追加）
-      const host = document.createElement("fx-context") as FxEffectElement;
+      const host = document.createElement("fx-context") as FxContextElement;
       host.id = "YIELDED" + id;
       host.setContext(req.ctx.appContext);
       host.appendChild(template.content.cloneNode(true));
+      // gc
+      dispose = host.remove.bind(host);
       // connected 要件のため attach
       this.deps.attachParent.appendChild(host);
 
@@ -125,27 +128,11 @@ export class TemplateYieldDriver implements YieldDriver {
       });
       const result = await handle.done;
 
-      host.remove();
-      // 5) resolve
       this.deps.hub.resolve(id, result);
-      /*
-      switch (result.kind) {
-        case "value":
-          this.deps.hub.resolve(id, result.done.value);
-          break;
-        case "error":
-          this.deps.hub.reject(id, result.done.error);
-          break;
-        case "timeout":
-          this.deps.hub.reject(id, new Error(`[yield/template] timeout${result.done.ms ? ` (${result.done.ms}ms)` : ""}`));
-          break;
-        case "cancel":
-          this.deps.hub.reject(id, new Error(`[yield/template] cancelled`));
-          break;
-      }      
-      */
     } catch (e) {
       this.deps.hub.reject(id, e);
+    } finally {
+      dispose();
     }
   }
 }
