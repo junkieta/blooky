@@ -200,21 +200,21 @@ class FxCallElement extends EffectElement {
 
 /**
  * 条件分岐 (fx.condition) を表すカスタム要素。
- * `when` 属性の評価結果に基づいて、`then` または `else` スロットの内容を実行する。
+ * `test` 属性の評価結果に基づいて、`then` または `else` スロットの内容を実行する。
  */
 class FxIfElement extends EffectElement {
   /** @inheritdoc */
-  static [JSHTML_ATTR_HANDLER] = { when: attrValueToContextKey }
+  static [JSHTML_ATTR_HANDLER] = { test: attrValueToContextKey }
   
   toFxNote(): FxNote {
-    const whenAttr = this.getAttribute("when");
-    if (!whenAttr) return fx.none();
+    const testAttr = this.getAttribute("test");
+    if (!testAttr) return fx.none();
 
     const thenNode = this.querySelector('[slot="then"]') as EffectElement | null;
     const elseNode = this.querySelector('[slot="else"]') as EffectElement | null;
     
-    // when属性をrefとして渡すだけ
-    const condRef = ref<boolean>(whenAttr);
+    // test属性をrefとして渡すだけ
+    const condRef = ref<boolean>(testAttr);
 
     if (thenNode) {
       return fx.condition(condRef, thenNode.toFxNote(), elseNode?.toFxNote());
