@@ -87,7 +87,7 @@ const cleanupRegistry =
         unregister(_: WeakKey): boolean {return false}
     } as FinalizationRegistry<WeakRef<Stream<any>|Prop<any>>>;
 
-// filter, when用の内部ヘルパー
+// filter用の内部ヘルパー
 type Predicate<A> = A|RegExp|((v:A)=>boolean)|(()=>boolean);
 const toPredicate = <A>(predicate: Predicate<unknown>) => 
     typeof predicate === "function"
