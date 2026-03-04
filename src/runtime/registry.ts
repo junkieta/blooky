@@ -23,10 +23,8 @@ const semWait: Semantics = function* (note) {
 
   const {ms,until} = note;
   if (ms !== undefined && until !== undefined) {
-    throw new Error("fx-wait: specify either ms or until");
-  }
-  if (ms === undefined && until === undefined) {
-    throw new Error("fx-wait: specify either ms or until");
+    yield { type: "terminate", value: new Error("fx-wait: specify either ms or until") };
+    return;
   }
   // note.ms があるなら timer にする
   if (ms !== undefined) {

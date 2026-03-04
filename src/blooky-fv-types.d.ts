@@ -269,7 +269,7 @@ export type JSHTMLEffectElementSource = {
 } & { $?: JSHTMLAttributeMapSource };
 
 // export type FxExecutionEventMap = {
-//   "fx-step": CustomEvent<ExecutionStep>
+//   "fx-step": CustomEvent<PerformanceStep>
 //   "fx-execution-start": CustomEvent<{ executionId: string }>
 //   "fx-execution-complete": CustomEvent<{ executionId: string, context: AppContext }>
 //   "fx-execution-error": CustomEvent<{ executionId: string, error: Error }>

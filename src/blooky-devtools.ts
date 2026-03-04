@@ -5,7 +5,7 @@
   FxEffectElement as ConcreteEffectElementConstructor,
   FxEffectElement,
 } from "./blooky-fxdom";
-import type { AppContext, FxRuntime, FxNote } from "./blooky-fx-types";
+import type { AppContext, FxRuntime, FxNote, PerformanceStep } from "./blooky-fx-types";
 
 import { isChainedProp, isDripperStream, isStream, isVertex, Prop, Stream, vertex } from "./blooky-fp";
 import { Vertex, DripperStream, MergedStream } from "./blooky-fp-types";
@@ -18,10 +18,10 @@ import { Vertex, DripperStream, MergedStream } from "./blooky-fp-types";
  * FxNote ↔ EffectElement binding.
  * NOTE: Spec recommends external binding tables (WeakMap), not embedding into FxNote.
  */
-const FxNoteMap = new WeakMap<FxNote, HTMLElement>();
 const FxElementStates = new WeakMap<HTMLElement, CustomStateSet>();
+const FxElementByNoteId = new Map<string, HTMLElement>();
 
-export const getFxElement = (n: FxNote): HTMLElement | undefined => FxNoteMap.get(n);
+export const getFxElement = (noteId: string): HTMLElement | undefined => FxElementByNoteId.get(noteId);
 export const getFxElementStates = (el: HTMLElement): CustomStateSet | undefined => FxElementStates.get(el);
 
 // ---- Stylesheets (dev-only visual aid) ----
@@ -109,8 +109,7 @@ Object.entries(EffectElementTagNameMap).forEach(([tag, fxClass]) => {
 
   toFxNote(): FxNote {
     const result = super.toFxNote() as FxNote;
-    // Bind note → element for projections.
-    FxNoteMap.set(result, this);
+    FxElementByNoteId.set(resolveNoteId(result), this);
     return result;
   }
 } as any;
@@ -148,6 +147,18 @@ const toSelectorExpression = (e: Element) => {
   return container;
 
 }
+
+const NOTE_ID_SYMBOL = Symbol.for("blooky.note_id");
+let autoNoteIdCounter = 0;
+
+const resolveNoteId = (note: FxNote): string => {
+  if (note.id && note.id.length) return note.id;
+  const existing = (note as any)[NOTE_ID_SYMBOL];
+  if (typeof existing === "string" && existing.length) return existing;
+  const generated = `note-${autoNoteIdCounter++}`;
+  (note as any)[NOTE_ID_SYMBOL] = generated;
+  return generated;
+};
 
 // fx-switch: expose named slots in shadowRoot for visual inspection
 if (EffectElementTagNameMap["fx-switch"]) {
@@ -222,20 +233,6 @@ if (EffectElementTagNameMap["fx-effect"]) {
 // Step → FxDOM CustomState projection
 // ---------------------------------------------------------------------------
 
-export type StepPhase =
-  | "enter"
-  | "exit"
-  | "suspend"
-  | "resume"
-  | "result"
-  | "cancel";
-
-export type StepRecord = {
-  phase: StepPhase;
-  note: FxNote;
-  data?: any;
-};
-
 const setFxState = (el: HTMLElement, state: string, on: boolean) => {
   const st = FxElementStates.get(el);
   if (st) {
@@ -252,9 +249,9 @@ const clearFxStates = (el: HTMLElement, states: string[]) => {
   for (const s of states) setFxState(el, s, false);
 };
 
-export const stepToFxState = (step: StepRecord) => {
+export const stepToFxState = (step: PerformanceStep) => {
   try {
-    const el = getFxElement(step.note);
+    const el = getFxElement(step.note_id);
     if (!el) return;
 
     // 状態語彙（必要最低限）
@@ -283,8 +280,8 @@ export const stepToFxState = (step: StepRecord) => {
         setFxState(el, "running", false);
         setFxState(el, "paused", false);
 
-        const terminated = !!step.data?.terminated;
-        const failed = !!step.data?.failed; // もし runner が入れるなら
+        const terminated = !!(step.payload as any)?.terminated;
+        const failed = !!(step.payload as any)?.failed; // もし runner が入れるなら
         // 現状の run() だと terminated は入っている。failed は入っていないので必要なら拡張。
 
         if (terminated) setFxState(el, "terminated", true);

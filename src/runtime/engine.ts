@@ -4,7 +4,8 @@ import type {
   FxRuntime,
   PreparedFx,
   ExecutionHandle,
-  ExecutionStep,
+  PerformanceStep,
+  PerformanceStepDraft,
   CancelToken,
   FxRef,
   FxRefSymbol as FxRefSymbolDec,
@@ -126,7 +127,8 @@ export function execute(args: {
   const { rootNote, runtime: execContext, appContext } = prepared;
 
   const stepObservers = new Set<StepObserver>();
-  const notifyStep = notifyStepObserver(stepObservers);
+  const stepIndexByExecution = new Map<string, number>();
+  const notifyStep = createStepEmitter(stepObservers, stepIndexByExecution);
 
   const run = async (
     note: FxNote,
@@ -142,7 +144,11 @@ export function execute(args: {
     };
 
     const fsm = new RunnerFSM();
-    notifyStep({ phase: "enter", note: note, data: { executionId: ctx.executionId } });
+    notifyStep({
+      phase: "enter",
+      note_id: resolveNoteId(note),
+      execution_id: ctx.executionId,
+    });
     fsm.onEnter();
 
     try {
@@ -164,7 +170,12 @@ export function execute(args: {
           cancelToken,
         });
 
-        notifyStep({ phase: "exit", note: note, data: { result: value } });
+        notifyStep({
+          phase: "exit",
+          note_id: resolveNoteId(note),
+          execution_id: ctx.executionId,
+          payload: { result: value },
+        });
         await profile.applyExitBoundary(note, ctx, value);
         return value;
       }
@@ -195,27 +206,47 @@ export function execute(args: {
         }
       }
 
-      notifyStep({ phase: "exit", note: note, data: { result: final } });
+      notifyStep({
+        phase: "exit",
+        note_id: resolveNoteId(note),
+        execution_id: ctx.executionId,
+        payload: { result: final },
+      });
       // note と note の間（exit直後）で done 境界処理
       await profile.applyExitBoundary(note, ctx, final);
       return final;
     } catch (e) {
       if (e instanceof Terminated) {
-        notifyStep({ phase: "exit", note: note, data: { result: e.value, terminated: true } });
+        notifyStep({
+          phase: "exit",
+          note_id: resolveNoteId(note),
+          execution_id: ctx.executionId,
+          payload: { result: e.value, terminated: true },
+        });
         await profile.applyExitBoundary(note, ctx, e.value);
         throw e;
       }
 
       if (e instanceof Cancelled) {
         fsm.onCancel();
-        notifyStep({ phase: "cancel", note: note, data: { reason: e.reason } });
+        notifyStep({
+          phase: "cancel",
+          note_id: resolveNoteId(note),
+          execution_id: ctx.executionId,
+          payload: { reason: e.reason },
+        });
         throw e;
       }
 
       if (isCancelledError(e)) {
         const reason = cancelledReasonFromError(e);
         fsm.onCancel();
-        notifyStep({ phase: "cancel", note: note, data: { reason } });
+        notifyStep({
+          phase: "cancel",
+          note_id: resolveNoteId(note),
+          execution_id: ctx.executionId,
+          payload: { reason },
+        });
         throw new Cancelled(reason);
       }
 
@@ -307,46 +338,95 @@ const dispatchSemEvent = async (ev: SemanticEvent, deps: DispatchDeps) => {
 
     case "effect": {
       const projected = deps.profile.projectEffect(ev.ref, deps.ctx);
-      deps.emit({ phase: "effect", note: deps.ctx.note, data: projected });
+      deps.emit({
+        phase: "effect",
+        note_id: resolveNoteId(deps.ctx.note),
+        execution_id: deps.ctx.executionId,
+        effect: projected,
+      });
 
       const value = await deps.profile.applyEffect(ev.ref, deps.ctx);
       if (value.kind === "none") return { kind: "continue" as const };
-      deps.emit({ phase: "result", note: deps.ctx.note, data: { value } });
+      deps.emit({
+        phase: "result",
+        note_id: resolveNoteId(deps.ctx.note),
+        execution_id: deps.ctx.executionId,
+        payload: { value },
+      });
       return { kind: "result" as const, value };
     }
 
     case "suspend": {
-      deps.emit({ phase: "suspend", note: deps.ctx.note, data: { until: ev.until } });
+      deps.emit({
+        phase: "suspend",
+        note_id: resolveNoteId(deps.ctx.note),
+        execution_id: deps.ctx.executionId,
+        payload: { until: ev.until },
+      });
 
       const out = await deps.profile.awaitSuspend(ev.until, deps.ctx, deps.cancelToken);
-      deps.emit({ phase: "resume", note: deps.ctx.note, data: { until: ev.until } });
+      deps.emit({
+        phase: "resume",
+        note_id: resolveNoteId(deps.ctx.note),
+        execution_id: deps.ctx.executionId,
+        payload: { until: ev.until },
+      });
 
       if (out.kind === "continue") return out;
 
-      deps.emit({ phase: "result", note: deps.ctx.note, data: { value: out } });
+      deps.emit({
+        phase: "result",
+        note_id: resolveNoteId(deps.ctx.note),
+        execution_id: deps.ctx.executionId,
+        payload: { value: out },
+      });
       return { kind: "result" as const, value: out };
     }
 
     case "result":
       {
         const value = deps.ctx.runtime.resolver(ev.value as FxRef<unknown>, deps.ctx)();
-        deps.emit({ phase: "result", note: deps.ctx.note, data: { value } });
+        deps.emit({
+          phase: "result",
+          note_id: resolveNoteId(deps.ctx.note),
+          execution_id: deps.ctx.executionId,
+          payload: { value },
+        });
         return { kind: "result" as const, value };
       }
 
     case "terminate":
       {
         const value = deps.ctx.runtime.resolver(ev.value as FxRef<unknown>, deps.ctx)();
-        deps.emit({ phase: "terminate", note: deps.ctx.note, data: { value } });
+        deps.emit({
+          phase: "terminate",
+          note_id: resolveNoteId(deps.ctx.note),
+          execution_id: deps.ctx.executionId,
+          payload: { value },
+        });
         throw new Terminated(value);
       }
   }
 };
 
-const notifyStepObserver = (observers: Set<StepObserver>) => (step: ExecutionStep) => {
+const createStepEmitter = (
+  observers: Set<StepObserver>,
+  stepIndexByExecution: Map<string, number>
+) => (step: PerformanceStepDraft) => {
+  const stepIndex =
+    step.step_index ??
+    ((stepIndexByExecution.get(step.execution_id) ?? -1) + 1);
+  stepIndexByExecution.set(step.execution_id, stepIndex);
+
+  const finalizedStep: PerformanceStep = {
+    ...step,
+    step_index: stepIndex,
+    timestamp: step.timestamp ?? Date.now(),
+  };
+
   if (observers.size) observers.forEach((observer)=>{
     try {
-      const maybePromise = observer(step);
+      const maybePromise = observer(finalizedStep);
       if (
         maybePromise &&
         typeof (maybePromise as any).then === "function" &&
@@ -360,7 +440,19 @@ const notifyStepObserver = (observers: Set<StepObserver>) => (step: ExecutionSte
       console.error("[runner] StepObserver error (isolated)", e);
     }
   })
-}
+};
+
+const NOTE_ID_SYMBOL = Symbol.for("blooky.note_id");
+let autoNoteIdCounter = 0;
+
+const resolveNoteId = (note: FxNote): string => {
+  if (note.id && note.id.length) return note.id;
+  const existing = (note as any)[NOTE_ID_SYMBOL];
+  if (typeof existing === "string" && existing.length) return existing;
+  const generated = `note-${autoNoteIdCounter++}`;
+  (note as any)[NOTE_ID_SYMBOL] = generated;
+  return generated;
+};
 
 
 type Phase = "enter" | "running" | "suspended" | "completed" | "terminated" | "cancelled";

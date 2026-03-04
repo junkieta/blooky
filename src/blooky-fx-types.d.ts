@@ -2,14 +2,29 @@
 
 import { Prop, DripperStream } from "./blooky-fp-types";
 
-// ─── 実行ステップの定義 ───
-/**
- * ExecutionStep: ノード実行の各段階を表現
- */
-export type ExecutionStep = {
-  phase: string;           // 'init' | 'running' | 'waiting' | 'completed' など
-  note: FxNote;           // 現在のノード
-  data?: any;             // フェーズ固有のデータ
+export type PerformancePhase =
+  | "enter"
+  | "active"
+  | "suspend"
+  | "resume"
+  | "result"
+  | "effect"
+  | "exit"
+  | "cancel"
+  | "terminate";
+
+export type PerformanceStep = {
+  phase: PerformancePhase;
+  note_id: string;
+  execution_id: string;
+  step_index: number;
+  payload?: unknown;
+  effect?: unknown;
+  timestamp?: number;
+};
+
+export type PerformanceStepDraft = Omit<PerformanceStep, "step_index"> & {
+  step_index?: number;
 };
 
 // ─── FxRef: 実行時解決される値への参照 ───
@@ -53,11 +68,11 @@ export interface ExecutionContext {
   resolve: <T>(ref: FxRef<T>) => Prop<T>;
   
   // 子ノードの実行
-  executeChild: (child: FxNote) => AsyncGenerator<ExecutionStep, any, any>;
+  executeChild: (child: FxNote) => AsyncGenerator<PerformanceStep, any, any>;
   
   cancelToken: CancelToken;
   
-  onStep?: (step: ExecutionStep) => void | Promise<void>;
+  onStep?: (step: PerformanceStep) => void | Promise<void>;
 }
 
 // ─── NoteDefinition Interface ───
@@ -69,7 +84,7 @@ export interface INoteDefinition<T extends FxNote['type']> {
    */
   execute(
     ctx: ExecutionContext & { Note: Extract<FxNote, { type: T }> }
-  ): AsyncGenerator<ExecutionStep, any, any>;
+  ): AsyncGenerator<PerformanceStep, any, any>;
   
   /**
    * ノードが持つ子ノードを返す（グラフ可視化用）
@@ -93,8 +108,8 @@ export type FxSequenceNote = FxNoteBase<"sequence", { steps: FxNote[] }>;
 export type FxParallelNote = FxNoteBase<"parallel", { steps: FxNote[] }>;
 export type FxRaceNote = FxNoteBase<"race", { steps: FxNote[] }>;
 export type FxWaitNote = FxNoteBase<"wait", { 
-  ms?: FxRef<number>; 
-  until?: FxRef<Prop<boolean>>; 
+  ms?: FxRef<number>;
+  until?: FxRef<Prop<boolean>>;
 }>;
 export type FxLoopNote = FxNoteBase<"loop", { 
   cond: FxRef<boolean>; 
@@ -161,7 +176,7 @@ export interface PreparedFx {
   readonly appContext: AppContext;
 }
 
-export type StepObserver = (step: ExecutionStep) => void | Promise<void>
+export type StepObserver = (step: PerformanceStep) => void | Promise<void>
 
 // ─── ExecutionHandle ───
 export interface ExecutionHandle {
@@ -267,7 +282,7 @@ export type RunChild = (
   overrideAppContext?: AppContext,
   overrideCancelToken?: CancelToken
 ) => Promise<unknown>;
-export type StepSink = (step: ExecutionStep) => void;
+export type StepSink = (step: PerformanceStepDraft) => void;
 
 export type StructureDeps = {
   runChild: RunChild;
