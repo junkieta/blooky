@@ -3,120 +3,12 @@
   executeByElement as defaultExecuteByElement,
   EffectElementTagNameMap as DefaultEffectElementTagNameMap,
   FxEffectElement as ConcreteEffectElementConstructor,
-  defaultFxStylesheet,
   FxEffectElement,
 } from "./blooky-fxdom";
 import type { AppContext, FxRuntime, FxNote } from "./blooky-fx-types";
 
-import { clock } from "./runtime/clock";
-import type { ObservedTick, CommitDripPlan } from "./runtime/clock";
 import { isChainedProp, isDripperStream, isStream, isVertex, Prop, Stream, vertex } from "./blooky-fp";
 import { Vertex, DripperStream, MergedStream } from "./blooky-fp-types";
-
-// ---------------------------------------------------------------------------
-// Bridge Tick timeline (core monitoring)
-// ---------------------------------------------------------------------------
-
-type EffectSummary = CommitDripPlan;
-
-/**
- * Bridge/Adapter must provide these. DevTools must not synthesize ordering keys.
- */
-export type BridgeTickPayload = {
-  tick_index: number;
-  tick_id: string | number;
-  execution_id?: string;
-  effects_summary: EffectSummary;
-  timestamp?: number; // informative only
-};
-
-export type TickRecord = BridgeTickPayload;
-
-class DevToolsTimeline {
-  private records: TickRecord[] = [];
-
-  addFromBridge(payload: BridgeTickPayload) {
-    // No key generation. Reject invalid payload rather than inferring fallback order.
-    if (!Number.isFinite(payload.tick_index)) {
-      throw new Error("[devtools] tick_index is required from Bridge/Adapter");
-    }
-
-    const next: TickRecord = {
-      tick_index: payload.tick_index,
-      tick_id: payload.tick_id,
-      execution_id: payload.execution_id,
-      effects_summary: payload.effects_summary,
-      timestamp: payload.timestamp,
-    };
-
-    const existingIdx = this.records.findIndex((r) => r.tick_index === next.tick_index);
-    if (existingIdx >= 0) this.records[existingIdx] = next;
-    else this.records.push(next);
-
-    // Ordering is always by bridge-provided tick_index.
-    this.records.sort((a, b) => a.tick_index - b.tick_index);
-
-    // Keep bounded history (informative).
-    if (this.records.length > 1000) {
-      this.records.splice(0, this.records.length - 1000);
-    }
-  }
-
-  getRecords(): readonly TickRecord[] {
-    return this.records;
-  }
-
-  clear() {
-    this.records = [];
-  }
-}
-
-const timeline = new DevToolsTimeline();
-
-/**
- * Preferred path for v1.0.0 conformance.
- * Feed Bridge/Adapter payload that already includes tick_index.
- */
-export const observeBridgeTick = (payload: BridgeTickPayload) => {
-  try {
-    timeline.addFromBridge(payload);
-  } catch (error) {
-    // MUST be isolated from commit/submit outcomes.
-    console.error("[devtools] Observer error (isolated):", error);
-  }
-};
-
-/**
- * Optional adapter helper.
- */
-export const createBridgeTickObserver = () => (payload: BridgeTickPayload) => {
-  observeBridgeTick(payload);
-};
-
-let detachBridgeTickObserver: (() => void) | null = null;
-
-/**
- * Connect runtime/time clock.observeTick() to DevTools observeBridgeTick().
- * Returns a function that detaches the observer.
- */
-export const connectClockBridgeTicks = () => {
-  if (!detachBridgeTickObserver) {
-    detachBridgeTickObserver = clock.observeTick((tick: ObservedTick) => {
-      observeBridgeTick(tick);
-    });
-  }
-  return () => {
-    if (!detachBridgeTickObserver) return;
-    detachBridgeTickObserver();
-    detachBridgeTickObserver = null;
-  };
-};
-
-/**
- * Read-only access for projections.
- */
-export const getTickRecords = (): readonly TickRecord[] => timeline.getRecords();
-export const clearTickRecords = () => timeline.clear();
 
 // ---------------------------------------------------------------------------
 // FxDOM injection (core projection primitives)
@@ -259,7 +151,7 @@ const toSelectorExpression = (e: Element) => {
 
 // fx-switch: expose named slots in shadowRoot for visual inspection
 if (EffectElementTagNameMap["fx-switch"]) {
-  const Base = EffectElementTagNameMap["fx-switch"] as any;
+  const Base = EffectElementTagNameMap["fx-switch"];
   EffectElementTagNameMap["fx-switch"] = class FxSwitchDevtools extends Base {
     connectedCallback(): void {
       super.connectedCallback?.();
@@ -272,12 +164,11 @@ if (EffectElementTagNameMap["fx-switch"]) {
         const existingSlot = shadow.querySelector("slot");
         existingSlot?.remove();
 
-        const slots = Array.from<HTMLElement>(this.querySelectorAll("*[slot]")).map((elm) => {
+        const slots = [...this.children].filter((elm) => elm.slot != null).map((elm)=>{
           const s = document.createElement("slot");
           s.name = elm.slot;
           return s;
         });
-
         shadow.append(...slots);
 
         // ensure at least one slot exists
@@ -326,32 +217,6 @@ if (EffectElementTagNameMap["fx-effect"]) {
   } as any;
 }
 
-// fx-collapse: pulse related graph node (optional adapter interaction)
-if (EffectElementTagNameMap["fx-collapse"]) {
-  const Base = EffectElementTagNameMap["fx-collapse"] as any;
-  EffectElementTagNameMap["fx-collapse"] = class FxCollapseDevtools extends Base {
-    constructor() {
-      super();
-      this.addEventListener("changestate", (e: Event) => {
-        try {
-          const state = (e as CustomEvent<string>).detail;
-          if (state !== "running") return;
-
-          const streamKey = (e.currentTarget as HTMLElement).getAttribute("dripper");
-          if (!streamKey) return;
-
-          const nodeElement = document.getElementById(`node-${streamKey}`);
-          if (!nodeElement) return;
-
-          nodeElement.classList.add("is-emitting");
-          setTimeout(() => nodeElement.classList.remove("is-emitting"), 1500);
-        } catch (err) {
-          console.error("[devtools] fx-collapse pulse failed (isolated):", err);
-        }
-      });
-    }
-  } as any;
-}
 
 // ---------------------------------------------------------------------------
 // Step → FxDOM CustomState projection
@@ -441,13 +306,6 @@ export const stepToFxState = (step: StepRecord) => {
         break;
     }
 
-    // 必要なら UI 側に通知（旧実装互換）
-    el.dispatchEvent(
-      new CustomEvent("changestate", {
-        bubbles: true,
-        detail: step.phase,
-      })
-    );
   } catch (error) {
     // MUST isolate
     console.error("[devtools] Step observer error (isolated):", error);
