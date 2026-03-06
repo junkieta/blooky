@@ -81,7 +81,146 @@ const defaultResolve = <T>(ref: FxRef<T>, ctx: PerfCtx): Prop<T> => {
     : p;
 };
 
+class ScoreValidationError extends Error {
+  readonly name = "ScoreValidationError";
+  constructor(message: string, readonly detail?: Record<string, unknown>) {
+    super(message);
+  }
+}
+
+const failValidation = (
+  message: string,
+  path: string,
+  note: unknown
+): never => {
+  throw new ScoreValidationError(message, {
+    path,
+    noteType: (note as any)?.type ?? null,
+    noteId: (note as any)?.id ?? null,
+  });
+};
+
+const validateWaitNote = (
+  note: Extract<FxNote, { type: "wait" }>,
+  path: string
+) => {
+  const hasTimer = note.timer !== undefined;
+  const hasUntil = note.until !== undefined;
+  if (hasTimer === hasUntil) {
+    failValidation("fx-wait requires exactly one of 'timer' or 'until'", path, note);
+  }
+};
+
+const validateScore = (flow: FxNote) => {
+  const walk = (note: unknown, path: string): void => {
+    if (!note || typeof note !== "object") {
+      failValidation("FxNote must be an object", path, note);
+    }
+
+    const typed = note as any;
+    if (typeof typed.type !== "string") {
+      failValidation("FxNote.type must be a string", path, note);
+    }
+    if (typed.id !== undefined && typeof typed.id !== "string") {
+      failValidation("FxNote.id must be a string when provided", path, note);
+    }
+
+    switch (typed.type as FxNote["type"]) {
+      case "none":
+        return;
+      case "sequence":
+      case "parallel":
+      case "race":
+        if (!Array.isArray(typed.steps)) {
+          failValidation(`${typed.type}.steps must be an array`, path, note);
+        }
+        typed.steps.forEach((child: unknown, i: number) => walk(child, `${path}.steps[${i}]`));
+        return;
+      case "wait":
+        validateWaitNote(typed, path);
+        return;
+      case "loop":
+        if (typed.cond === undefined) {
+          failValidation("loop.cond is required", path, note);
+        }
+        if (typed.body === undefined) {
+          failValidation("loop.body is required", path, note);
+        }
+        if (
+          typed.maxIterations !== undefined &&
+          (typeof typed.maxIterations !== "number" ||
+            (!Number.isFinite(typed.maxIterations) && typed.maxIterations !== Infinity) ||
+            typed.maxIterations < 0)
+        ) {
+          failValidation("loop.maxIterations must be a non-negative number or Infinity", path, note);
+        }
+        if (
+          typed.maxDuration !== undefined &&
+          (typeof typed.maxDuration !== "number" || !Number.isFinite(typed.maxDuration) || typed.maxDuration < 0)
+        ) {
+          failValidation("loop.maxDuration must be a non-negative finite number", path, note);
+        }
+        walk(typed.body, `${path}.body`);
+        return;
+      case "condition":
+        if (typed.if === undefined) {
+          failValidation("condition.if is required", path, note);
+        }
+        if (typed.then === undefined) {
+          failValidation("condition.then is required", path, note);
+        }
+        walk(typed.then, `${path}.then`);
+        if (typed.else !== undefined) walk(typed.else, `${path}.else`);
+        return;
+      case "switch":
+        if (typed.by === undefined) {
+          failValidation("switch.by is required", path, note);
+        }
+        if (!(typed.cases instanceof Map)) {
+          failValidation("switch.cases must be a Map", path, note);
+        }
+        let caseIndex = 0;
+        for (const [key, child] of typed.cases.entries()) {
+          const keyType = typeof key;
+          if (keyType !== "string" && keyType !== "number" && keyType !== "symbol") {
+            failValidation("switch.cases key must be string | number | symbol", `${path}.cases[${caseIndex}]`, note);
+          }
+          walk(child, `${path}.cases[${String(key)}]`);
+          caseIndex += 1;
+        }
+        if (typed.default !== undefined) walk(typed.default, `${path}.default`);
+        return;
+      case "call":
+        if (typed.action === undefined) {
+          failValidation("call.action is required", path, note);
+        }
+        return;
+      case "yield":
+        if (typed.score === undefined) {
+          failValidation("yield.score is required", path, note);
+        }
+        return;
+      case "context":
+        if (!typed.context || typeof typed.context !== "object" || Array.isArray(typed.context)) {
+          failValidation("context.context must be an object", path, note);
+        }
+        if (typed.child === undefined) {
+          failValidation("context.child is required", path, note);
+        }
+        walk(typed.child, `${path}.child`);
+        return;
+      case "return":
+        return;
+      default:
+        failValidation(`Unsupported FxNote.type: ${String(typed.type)}`, path, note);
+    }
+  };
+
+  walk(flow, "root");
+};
+
 export function prepare(flow: FxNote, initialAppContext: AppContext = {}, parent?: Partial<FxRuntime>): PreparedFx {
+  validateScore(flow);
 
   const idSlots: Record<string, any> = Object.create(parent?.idSlots ?? null);
 

@@ -19,9 +19,14 @@ import { Vertex, DripperStream, MergedStream } from "./blooky-fp-types";
  * NOTE: Spec recommends external binding tables (WeakMap), not embedding into FxNote.
  */
 const FxElementStates = new WeakMap<HTMLElement, CustomStateSet>();
-const FxElementByNoteId = new Map<string, HTMLElement>();
+type NoteElementCollector = (noteId: string, element: HTMLElement) => void;
+type NoteElementResolver = (noteId: string, executionId: string) => HTMLElement | undefined;
+let activeNoteElementCollector: NoteElementCollector | null = null;
 
-export const getFxElement = (noteId: string): HTMLElement | undefined => FxElementByNoteId.get(noteId);
+export const getFxElement = (
+  bindings: ReadonlyMap<string, HTMLElement>,
+  noteId: string
+): HTMLElement | undefined => bindings.get(noteId);
 export const getFxElementStates = (el: HTMLElement): CustomStateSet | undefined => FxElementStates.get(el);
 
 // ---- Stylesheets (dev-only visual aid) ----
@@ -109,7 +114,7 @@ Object.entries(EffectElementTagNameMap).forEach(([tag, fxClass]) => {
 
   toFxNote(): FxNote {
     const result = super.toFxNote() as FxNote;
-    FxElementByNoteId.set(resolveNoteId(result), this);
+    activeNoteElementCollector?.(resolveNoteId(result), this);
     return result;
   }
 } as any;
@@ -249,9 +254,12 @@ const clearFxStates = (el: HTMLElement, states: string[]) => {
   for (const s of states) setFxState(el, s, false);
 };
 
-export const stepToFxState = (step: PerformanceStep) => {
+export const stepToFxState = (
+  step: PerformanceStep,
+  resolveElement: NoteElementResolver = () => undefined
+) => {
   try {
-    const el = getFxElement(step.note_id);
+    const el = resolveElement(step.note_id, step.execution_id);
     if (!el) return;
 
     // 状態語彙（必要最低限）
@@ -316,8 +324,34 @@ export const executeByElement = (
   app: AppContext = {},
   ctx?: Partial<FxRuntime>
 ) => {
-  const handle = defaultExecuteByElement(root, app, ctx);
-  handle.observeStep(stepToFxState);
+  const bindings = new Map<string, HTMLElement>();
+  const collectBindings: NoteElementCollector = (noteId, element) => {
+    const existing = bindings.get(noteId);
+    if (existing && existing !== element) {
+      // Duplicate explicit id means ambiguous projection target.
+      console.warn("[devtools] Duplicate note_id for fx projection; keeping first binding:", noteId);
+      return;
+    }
+    bindings.set(noteId, element);
+  };
+
+  const prevCollector = activeNoteElementCollector;
+  activeNoteElementCollector = collectBindings;
+
+  let handle;
+  try {
+    handle = defaultExecuteByElement(root, app, ctx);
+  } finally {
+    activeNoteElementCollector = prevCollector;
+  }
+
+  const unobserve = handle.observeStep((step) =>
+    stepToFxState(step, (noteId) => getFxElement(bindings, noteId))
+  );
+  void handle.done.finally(() => {
+    unobserve();
+    bindings.clear();
+  });
   return handle;
 };
 

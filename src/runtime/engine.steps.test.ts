@@ -111,3 +111,52 @@ describe("runtime engine phase/event contract", () => {
     expect((steps.at(-1)?.payload as any)?.terminated).toBe(true);
   });
 });
+
+describe("wait validation contract", () => {
+  test("prepare rejects wait note when both timer and until are set", () => {
+    expect(() =>
+      prepare({
+        type: "wait",
+        timer: 100 as any,
+        until: (() => true) as any,
+      })
+    ).toThrow("fx-wait requires exactly one of 'timer' or 'until'");
+  });
+
+  test("prepare rejects wait note when neither timer nor until is set", () => {
+    expect(() =>
+      prepare({
+        type: "wait",
+      } as any)
+    ).toThrow("fx-wait requires exactly one of 'timer' or 'until'");
+  });
+});
+
+describe("score validation contract", () => {
+  test("prepare rejects call note without action", () => {
+    expect(() =>
+      prepare({
+        type: "call",
+      } as any)
+    ).toThrow("call.action is required");
+  });
+
+  test("prepare rejects condition note without then", () => {
+    expect(() =>
+      prepare({
+        type: "condition",
+        if: true,
+      } as any)
+    ).toThrow("condition.then is required");
+  });
+
+  test("prepare rejects switch note when cases is not a Map", () => {
+    expect(() =>
+      prepare({
+        type: "switch",
+        by: "k",
+        cases: {} as any,
+      } as any)
+    ).toThrow("switch.cases must be a Map");
+  });
+});

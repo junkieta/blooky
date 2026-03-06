@@ -22,10 +22,6 @@ const semWait: Semantics = function* (note) {
   if (note.type !== "wait") return;
 
   const {timer,until} = note;
-  if (timer !== undefined && until !== undefined) {
-    yield { type: "terminate", value: new Error("fx-wait: specify either timer or until") };
-    return;
-  }
   // note.timer があるなら timer にする
   if (timer !== undefined) {
     yield { type: "suspend", until: { kind: "timer", timer } };
@@ -37,6 +33,7 @@ const semWait: Semantics = function* (note) {
     return;
   }
 
+  // invalid wait note should be rejected before semantics (e.g. during prepare/factory validation)
 };
 
 const semYield: Semantics = function* (note) {
