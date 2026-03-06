@@ -7,17 +7,17 @@ export type PerformancePhase =
   | "active"
   | "suspend"
   | "resume"
-  | "result"
-  | "effect"
   | "exit"
-  | "cancel"
-  | "terminate";
+  | "cancel";
 
 export type PerformanceStep = {
   phase: PerformancePhase;
   note_id: string;
   execution_id: string;
   step_index: number;
+  // Implementation convention:
+  // semantic events such as effect/result/terminate are represented in payload.event
+  // while phase remains one of PerformancePhase.
   payload?: unknown;
   effect?: unknown;
   timestamp?: number;
@@ -108,7 +108,7 @@ export type FxSequenceNote = FxNoteBase<"sequence", { steps: FxNote[] }>;
 export type FxParallelNote = FxNoteBase<"parallel", { steps: FxNote[] }>;
 export type FxRaceNote = FxNoteBase<"race", { steps: FxNote[] }>;
 export type FxWaitNote = FxNoteBase<"wait", { 
-  ms?: FxRef<number>;
+  timer?: FxRef<number>;
   until?: FxRef<Prop<boolean>>;
 }>;
 export type FxLoopNote = FxNoteBase<"loop", { 
@@ -248,7 +248,7 @@ export type YieldUntil = YieldConditionRef;
 
 // fx-wait 用（必要最小限の例）
 export type WaitUntil =
-  | { kind: "timer"; ms: FxRef<number> }              // ms 待つ
+  | { kind: "timer"; timer: FxRef<number> }              // ms 待つ
   | { kind: "ref"; ref: FxRef<Prop<boolean>> };       // resolveRef で boolean を得て監視（Profileが意味づけ）
 
 export type SuspendUntil = YieldUntil | WaitUntil;

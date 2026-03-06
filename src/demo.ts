@@ -51,7 +51,7 @@ const EffectRenderer = prime(({
         {
           "fx-sequence": [
             { "fx-call": '"Saving..."', $: { action: "identity", done: statusMessageStream$ } },
-            { "fx-wait": jshtml.$({ ms: 1500 }) },
+            { "fx-wait": jshtml.$({ timer: 1500 }) },
             { "fx-call": jshtml.$({ action: "identity", input: $finalMessage, done: statusMessageStream$ }) },
             { "fx-call": '"save complete"', $: { action: "log" } },
           ],

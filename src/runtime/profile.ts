@@ -114,9 +114,9 @@ export const createDefaultProfile = (deps: {
       }
 
       case "timer": {
-        const waitMs = Number(resolveRef(until.ms, ctx)());
+        const waitMs = Number(resolveRef(until.timer, ctx)());
         if (!Number.isFinite(waitMs) || waitMs < 0) {
-          return { kind: "crash", error: new Error(`Invalid wait ms: ${waitMs}`), source: "runner" };
+          return { kind: "crash", error: new Error(`Invalid wait timer: ${waitMs}`), source: "runner" };
         }
         if (waitMs > 0) await sleep(waitMs);
         return { kind: "continue" };

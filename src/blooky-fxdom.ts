@@ -133,20 +133,20 @@ class FxWaitElement extends EffectElement {
   static [JSHTML_ATTR_HANDLER] = { until: attrValueToContextKey }
 
   toFxNote(): FxNote {
-    const timerAttr = this.getAttribute("ms");
-    let ms : FxRef<number>|undefined = undefined;
+    const timerAttr = this.getAttribute("timer");
+    let timer : FxRef<number>|undefined = undefined;
     
     if(timerAttr !== null) {
       // timer属性が数値の場合、静的な値を返すPropとする
       // isFiniteでtrueでなければ参照とみなしてrefを返す
       const n = Number(timerAttr);
-      ms = Number.isFinite(n) ? () => n : ref<number>(timerAttr);
+      timer = Number.isFinite(n) ? () => n : ref<number>(timerAttr);
     }
       
     // until属性がある場合、コンテキストへの参照とする
     const until = this.hasAttribute("until") ? ref<boolean>(this.getAttribute("until")!) : undefined;
     
-    return fx.wait({ms,until,id:this.id});
+    return fx.wait({timer,until,id:this.id});
   }
 }
 

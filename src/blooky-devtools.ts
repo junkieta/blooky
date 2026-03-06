@@ -261,18 +261,23 @@ export const stepToFxState = (step: PerformanceStep) => {
     switch (step.phase) {
       case "enter": {
         clearFxStates(el, ["completed", "failed", "cancelled", "terminated"]);
+        setFxState(el, "running", false);
+        setFxState(el, "paused", false);
+        break;
+      }
+      case "active": {
         setFxState(el, "running", true);
         setFxState(el, "paused", false);
         break;
       }
       case "suspend": {
         // suspend は「境界で止まっている」
+        setFxState(el, "running", false);
         setFxState(el, "paused", true);
         break;
       }
       case "resume": {
         setFxState(el, "paused", false);
-        setFxState(el, "running", true);
         break;
       }
       case "exit": {
@@ -296,9 +301,6 @@ export const stepToFxState = (step: PerformanceStep) => {
         setFxState(el, "cancelled", true);
         break;
       }
-
-      // result は状態遷移不要（必要なら last-result 的な投影を追加）
-      case "result":
       default:
         break;
     }

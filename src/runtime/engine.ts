@@ -124,7 +124,7 @@ export function execute(args: {
   profile: RunnerProfile;
 }): ExecutionHandle {
   const { prepared, registry, profile } = args;
-  const { rootNote, runtime: execContext, appContext } = prepared;
+  const { rootNote, runtime, appContext } = prepared;
 
   const stepObservers = new Set<StepObserver>();
   const stepIndexByExecution = new Map<string, number>();
@@ -138,7 +138,7 @@ export function execute(args: {
   ): Promise<unknown> => {
     const ctx: PerfCtx = {
       note,
-      runtime: execContext,
+      runtime: runtime,
       appContext: appCtx,
       executionId: `${parentId}:${note.type}`
     };
@@ -149,7 +149,14 @@ export function execute(args: {
       note_id: resolveNoteId(note),
       execution_id: ctx.executionId,
     });
+    notifyStep({
+      phase: "active",
+      note_id: resolveNoteId(note),
+      execution_id: ctx.executionId,
+      payload: { reason: "entered" },
+    });
     fsm.onEnter();
+    fsm.onActive();
 
     try {
       if (cancelToken.cancelled()) {
@@ -170,6 +177,7 @@ export function execute(args: {
           cancelToken,
         });
 
+        fsm.onExit();
         notifyStep({
           phase: "exit",
           note_id: resolveNoteId(note),
@@ -196,6 +204,7 @@ export function execute(args: {
 
         if (ev.type === "suspend") {
           fsm.onResume();
+          fsm.onActive();
         }
 
         if (r.kind === "result") {
@@ -206,6 +215,7 @@ export function execute(args: {
         }
       }
 
+      fsm.onExit();
       notifyStep({
         phase: "exit",
         note_id: resolveNoteId(note),
@@ -217,6 +227,7 @@ export function execute(args: {
       return final;
     } catch (e) {
       if (e instanceof Terminated) {
+        fsm.onExit();
         notifyStep({
           phase: "exit",
           note_id: resolveNoteId(note),
@@ -260,7 +271,7 @@ export function execute(args: {
         let finalValue: unknown = undefined;
 
         try {
-          finalValue = await run(rootNote, execContext.executionId || "root", appContext, execContext.cancelToken);
+          finalValue = await run(rootNote, runtime.executionId || "root", appContext, runtime.cancelToken);
         } catch (e) {
           if (e instanceof Terminated) {
             finalValue = e.value;
@@ -270,14 +281,14 @@ export function execute(args: {
           }
         }
 
-        if (rootNote.id) execContext.idSlots["#" + rootNote.id] = finalValue;
+        if (rootNote.id) runtime.idSlots["#" + rootNote.id] = finalValue;
         resolve(finalValue);
       })().catch(reject);
     });
   });
 
   return {
-    cancel: () => execContext.cancelToken.cancel("user"),
+    cancel: () => runtime.cancelToken.cancel("user"),
     observeStep: (fn:StepObserver) => {
       stepObservers.add(fn);
       return () => stepObservers.delete(fn);
@@ -339,19 +350,20 @@ const dispatchSemEvent = async (ev: SemanticEvent, deps: DispatchDeps) => {
     case "effect": {
       const projected = deps.profile.projectEffect(ev.ref, deps.ctx);
       deps.emit({
-        phase: "effect",
+        phase: "active",
         note_id: resolveNoteId(deps.ctx.note),
         execution_id: deps.ctx.executionId,
+        payload: { event: "effect", effect: projected },
         effect: projected,
       });
 
       const value = await deps.profile.applyEffect(ev.ref, deps.ctx);
       if (value.kind === "none") return { kind: "continue" as const };
       deps.emit({
-        phase: "result",
+        phase: "active",
         note_id: resolveNoteId(deps.ctx.note),
         execution_id: deps.ctx.executionId,
-        payload: { value },
+        payload: { event: "result", value },
       });
       return { kind: "result" as const, value };
     }
@@ -371,14 +383,20 @@ const dispatchSemEvent = async (ev: SemanticEvent, deps: DispatchDeps) => {
         execution_id: deps.ctx.executionId,
         payload: { until: ev.until },
       });
+      deps.emit({
+        phase: "active",
+        note_id: resolveNoteId(deps.ctx.note),
+        execution_id: deps.ctx.executionId,
+        payload: { reason: "resumed" },
+      });
 
       if (out.kind === "continue") return out;
 
       deps.emit({
-        phase: "result",
+        phase: "active",
         note_id: resolveNoteId(deps.ctx.note),
         execution_id: deps.ctx.executionId,
-        payload: { value: out },
+        payload: { event: "result", value: out },
       });
       return { kind: "result" as const, value: out };
     }
@@ -387,10 +405,10 @@ const dispatchSemEvent = async (ev: SemanticEvent, deps: DispatchDeps) => {
       {
         const value = deps.ctx.runtime.resolver(ev.value as FxRef<unknown>, deps.ctx)();
         deps.emit({
-          phase: "result",
+          phase: "active",
           note_id: resolveNoteId(deps.ctx.note),
           execution_id: deps.ctx.executionId,
-          payload: { value },
+          payload: { event: "result", value },
         });
         return { kind: "result" as const, value };
       }
@@ -399,10 +417,10 @@ const dispatchSemEvent = async (ev: SemanticEvent, deps: DispatchDeps) => {
       {
         const value = deps.ctx.runtime.resolver(ev.value as FxRef<unknown>, deps.ctx)();
         deps.emit({
-          phase: "terminate",
+          phase: "active",
           note_id: resolveNoteId(deps.ctx.note),
           execution_id: deps.ctx.executionId,
-          payload: { value },
+          payload: { event: "terminate", value },
         });
         throw new Terminated(value);
       }
@@ -455,20 +473,26 @@ const resolveNoteId = (note: FxNote): string => {
 };
 
 
-type Phase = "enter" | "running" | "suspended" | "completed" | "terminated" | "cancelled";
+type Phase = "entered" | "active" | "suspended" | "exited" | "cancelled";
 
 class RunnerFSM {
-  private phase: Phase = "enter";
+  private phase: Phase = "entered";
   private sawResult = false;
   private sawTerminate = false;
 
   onEnter() {
-    if (this.phase !== "enter") throw new Error("FSM violation: enter twice");
-    this.phase = "running";
+    if (this.phase !== "entered") throw new Error("FSM violation: enter twice");
+  }
+
+  onActive() {
+    if (this.phase !== "entered" && this.phase !== "suspended") {
+      throw new Error(`FSM violation: active from ${this.phase}`);
+    }
+    this.phase = "active";
   }
 
   onEvent(ev: SemanticEvent) {
-    if (this.phase === "completed" || this.phase === "terminated" || this.phase === "cancelled") {
+    if (this.phase === "exited" || this.phase === "cancelled") {
       throw new Error(`FSM violation: event after end (${ev.type})`);
     }
 
@@ -483,8 +507,8 @@ class RunnerFSM {
         if (this.sawResult || this.sawTerminate) {
           throw new Error("FSM violation: suspend after result/terminate");
         }
-        if (this.phase !== "running") {
-          throw new Error("FSM violation: suspend when not running");
+        if (this.phase !== "active") {
+          throw new Error("FSM violation: suspend when not active");
         }
         this.phase = "suspended";
         return;
@@ -493,25 +517,29 @@ class RunnerFSM {
         if (this.sawTerminate) throw new Error("FSM violation: result with terminate");
         if (this.sawResult) throw new Error("FSM violation: duplicate result");
         this.sawResult = true;
-        this.phase = "completed";
         return;
 
       case "terminate":
         if (this.sawResult) throw new Error("FSM violation: terminate with result");
         if (this.sawTerminate) throw new Error("FSM violation: duplicate terminate");
         this.sawTerminate = true;
-        this.phase = "terminated";
         return;
     }
   }
 
   onResume() {
     if (this.phase !== "suspended") throw new Error("FSM violation: resume without suspend");
-    this.phase = "running";
+  }
+
+  onExit() {
+    if (this.phase !== "active" && this.phase !== "suspended") {
+      throw new Error(`FSM violation: exit from ${this.phase}`);
+    }
+    this.phase = "exited";
   }
 
   onCancel() {
-    if (this.phase === "completed" || this.phase === "terminated" || this.phase === "cancelled") {
+    if (this.phase === "exited" || this.phase === "cancelled") {
       throw new Error("FSM violation: cancel after end");
     }
     this.phase = "cancelled";
