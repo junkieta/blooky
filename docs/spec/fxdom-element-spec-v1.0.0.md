@@ -89,7 +89,7 @@ fxdom の各要素は **FxNote を生成する宣言的ノード**である。
 fxdom は参照値の全体系を規定しない。
 ただし `<fx-yield for="…">` に関しては **locator 構文**を最小限規定する（§6）。
 
-他の属性値（`action`, `by`, `until`, `ms`, `value`, `input`, `done` など）の解決は **実装（Profile/Host）**に委ねる。
+他の属性値（`action`, `by`, `until`, `timer`, `value`, `input`, `done` など）の解決は **実装（Profile/Host）**に委ねる。
 
 **Profile Slot note（Normative）**:
 fxdom における Profile/Host は、参照解決のための実装差し替え点である。
@@ -211,7 +211,7 @@ Profile/Host 自体の closed set や独立 conformance は規定しない。
 ### Attributes
 
 * `until`（optional）: 条件参照（opaque）
-* `ms`（optional）: 時間参照（opaque）
+* `timer`（optional）: 時間参照（opaque）
 
 ### DOM constraints
 
@@ -651,7 +651,7 @@ fxdom は「参照の全体系」を規定しない。
 ただし設計方針として：
 
 * **ContextRef（キー参照）**の利用を前提としてよい
-* `action`, `by`, `test`, `until`, `ms`, `value`, `done` は **opaque な参照**として扱われうる
+* `action`, `by`, `test`, `until`, `timer`, `value`, `done` は **opaque な参照**として扱われうる
 * それらの解決規約は **Profile/Host** の責務
 
 fxdom は「DOM 外参照禁止」のような一般語彙で ContextRef を否定しない。
@@ -736,7 +736,7 @@ fxdom 実装が v1.0.0 に適合するためには、少なくとも次を満た
 <fx-switch by="$confirmResult">
   <fx-sequence slot="yes">
     <fx-call action="log" input="Saving..." />
-    <fx-wait ms="1500" />
+    <fx-wait timer="1500" />
     <fx-call action="log" input="save complete" />
   </fx-sequence>
 

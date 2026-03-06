@@ -125,7 +125,7 @@ class FxRaceElement extends EffectElement {
 
 /**
  * 待機 (fx.wait) を表すカスタム要素。
- * `ms` 属性または `until` 属性で指定された条件が満たされるまでフローをブロックする。
+ * `timer` 属性または `until` 属性で指定された条件が満たされるまでフローをブロックする。
  */
 class FxWaitElement extends EffectElement {
 
@@ -133,14 +133,14 @@ class FxWaitElement extends EffectElement {
   static [JSHTML_ATTR_HANDLER] = { until: attrValueToContextKey }
 
   toFxNote(): FxNote {
-    const msAttr = this.getAttribute("ms");
+    const timerAttr = this.getAttribute("ms");
     let ms : FxRef<number>|undefined = undefined;
     
-    if(msAttr !== null) {
-      // ms属性が数値の場合、静的な値を返すPropとする
+    if(timerAttr !== null) {
+      // timer属性が数値の場合、静的な値を返すPropとする
       // isFiniteでtrueでなければ参照とみなしてrefを返す
-      const n = Number(msAttr);
-      ms = Number.isFinite(n) ? () => n : ref<number>(msAttr);
+      const n = Number(timerAttr);
+      ms = Number.isFinite(n) ? () => n : ref<number>(timerAttr);
     }
       
     // until属性がある場合、コンテキストへの参照とする

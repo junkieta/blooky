@@ -25,7 +25,7 @@ Stream → Prop → UI/Fx
 
 ```html
 <fx-sequence>
-  <fx-wait ms="1000" />
+  <fx-wait timer="1000" />
   <fx-parallel>
     <fx-call fn="fetchUser" />
     <fx-call fn="fetchPosts" />

@@ -61,7 +61,7 @@ fxで宣言した実行の構造をScore（譜面）、それが実際に動く�
 
 ```html
 <fx-sequence>
-  <fx-wait ms="1000" />
+  <fx-wait timer="1000" />
   <fx-call fn="fetchUser" />
 </fx-sequence>
 ```
