@@ -137,7 +137,7 @@ export type FxYieldNote = FxNoteBase<"yield", {
   input?: FxRef<any>;
   done?: FxRef<DripperStream<any>>;
 }>;
-export type FxContextNote = FxNoteBase<"context", { 
+export type FxFlowNote = FxNoteBase<"context", { 
   context: AppContext; 
   child: FxNote; 
 }>;
@@ -156,7 +156,7 @@ export type FxNote =
   | FxSwitchNote
   | FxCallNote
   | FxYieldNote
-  | FxContextNote
+  | FxFlowNote
   | FxReturnNote;
 
 export type FxNoteType = FxNote["type"];

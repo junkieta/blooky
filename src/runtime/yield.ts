@@ -73,7 +73,7 @@ export class CompositeYieldDriver implements YieldDriver {
 
 
 // fxdom/yield-driver-template.ts
-import { FxContextElement } from "../blooky-fxdom"; // 実際の型に合わせて
+import { FxFlowElement } from "../blooky-fxdom"; // 実際の型に合わせて
 import { isFxRefKey } from "./engine";
 
 type Deps = {
@@ -110,8 +110,8 @@ export class TemplateYieldDriver implements YieldDriver {
 
       if (!template || template.tagName !== "TEMPLATE") throw new Error("[yield/template] template not found");
 
-      // 実行対象のルートを決める（fx-effect 推奨。fx-context なら入口を追加）
-      const host = document.createElement("fx-context") as FxContextElement;
+      // 実行対象のルートを決める
+      const host = document.createElement("fx-flow") as FxFlowElement;
       host.id = "YIELDED" + id;
       host.setContext(req.ctx.appContext);
       host.appendChild(template.content.cloneNode(true));

@@ -9,7 +9,7 @@ import {
   type FxCallNote,
   type FxWaitNote,
   type FxYieldNote,
-  type FxContextNote,
+  type FxFlowNote,
   type FxLoopNote,
   FxCallAction,
 } from "./blooky-fx-types";
@@ -106,7 +106,7 @@ export const fx = {
     ...opt,
   }),
   yield: (note: Omit<FxYieldNote, "type">): FxYieldNote => ({ type: "yield", ...note }),
-  context: (context: AppContext, child: FxNote, id?: string): FxContextNote => ({
+  context: (context: AppContext, child: FxNote, id?: string): FxFlowNote => ({
     type: "context",
     context,
     child,

@@ -362,10 +362,10 @@ class FxReturnElement extends EffectElement {
 }
 
 /**
- * コンテキスト定義 (fx.context) を表すカスタム要素。
- * 子ノードの実行に必要なコンテキスト（変数や関数）を定義し、提供する。
+ * Flow定義 (fx-flow) を表すカスタム要素。
+ * fx-yield により起動された score の展開先ルート。
  */
-class FxContextElement extends EffectElement {
+class FxFlowElement extends EffectElement {
 
   /** コンテキストが利用できない場合の内部シンボル */
   static noneResult = Symbol("none")
@@ -374,10 +374,10 @@ class FxContextElement extends EffectElement {
   protected context: Record<string, any> = {};
   
   /**
-   * 親の FxContextElement または FxEffectElement を検索する。
+   * 親の FxFlowElement または FxEffectElement を検索する。
    */
-  parentContext() : FxContextElement | null {
-    return this.parentElement ? this.parentElement.closest("fx-context,fx-effect") : null;
+  parentContext() : FxFlowElement | null {
+    return this.parentElement ? this.parentElement.closest("fx-flow,fx-effect") : null;
   }
 
   toFxNote(): FxNote {
@@ -405,7 +405,7 @@ class FxContextElement extends EffectElement {
       if(noExist.length) {
         throw createFxDomError(
           "MISSING_CONTEXT_USAGE_KEY",
-          `[fx-context] Invalid context: keys "${noExist.join(", ")}" are required by 'use' attribute but not contained in the input context.`,
+          `[fx-flow] Invalid context: keys "${noExist.join(", ")}" are required by 'use' attribute but not contained in the input context.`,
           {
             attribute: "use",
             suggestions: ["Ensure the context passed to the element contains all keys listed in the 'use' attribute."],
@@ -444,7 +444,7 @@ class FxContextElement extends EffectElement {
       if(requiredUseAttr === true && !this.containedUseAttr(key)) {
         throw createFxDomError(
           "UNAUTHORIZED_CONTEXT_ACCESS",
-          `[fx-context] Invalid context key: "${key}" is not contained in the 'use' attribute for required access.`,
+          `[fx-flow] Invalid context key: "${key}" is not contained in the 'use' attribute for required access.`,
           {
             constraint: `Key "${key}" must be listed in 'use' attribute.`,
             property: key,
@@ -470,7 +470,7 @@ class FxContextElement extends EffectElement {
  * フロー宣言のルートとなるカスタム要素。
  * contextの提供機能を有する。
  */
-class FxEffectElement extends FxContextElement {
+class FxEffectElement extends FxFlowElement {
   
   [JSHTML_ELEMENT_HANDLER](context?: AppContext) {
     if (context) this.setContext(context);
@@ -535,9 +535,9 @@ export const EffectElementTagNameMap = {
   "fx-yield": FxYieldElement,
   "fx-return": FxReturnElement,
   // コンテキスト適用要素
-  "fx-context": FxContextElement,
+  "fx-flow": FxFlowElement,
   "fx-effect": FxEffectElement,
 }
 
 // elements
-export {FxCallElement,FxWaitElement,FxEffectElement,FxIfElement,FxParallelElement,FxRaceElement,FxLoopElement,FxSequenceElement,FxSwitchElement,FxContextElement,FxReturnElement};
+export {FxCallElement,FxWaitElement,FxEffectElement,FxIfElement,FxParallelElement,FxRaceElement,FxLoopElement,FxSequenceElement,FxSwitchElement,FxFlowElement as FxFlowElement,FxReturnElement};
