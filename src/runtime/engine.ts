@@ -268,10 +268,13 @@ export function execute(args: {
   const stepObservers = new Set<StepObserver>();
   const stepIndexByExecution = new Map<string, number>();
   const notifyStep = createStepEmitter(stepObservers, stepIndexByExecution);
+  const executionSeed =
+    runtime.executionId ?? `exec-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  let executionSeq = 0;
+  const nextExecutionId = () => `${executionSeed}:n${executionSeq++}`;
 
   const run = async (
     note: FxNote,
-    parentId: string,
     appCtx: Record<string, any>,
     cancelToken: CancelToken
   ): Promise<unknown> => {
@@ -279,7 +282,7 @@ export function execute(args: {
       note,
       runtime: runtime,
       appContext: appCtx,
-      executionId: `${parentId}:${note.type}`
+      executionId: nextExecutionId(),
     };
 
     const fsm = new RunnerFSM();
@@ -308,7 +311,6 @@ export function execute(args: {
           runChild: (child, overrideAppContext, overrideCancelToken) =>
             run(
               child,
-              ctx.executionId,
               overrideAppContext ?? ctx.appContext,
               overrideCancelToken ?? cancelToken
             ),
@@ -410,7 +412,7 @@ export function execute(args: {
         let finalValue: unknown = undefined;
 
         try {
-          finalValue = await run(rootNote, runtime.executionId || "root", appContext, runtime.cancelToken);
+          finalValue = await run(rootNote, appContext, runtime.cancelToken);
         } catch (e) {
           if (e instanceof Terminated) {
             finalValue = e.value;
