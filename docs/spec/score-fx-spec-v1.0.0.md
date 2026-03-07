@@ -110,6 +110,7 @@ score-fx は `effect` の形式・意味解釈・適用方式・適用単位を�
 
 * Semantics が `SemanticEvent.effect` を emit してよい（MAY）。
 * Runner はそれを任意の Step に反映してよい（MAY）。どの phase に付与するかは **Profile** が定義してよい（MAY）。
+* Step.effect から runtime submit への出口マッピングは、Semantics Registry Appendix A（Informative）を参照する。
 
 ### 4.3 Error-to-Value Mapping
 

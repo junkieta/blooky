@@ -61,7 +61,6 @@ export const execute = (prepared: PreparedFx): ExecutionHandle => {
   return {
     cancel: handle.cancel,
     done: handle.done,
-    observeFrame: bridge.observeFrame,
   };
 };
 

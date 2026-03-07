@@ -3,7 +3,7 @@
 **Status:** 🔒 Final / Frozen
 **Scope:** DOM-based Score Description (fxdom → FxScore)
 **Depends on (Normative):** score-fx Protocol Specification v1.0.0, blooky-context v1.0.0
-**Related:** blooky-bridge v1.0.0 (out of scope), DevTools Projection (out of scope)
+**Related:** blooky Clock Specification v1.0.0 (out of scope), blooky Projection Specification v1.0.0 (out of scope)
 
 ---
 
@@ -26,7 +26,7 @@ fxdom が規定するのは：
 fxdom が明示的に対象外とするもの：
 
 * Runner の実行意味論（進行規則の実装詳細）
-* Bridge/FRP への適用方式（tick/commit/atomicity 等）
+* Clock/FRP への適用方式（tick/commit/atomicity 等）
 * Snapshot / Projection / DevTools 表示モデル
 * DOM event の起動制御（ignite 等）
 
@@ -687,7 +687,7 @@ fxdom v1.0.0 は以下を定義しない：
 
 * Runner の進行アルゴリズム
 * Profile の resolver（`by` の一致判定、`test` の真偽判定、`done` の配送）
-* Bridge/commit/atomic tick
+* Clock/commit/atomic tick
 * Snapshot / Projection / DevTools 表示意味論
 * DOM イベント（起動・監視）を仕様として強制すること
 

@@ -26,7 +26,8 @@
 
 * score-fx
 * fxdom
-* bridge
+* clock
+* projection
 * devtools
 * blooky-fp
 * blooky-fv
@@ -472,4 +473,179 @@ Semantics Registry は **拡張可能で、肥大しない中核**として固�
 ---
 
 # 🔒 Semantics Registry v1.0 — Frozen
+
+---
+
+# Appendix A: RuntimeFx Submission Mapping
+
+**Status:** Informative Appendix
+**Applies to:** Runner / host runtime integration
+
+---
+
+## A.1 Purpose
+
+本付録は、Semantics Registry によって生成された
+**SemanticEvent が runtime effect に変換される経路**を説明する。
+
+Semantics は runtime API を直接呼び出さない。
+Semantics は **SemanticEvent を yield するのみ**である。
+
+SemanticEvent は Runner によって **PerformanceStep** に変換され、
+runtime integration 層を通じて runtime effect として提出される。
+
+本付録はこの **Runner -> runtime integration mapping** を説明する。
+
+---
+
+## A.2 Execution Event Flow
+
+Execution 中のイベントは次の流れで処理される。
+
+```text
+Semantics
+   ↓ yield
+SemanticEvent
+   ↓
+Runner
+   ↓
+PerformanceStep
+   ↓
+RuntimeFx Adapter
+   ↓
+Runtime
+```
+
+Semantics は runtime implementation を前提としてはならない（MUST NOT）。
+
+---
+
+## A.3 SemanticEvent
+
+Semantics は execution 中に **SemanticEvent** を生成する。
+
+例:
+
+```ts
+yield {
+  type: "effect",
+  ref: {
+    kind: "drip",
+    dripper,
+    value
+  }
+}
+```
+
+SemanticEvent の意味論は **Semantics Registry** によって定義される。
+
+Semantics は runtime effect を直接実行してはならない（MUST NOT）。
+
+---
+
+## A.4 Runner Conversion
+
+Runner は SemanticEvent を **PerformanceStep** に変換する。
+
+例:
+
+```ts
+PerformanceStep = {
+  type: "effect",
+  effect: {
+    kind: "drip",
+    dripper,
+    value
+  }
+}
+```
+
+Runner は execution ordering を維持しながら
+SemanticEvent を PerformanceStep として記録する。
+
+---
+
+## A.5 RuntimeFx Adapter
+
+RuntimeFx adapter は PerformanceStep.effect を runtime operation に変換する。
+
+典型例:
+
+```text
+step.effect
+   ↓
+runtime submit
+   ↓
+clock.submitPlan(...)
+```
+
+この変換は runtime implementation に依存する。
+
+Semantics はこの変換を前提としてはならない（MUST NOT）。
+
+---
+
+## A.6 Relationship to Clock
+
+RuntimeFx adapter は必要に応じて runtime effect を
+**Clock transaction submission** に変換する。
+
+例:
+
+```ts
+clock.submitPlan({
+  dripper,
+  value
+})
+```
+
+ただし Clock API の利用は runtime integration の責務である。
+
+Semantics は Clock API を呼び出してはならない（MUST NOT）。
+
+---
+
+## A.7 Runtime Responsibility
+
+runtime integration 層は次を行ってよい（MAY）。
+
+* effect translation
+* scheduling
+* batching
+* transaction routing
+
+ただし runtime は **Semantics が表現した effect intent** を破壊してはならない（MUST NOT）。
+
+---
+
+## A.8 Failure Handling
+
+runtime effect submission の失敗は runtime-defined である。
+
+Runner は runtime failure を **Execution failure** として扱う場合がある。
+
+Semantics は runtime failure recovery を仮定してはならない（MUST NOT）。
+
+---
+
+## A.9 Relationship to Execution Model
+
+Execution モデルは runtime transaction model を直接扱わない。
+
+Execution は **SemanticEvent を生成するのみ**である。
+
+runtime interaction は Runner integration を通じて行われる。
+
+---
+
+## A.10 Design Rationale (Informative)
+
+この mapping を Semantics Registry の付録として定義する理由は次の通りである。
+
+1. Semantics は runtime API を直接扱わない
+2. runtime integration は host implementation の責務である
+3. Semantics Registry は effect intent のみを定義する
+
+したがって runtime submission mapping は
+**Semantics Registry の補助説明として扱う**。
 

@@ -1,30 +1,33 @@
-# blooky Clock Specification v1.0.0 (Draft)
+# blooky Clock Specification v1.0.0
 
-**Subtitle:** Tick Transaction Boundary for FRP Commit
-**Status:** Draft (aligned with runtime refactor)
+**Subtitle:** Tick Transaction Runtime for FRP Commit
+**Status:** Draft
 
 ---
 
 # 1. Purpose
 
-Clock は、blooky における **Tick 駆動と Commit Transaction の境界**を定義する統合インターフェースである。
+Clock は blooky における **Tick 駆動の transaction runtime** を定義する。
 
-Clock は以下を保証する。
+Clock は次を保証する。
 
 1. FRP 更新は **Tick 単位で atomic commit** される
 2. 同一 Tick 内の競合は **commit 前に検出される**
 3. Observer は **commit 予定の確定状態のみ観測する**
 
-Clock は commit transaction の唯一の書き込み境界 (write boundary) を提供する。
-読み取り経路は FRP graph によって提供され、Clock を経由することを要求しない。
+
+Clock は blooky runtime の **FRP commit transaction boundary** である。
+
+blooky runtime が管理する FRP commit は
+Clock を通じて行われなければならない (MUST)。
 
 ---
 
 # 2. Clock Interface
 
-Clock は以下のインターフェースを提供する。
+Clock は次のインターフェースを提供する。
 
-```ts
+```
 type Clock = Prop<number> & FVRuntime & {
 
   submitPlan(plan: DripPlan<any>): Promise<ObservedDripPlan>
@@ -43,7 +46,7 @@ type Clock = Prop<number> & FVRuntime & {
 }
 ```
 
-Clock は **Prop<number>** としても振る舞い、Tick 値を FRP に公開する。
+Clock は `Prop<number>` としても振る舞い、Tick 値を FRP graph に公開する。
 
 ---
 
@@ -51,11 +54,11 @@ Clock は **Prop<number>** としても振る舞い、Tick 値を FRP に公開�
 
 Clock は **Tick Transaction Model** を採用する。
 
-1 Tick は以下の段階で構成される。
+1 Tick は次の段階で処理される。
 
 ```
-Submit Phase
-Merge Phase
+Submit
+Merge
 Conflict Check
 Observer Notify
 Commit
@@ -68,26 +71,28 @@ Resolve
 
 `submitPlan(plan)` により DripPlan が予約される。
 
-```ts
-clock.submitPlan({
-  dripper,
-  value
-})
+```
+clock.submitPlan({ dripper, value })
 ```
 
-submit は **次の scheduler cycle** における future Tick で処理される。
+submit は **次の scheduler cycle における future Tick** で処理される。
 
 ---
 
 ## 3.2 Merge Phase
 
-同一 Tick 内に複数の DripPlan が到着した場合、Clock は dripper 単位で入力を集約する。
+同一 Tick 内に複数の DripPlan が存在する場合、
+Clock は dripper 単位で入力を集約する。
 
-Merge は以下の規則で行われる。
+Merge 規則:
 
-1. 入力が 1 値の場合、その値を受理する。
-2. 入力が 2 値以上で MergeStrategy が登録されている場合、reducer を適用する。
-3. 入力が 2 値以上で MergeStrategy が未登録の場合、**DripConflict** とする。
+```
+1 value                → accept
+2+ value + reducer     → merge
+2+ value + no reducer  → DripConflict
+```
+
+MergeStrategy は dripper 単位で登録される。
 
 ---
 
@@ -95,80 +100,96 @@ Merge は以下の規則で行われる。
 
 Merge 後、Clock は commit intent を生成する。
 
-commit intent は `(Prop,value)` の列である。
+commit intent は
+
+```
+(Prop, value)[]
+```
+
+の列である。
 
 Clock は以下の conflict を検出する。
 
 ### Drip Conflict
 
-同一 dripper に複数値が存在し、merge strategy が無い場合。
+同一 dripper に複数値が存在し merge strategy がない場合。
 
 ### Commit Conflict
 
-同一 Prop に異値更新が存在する場合。
+同一 Prop に異なる値更新が存在する場合。
 
 同値重複は MAY deduplicate。
 
-## 3.3.1 Conflict Handling Rule (Normative)
+---
 
-Clock は Drip Conflict または Commit Conflict を検出した Tick について、以下を MUST とする。
+## 3.3.1 Conflict Handling Rule
 
-1. 当該 Tick の commit を実行しない。
-2. 当該 Tick の Tick Observer および Commit Observer を呼び出さない。
-3. 当該 Tick に含まれる `submitPlan` Promise を reject する。
+Clock は Drip Conflict または Commit Conflict を検出した Tick に対して次を MUST とする。
+
+1. commit を実行しない
+2. Tick Observer / Commit Observer を呼び出さない
+3. 当該 Tick に含まれる submitPlan Promise を reject する
 
 ---
 
 ## 3.4 Normative Tick Order
 
-Clock は conflict-free な Tick において、外部可視順序を次の順序で処理しなければならない (MUST)。
+Clock は conflict-free Tick に対して次の順序を維持しなければならない (MUST)。
 
 ```
-Submit -> Merge -> Conflict Check -> Observer Notify (pre-commit) -> Commit -> Resolve
+Submit
+→ Merge
+→ Conflict Check
+→ Observer Notify (pre-commit)
+→ Commit
+→ Resolve
 ```
 
 Clock はこの外部可視順序を変更してはならない (MUST NOT)。
+
+内部補助処理は許容されるが、
+この外部可視順序を破ってはならない (MUST NOT)。
 
 ---
 
 # 4. Atomic Commit
 
-Conflict が存在しない場合、Clock は commit intent を FRP に適用する。
+Conflict が存在しない場合、Clock は commit intent を FRP runtime に適用する。
 
 ```
 commit([...commitPlan])
 ```
 
-Commit は **atomic** であり、
+Commit は atomic であり、
 
 * 中間状態
 * 部分適用
 
-は観測されてはならない。
+は観測されてはならない (MUST NOT)。
 
 ---
 
 # 5. ObservedTick
 
-Tick Observer は commit 実行前 (pre-commit) に通知される。
+Tick Observer は **commit 実行前 (pre-commit)** に通知される。
 
 ```
 type ObservedTick = {
   tick_index: number
   tick_id: number|string
   timestamp: number
-  effects_summary: Map<Prop, value>
+  effects_summary: Map<Prop,value>
 }
 ```
 
-ObservedTick は、当該 Tick において commit 実行前に確定した conflict-free commit intent の観測表現である。
+ObservedTick は **conflict-free commit intent の観測表現**である。
 
-`effects_summary` は commit 後の結果ではなく、pre-commit で確定した conflict-free commit intent を表す。
+`effects_summary` は commit 結果ではなく、
+pre-commit で確定した commit intent を表す。
 
-Conflict が検出された Tick では ObservedTick は通知してはならない (MUST NOT)。
+Conflict が存在する Tick では ObservedTick を通知してはならない (MUST NOT)。
 
-Observer は commit の成功／失敗には影響しない。
-Observer failures MUST NOT affect commit execution.
+Observer failure は commit execution に影響してはならない (MUST NOT)。
 
 ---
 
@@ -178,11 +199,13 @@ Observer failures MUST NOT affect commit execution.
 
 Observer は commit された値のみ受け取る。
 
+---
+
 ## 6.1 Commit Observer Delivery Rule
 
-Commit Observer は conflict-free な Tick に対してのみ通知されなければならない (MUST)。
+Commit Observer は conflict-free Tick に対してのみ通知されなければならない (MUST)。
 
-Drip Conflict または Commit Conflict が発生した Tick では、Commit Observer を通知してはならない (MUST NOT)。
+Drip Conflict または Commit Conflict が発生した Tick では通知してはならない (MUST NOT)。
 
 ---
 
@@ -196,7 +219,7 @@ clock.setMergeStrategy(dripper, reducer)
 
 Reducer は同一 Tick 内の複数入力を 1 値に畳む。
 
-例:
+例
 
 ```
 last-write-wins
@@ -215,28 +238,28 @@ commit 実行中の例外は **fatal error** として扱われる。
 
 Clock は
 
-* Tick Queue を破棄
-* Scheduler を停止
+* Tick queue を破棄
+* scheduler を停止
 
-する。
+しなければならない (MUST)。
 
-Host は FatalHandler を登録できる。
+---
 
 ## 8.1 Fatal Boundary Rule
 
-Fatal Error は `submitPlan` の通常 reject 経路に載せてはならない (MUST NOT)。
+Fatal Error は `submitPlan` の reject 経路に載せてはならない (MUST NOT)。
 
-Fatal 発生時、Clock は以下を MUST とする。
+Fatal 発生時 Clock は次を MUST とする。
 
-1. 以後の Tick 処理を停止する。
-2. 保留中 Tick Queue を破棄する。
-3. FatalHandler に制御を移譲する。
+1. Tick 処理停止
+2. Queue 破棄
+3. FatalHandler へ制御移譲
 
 ---
 
 # 9. Scheduler
 
-Clock は Tick を scheduler によって進める。
+Clock は scheduler により Tick を進める。
 
 標準実装は
 
@@ -250,44 +273,14 @@ requestAnimationFrame
 
 ---
 
-# 10. Bridge Integration
+# 10. Integration
 
-Bridge は Clock を通じて commit を要求する。
+Execution runtime は Clock.submitPlan を通じて
+FRP commit transaction を要求する。
 
-```
-bridge.onStep(step)
-    ↓
-clock.submitPlan(...)
-```
+Clock は FRP commit transaction の唯一の boundary である。
 
-Bridge は Tick の管理を行わない。
-
----
-
-# 11. DevTools Integration
-
-DevTools Timeline は Clock Tick を基準に構築される。
-
-```
-Timeline authority = Clock Tick
-```
-
-Bridge は Timeline の主権を持たない。
-Timeline events are derived from Clock observers.
-
----
-
-# 12. Implementation Notes (Non-Normative)
-
-Clock の典型実装は以下の構成を取る。
-
-```
-Clock (facade)
- ├ scheduler
- ├ tick-gate
- └ commit-runtime
-```
-
-Clock はこれらの内部構造を公開しない。
+Execution 側の `SemanticEvent -> PerformanceStep.effect -> runtime submit` の
+出口マッピングは Semantics Registry Appendix A (Informative) を参照する。
 
 ---

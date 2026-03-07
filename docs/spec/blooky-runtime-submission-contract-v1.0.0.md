@@ -6,7 +6,7 @@
 
 * blooky-fp v1.0.0
 * blooky-context v1.0.0
-* blooky-bridge v1.0.0（Atomic Commit / Conflict Prohibition）
+* blooky Clock Specification v1.0.0（Atomic Commit / Conflict Prohibition）
 
 ---
 
@@ -26,7 +26,7 @@
 本仕様は以下を対象外とする：
 
 * Stream/Prop の計算意味論（fp の責務）
-* Tick 生成戦略（bridge の責務）
+* Tick 生成戦略（clock/runtime integration の責務）
 * DOM 投影（fv の責務）
 
 ---
@@ -64,7 +64,7 @@ ObservedPlan は commit に供される更新集合の viewである。
 ## 1.3 Error Model Reference（Normative）
 
 Runtime の submit() が reject で返す error の型・意味は、
-**blooky-bridge Specification v1.0.0 / §5.4 Error Model** に従わなければならない（MUST）。
+**blooky Clock Specification v1.0.0（Conflict/Fatal 境界）** に従わなければならない（MUST）。
 
 Runtime は submit() の reject において `SubmitError` 以外を返してはならない（MUST NOT）。
 
@@ -88,7 +88,7 @@ Outcome の分類・意味は score-fx Semantics Registry §4.6.4 に従う（MU
 
 ### Additional Runtime Policy（Normative）
 
-Bridge が `CommitExecutionError` として分類する停止級（fatal）エラーは、
+Clock/runtime が停止級（fatal）として分類するエラーは、
 Runtime においても recoverable failure として扱ってはならない（MUST NOT）。
 この種の例外は submit() reject 経路に載せてはならない（MUST NOT）。
 
@@ -194,10 +194,10 @@ CommitPlan は単一の状態遷移である。
 * 値が同値であれば削除してよい（MAY）
 * 異なる値であれば conflict である（MUST）
 * Runtime は conflict を 事前検出して reject する（MAY）。
-* ただし、Tick failure の最終確定規則は blooky-bridge v1.0.0 に従わなければならない（MUST）。
+* ただし、Tick failure の最終確定規則は blooky Clock Specification v1.0.0 に従わなければならない（MUST）。
 
 Runtime は conflict を 事前検出して reject しなければならない（MUST）。
-Bridge は conflict が到達した場合 commit してはならない（MUST NOT）。
+Clock/runtime は conflict が存在する Tick を commit してはならない（MUST NOT）。
 
 Conflict 解決規則（LWW 等）を提供してはならない（MUST NOT）。
 

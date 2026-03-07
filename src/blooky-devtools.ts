@@ -345,12 +345,7 @@ export const executeByElement = (
     activeNoteElementCollector = prevCollector;
   }
 
-  const unobserveFrame = handle.observeFrame((frame) =>
-    stepToFxState(frame.step, (noteId) => getFxElement(bindings, noteId))
-  );
-
   void handle.done.finally(() => {
-    unobserveFrame();
     bindings.clear();
   });
   return handle;

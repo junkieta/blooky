@@ -1,270 +1,247 @@
-# blooky-devtools Specification v1.0.0
+# blooky DevTools Specification v1.0.0
 
-**Subtitle:** Monitoring & Projection Contract for blooky-bridge
-**Status:** 🔒 Final / Frozen
-**Depends on:**
-
-* score-fx Protocol Specification v1.0.0
-* blooky-bridge Specification v1.0.0 (including Appendix E)
-* blooky-context v1.0.0
-
-**Scope:** Monitoring / Projection / Dev-only Injection
-**Non-goal:** Execution control, Timeline ownership, Ordering semantics
+**Subtitle:** Debug Runtime for blooky Execution
+**Status:** Draft (aligned with Projection split)
 
 ---
 
-## 0. Purpose and Positioning
+# 1. Purpose and Scope
 
-本仕様は、blooky ファミリーにおける実行・Commit・FRP 連動を
-**意味論を追加せずに可視化するための Monitoring / Projection 契約**を定義する。
+本仕様は、blooky における開発時専用の debug runtime (DevTools) を定義する。
 
-DevTools は以下のみを行う：
+DevTools は以下を提供する。
 
-1. Bridge が確定させた Tick を観測する
-2. 観測結果を DOM / Graph 等へ投影する
-3. 開発時のみ有効な拡張注入を提供する
+1. runtime state inspection
+2. execution progression control
+3. debug UI integration
+4. development-time instrumentation
 
-DevTools は以下を行ってはならない（MUST NOT）：
+DevTools は Projection を利用して runtime を可視化する debug runtime であり、Projection 自体ではない。
 
-* Timeline を定義する
-* ordering を決定する
-* effect を解釈する
-* 実行意味論を追加する
+DevTools は次を行ってはならない (MUST NOT)。
 
-Timeline の唯一の主権は Bridge にある。
+* Clock transaction semantics を変更する
+* FRP commit semantics を変更する
+* conflict resolution を行う
+* runtime ordering を再定義する
+* production runtime の意味論を変更する
 
----
-
-## 1. Normative Language
-
-MUST / MUST NOT / SHOULD / SHOULD NOT / MAY は RFC 2119 に従う。
+DevTools は execution progression の制御のみを提供する。
 
 ---
 
-## 2. Design Principles（Normative）
+# 2. Normative Positioning
 
-### 2.1 Bridge Subordination
+DevTools は次の仕様に依存する。
 
-DevTools は blooky-bridge Specification v1.0.0 Appendix E に従属する（MUST）。
+* Clock Specification
+* score-fx Specification
+* Projection Specification
+* blooky-fp Specification
+* blooky-fv Specification (UI inspection を行う場合)
 
-* `tick_index` は唯一の順序基準である
-* DevTools は順序キーを生成してはならない（MUST NOT）
-* DevTools は ordering を再定義してはならない（MUST NOT）
-
----
-
-### 2.2 Monitoring Only
-
-DevTools は Monitoring Observer として実装される（MUST）。
-
-* Commit Observer の一部になってはならない（MUST NOT）
-* DevTools の例外は Tick 成否を変更してはならない（MUST NOT）
+DevTools は runtime ordering authority を持たない。
+runtime ordering authority は Clock Tick に存在する。
+DevTools はこの ordering を再定義してはならない (MUST NOT)。
 
 ---
 
-### 2.3 Zero-Modification Integration
+# 3. Architecture
 
-DevTools は本番コードを変更せず導入できなければならない（MUST）。
+DevTools は次の構造を持つ。
 
-* import / build switch により有効化される
-* prod ビルドでは存在しない
+```text
+Clock / Runtime
+      ↓
+Projection
+      ↓
+DevTools Runtime
+   ├ Inspector
+   ├ Execution Controller
+   ├ Breakpoint Engine
+   └ Debug UI
+```
 
----
-
-### 2.4 Semantic Invariance
-
-DevTools は実行意味論に影響してはならない（MUST NOT）。
-
-* effect 解釈禁止
-* Phase 遷移への介入禁止
-* Conflict 処理禁止
-
----
-
-# 3. Tick Monitoring Contract（Revised / Normative）
-
-## 3.1 Observed Payload（Normative）
-
-DevTools は、Bridge/Adapter が提供する以下の情報を観測してよい（MAY）：
-
-* `tick_index`
-* `tick_id`
-* `execution_id`（存在する場合）
-* `effects_summary`
-  （当該 Tick で **commit 予定**の更新集合に関する summary。
-   summary の生成方式・粒度は実装依存でよい。）
-
-DevTools は以下に依存してはならない（MUST NOT）：
-
-* Effect Map の内部順序
-* 内部 merge 手順
-* 中間状態
-
-**Normative note**：
-本仕様は Tick の success/failure（結果通知）を要求しない。
-結果通知が必要な場合は Adapter 層の拡張として定義されうるが、
-DevTools v1.0.0 の依存関係には含めない。
-また、停止級（fatal）は Bridge/Runtime の停止経路で扱われるものであり、
-DevTools の通知語彙として recoverable failure と同列に扱ってはならない（MUST NOT）。
+Projection は runtime state を view として提供する。
+DevTools はそれを用いて debug runtime を構成する。
 
 ---
 
-## 3.2 Lifecycle Boundary（Normative）
+# 4. Inspection Surface
 
-DevTools が観測できるのは、次の条件を満たす Tick に限られる：
+DevTools は runtime state の inspection を提供してよい (MAY)。
 
-* conflict が存在しないことが確定している
-* commit 予定の更新集合（Effect Map / ObservedPlan 相当）が確定している
-* commit 実行前（pre-commit）
+Inspection は read-only でなければならない (MUST)。
 
-DevTools は以下を観測してはならない（MUST NOT）：
+DevTools は以下の runtime state を inspect してよい。
 
-* Reservation / merge / conflict 検証の途中状態
-* commit 実行中の状態
+* ObservedTick
+* ObservedDripPlan
+* execution step
+* FRP graph metadata
+* Prop / Stream metadata
+* FxDOM binding metadata
 
-Bridge v1.0.0 は post-commit 通知を要求しない（MUST NOT require）。
-
----
-
-## 3.3 Ordering（Unchanged / Normative）
-
-DevTools は表示順を `tick_index` に基づいて整列しなければならない（MUST）。
-
-`timestamp` を順序決定に使用してはならない（MUST NOT）。
+Inspection は runtime state を変更してはならない (MUST NOT)。
 
 ---
 
-## 4. FxDOM Projection（Normative）
+# 5. Execution Progression Control
 
-DevTools は Tick 観測結果を FxDOM 要素へ投影してよい（MAY）。
+DevTools は execution progression control を提供してよい (MAY)。
 
-### 4.1 Binding
+以下の control が提供されてよい。
 
-FxNote と FxDOM Element の関連付けは外部テーブルで保持する（SHOULD）。
+* pause
+* resume
+* single-step
+* step-until
+* breakpoint
 
-* WeakMap を使用することが推奨される
-* FxNote 構造へ情報を埋め込んではならない（MUST NOT）
+これらは execution progression のみを制御する。
 
----
+DevTools は以下を行ってはならない (MUST NOT)。
 
-### 4.2 Projection Channels
-
-許可される投影チャネル：
-
-* CustomStateSet（states.add/delete）
-* data-* 属性
-* CSS variables
-* ShadowRoot 内の補助表示
-
-実行意味論に影響する DOM 変更を行ってはならない（MUST NOT）。
+* Clock transaction semantics の変更
+* commit ordering の変更
+* conflict rule の変更
+* FRP commit の直接実行
 
 ---
 
-### 4.3 Injection Model（Dynamic Extends）
+# 6. Pause / Resume Model
 
-DevTools は FxDOM 要素を extends してよい（MAY）。
+pause は execution progression を一時停止する debug command である。
+resume は停止した execution progression を再開する debug command である。
 
-ただし：
+pause は安全境界でのみ execution を停止しなければならない (MUST)。
+安全境界は implementation-defined でよい (MAY)。
 
-* define 前に差し替える（MUST）
-* super.* を呼び出す（MUST）
-* toFxNote の意味を変更しない（MUST NOT）
-* アプリコードの変更を要求しない（MUST）
+ただし次を破ってはならない (MUST NOT)。
 
----
+* commit transaction 中断
+* conflict Tick の成功化
+* fatal error の回復
 
-## 5. FRP Graph Monitoring（Optional）
-
-DevTools は FRP 伝播を観測してよい（MAY）。
-
-ただし：
-
-* FRP 再計算をトリガしてはならない（MUST NOT）
-* merge / map の意味論に介入してはならない（MUST NOT）
-
-Graph 表示は Informative 機能であり、v1.0.0 では規範化しない。
+pause / resume は Clock transaction semantics に影響してはならない。
 
 ---
 
-## 6. DOM Adapter Interaction（Normative Boundary）
+# 7. Step Model
 
-Bridge は DOM 投影を規定しない。
+single-step は execution progression を 1 step 前進させる debug command である。
 
-DOM イベント（例：`blooky-collapse-*`）は Adapter 層の責務である。
+step 単位は implementation-defined でよい (MAY)。
 
-DevTools はこれらのイベントを観測してよい（MAY）。
+例:
 
-ただし：
+* 1 execution step
+* 1 yield / resume cycle
+* 1 note activation
 
-* DOM イベントは Bridge の ordering を上書きしてはならない（MUST NOT）
-* DOM event timestamp を順序根拠にしてはならない（MUST NOT）
+DevTools 実装は step 単位を公開文書で説明すべきである (SHOULD)。
 
----
+step execution は以下を満たさなければならない (MUST)。
 
-## 7. done の扱い（Minimal）
-
-done は「戻り値確定の通知口」として扱われる。
-
-* done は副作用適用先ではない（MUST NOT）
-* done に意味論を追加してはならない（MUST NOT）
-* done を汎用フックに拡張する設計は推奨されない（SHOULD NOT）
-
-本仕様では done の内部構造を規定しない。
+* Clock ordering を変更しない
+* commit semantics を変更しない
+* FRP transaction boundary を変更しない
 
 ---
 
-# 8. Failure Handling（Normative）
+# 8. Breakpoints
 
-DevTools 内の例外は：
+DevTools は breakpoint を提供してよい (MAY)。
 
-* commit 成否を変更してはならない（MUST NOT）
-* commit 実行を中断させてはならない（MUST NOT）
-* submit() の resolve/reject を変更してはならない（MUST NOT）
-* 可能であれば隔離されるべきである（SHOULD）
-* DevTools Observer は同期観測として扱われ、戻り値を await してはならない（MUST NOT）
-* Promise rejection 等の非同期失敗は診断として収集してよいが、commit/submit 成否に影響させてはならない（MUST NOT）
+breakpoint は execution progression を停止する条件である。
 
-**Normative note**：
-Tick failure の確定および error の生成は Bridge/Runtime の責務である。
-DevTools は failure を自ら確定させてはならない（MUST NOT）。
-CommitExecutionError 相当の停止級（fatal）も同様に Bridge/Runtime の責務であり、
-DevTools はこれを通常の submit() reject として扱ってはならない（MUST NOT）。
+例:
 
----
+* note id match
+* execution step type
+* effect kind
+* tick index condition
+* custom predicate
 
-# 9. Conformance（Minor Clarification）
-
-実装が v1.0.0 準拠であるためには：
-
-1. Bridge Appendix E（pre-commit Monitoring 境界）に従属する
-2. `tick_index` を唯一の順序基準とする
-3. Injection による意味論変更を行わない
-4. DevTools 無効時に挙動が一致する
-5. commit 成否に影響を与えない
+breakpoint は runtime state を変更してはならない (MUST NOT)。
+breakpoint は execution progression の停止要求のみを行う。
 
 ---
 
-# 10. Frozen Declaration（Normative）
+# 9. Debug UI Integration
 
-🔒 **Frozen**
+DevTools は debug UI を提供してよい (MAY)。
 
-* v1.0.0 は blooky-devtools の基準点である。
-* 後方互換を壊す変更は禁止（MUST NOT）。
-* 意味論変更は v1.1+ で行う（MUST）。
-* v1.0.0 のまま許されるのは、意味を変えない明確化・誤字修正・Informative 追記のみ（MAY）。
+例:
+
+* timeline viewer
+* graph inspector
+* step controls
+* runtime state panel
+* FxDOM overlay
+
+これらは Projection の view を利用して構築されるべきである (SHOULD)。
+Debug UI は runtime semantics に影響してはならない (MUST NOT)。
 
 ---
 
-## Closing Statement
+# 10. Development-Only Instrumentation
 
-blooky-devtools v1.0.0 は、
+DevTools は development-only instrumentation を提供してよい (MAY)。
 
-* Timeline 主権を Bridge に固定し
-* DevTools を pre-commit の Monitoring Observer として定義し
-* DevTools の失敗を commit 成否から隔離し
-* Injection による意味論変更を禁止し
-* 将来拡張（可観測バス／Fact 正規化）を可能にする
+例:
 
-最小核の固定である。
+* runtime labeling
+* DOM debug overlay
+* FxDOM inspection helpers
+* debug events
+* runtime state markers
+
+これらは以下を満たさなければならない (MUST)。
+
+* semantics-preserving
+* removable in production
+* failure-isolated
+
+---
+
+# 11. Production Separation
+
+DevTools は production runtime から分離可能でなければならない (MUST)。
+
+DevTools を無効化した場合でも runtime の意味論は変化してはならない (MUST)。
+
+DevTools の存在は次に影響してはならない。
+
+* commit ordering
+* runtime semantics
+* conflict behavior
+
+---
+
+# 12. Conformance
+
+DevTools 実装が本仕様に適合するためには、少なくとも次を満たさなければならない。
+
+1. execution progression control を提供する
+2. runtime state inspection を提供する
+3. Clock ordering authority を侵害しない
+4. FRP commit semantics を変更しない
+5. production runtime と分離可能である
+
+---
+
+# 13. Relationship to Projection
+
+Projection は runtime state を可視化する契約である。
+DevTools は Projection を利用する debug runtime である。
+
+```text
+Projection = runtime visualization
+DevTools   = debug runtime
+```
+
+Projection は execution control を提供しない。
+DevTools は execution control を提供する。
 
 ---

@@ -1,6 +1,6 @@
 // src/fx/types.d.ts
 
-import { Prop, DripperStream, DripPlan } from "./blooky-fp-types";
+import { Prop, DripperStream } from "./blooky-fp-types";
 
 export type PerformancePhase =
   | "enter"
@@ -25,12 +25,6 @@ export type PerformanceStep = {
 
 export type PerformanceStepDraft = Omit<PerformanceStep, "step_index"> & {
   step_index?: number;
-};
-
-export type FrameRecord = {
-  step: PerformanceStep;
-  plans: DripPlan<any>[];
-  timestamp?: number;
 };
 
 // ─── FxRef: 実行時解決される値への参照 ───
@@ -183,12 +177,10 @@ export interface PreparedFx {
 }
 
 export type StepObserver = (step: PerformanceStep) => void | Promise<void>
-export type FrameObserver = (frame: FrameRecord) => void | Promise<void>
 
 // ─── ExecutionHandle ───
 export interface ExecutionHandle {
   cancel: () => void;
-  observeFrame: (fn: FrameObserver) => () => void
   done: Promise<unknown>;
 }
 

@@ -4,7 +4,7 @@
 **Status:** 🔒 Final / Frozen  
 **Depends on:**
 - blooky-fp v1.0.0
-- blooky-bridge v1.0.0
+- blooky Clock Specification v1.0.0
 - blooky-context v1.0.0
 
 **Scope:** FRP → DOM Projection Adapter, Event → Runtime Adapter
@@ -26,7 +26,7 @@ blooky-fv は blooky-fp によって構築された FRP グラフを DOM に投�
 ### 本仕様が規定しないもの
 
 - FRP 演算意味論（fp の責務）
-- Tick / commit / conflict 解決（fx bridge の責務）
+- Tick / commit / conflict 解決（clock/runtime の責務）
 - スケジューリング（runtime の責務）
 - DevTools 表示仕様
 
@@ -35,7 +35,7 @@ blooky-fv は blooky-fp によって構築された FRP グラフを DOM に投�
 **blooky-fv は意味論を持たない。**
 
 fv は Prop 値の解釈や実行戦略を導入してはならない（MUST NOT）。
-すべての実行制御は runtime と fx bridge に委譲される。
+すべての実行制御は runtime と clock transaction boundary に委譲される。
 
 ---
 
@@ -179,7 +179,7 @@ fv は、各 Prop について対応する unobserver を保持してよい（MA
 
 ### 3.3 Atomicity Preservation
 
-fv は fx bridge による atomic commit モデルを破壊してはならない（MUST NOT）。
+fv は clock/runtime による atomic commit モデルを破壊してはならない（MUST NOT）。
 
 - ObservedPlan の 各通知は **単一の commit の結果**として扱わなければならない（MUST）
 - fv は ObservedPlan 内の更新を段階的に適用してはならない（MUST NOT）
@@ -376,7 +376,7 @@ fv は `runtime.submitPlan` の結果を DOM CustomEvent として投影して�
 本仕様により：
 
 - **fv は純粋な Projection 層となる**: 実行意味論を持たない
-- **実行意味論は runtime / bridge に固定される**: fv は観測のみ
+- **実行意味論は runtime / clock に固定される**: fv は観測のみ
 - **context は初期化境界として凍結される**: 生成後は変更しない
 - **DOM と FRP の責務分離が明確になる**: fv は投影のみを担当
 - **ObservedPlan は view である**: commit-plan の編集権限を持たない
@@ -392,7 +392,7 @@ fv は以下を提供しない：
 - observer failure policy
 - plan editing / rewriting
 
-これらは runtime と fx bridge の責務である。
+これらは runtime と clock transaction boundary の責務である。
 
 ---
 

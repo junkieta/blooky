@@ -231,7 +231,7 @@ blooky-fp は完全同期モデルである。
 1. blooky-fp は error-to-value 変換を行わない（MUST NOT）。
 2. API misuse・型不整合・conflict・非同期混入は例外とする（MUST）。
 3. これらの例外は recoverable failure ではなく設計違反である。
-4. recoverable failure は上位層（bridge/runtime）の責務である。
+4. recoverable failure は上位層（clock/runtime integration）の責務である。
 
 ---
 

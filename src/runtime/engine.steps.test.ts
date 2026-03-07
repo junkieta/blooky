@@ -40,10 +40,14 @@ const collectSteps = async (
   profile: RunnerProfile
 ) => {
   const prepared = prepare(note, {});
-  const handle = execute({ prepared, registry, profile });
   const steps: PerformanceStep[] = [];
-  handle.observeFrame((f) => {
-    steps.push(f.step);
+  const handle = execute({
+    prepared,
+    registry,
+    profile,
+    authoritativeStepSink: (step) => {
+      steps.push(step);
+    },
   });
   await handle.done;
   return steps;
