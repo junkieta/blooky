@@ -42,8 +42,8 @@ const collectSteps = async (
   const prepared = prepare(note, {});
   const handle = execute({ prepared, registry, profile });
   const steps: PerformanceStep[] = [];
-  handle.observeStep((s) => {
-    steps.push(s);
+  handle.observeFrame((f) => {
+    steps.push(f.step);
   });
   await handle.done;
   return steps;

@@ -10,7 +10,8 @@ import type {
   FxRef,
   FxRefSymbol as FxRefSymbolDec,
   FxRefKey,
-  StepObserver,
+  FrameObserver,
+  FrameRecord,
   Registry,
   PerfCtx,
   SemanticEvent,
@@ -19,7 +20,7 @@ import type {
   RunnerProfile,
   FxCallAction
 } from "../blooky-fx-types";
-import { Prop } from "../blooky-fp-types";
+import { DripPlan, Prop } from "../blooky-fp-types";
 import { decode, bind } from "../blooky-context";
 
 const NotResolved = Symbol.for("NotResolved");
@@ -266,10 +267,10 @@ export function execute(args: {
   const { prepared, registry, profile, authoritativeStepSink } = args;
   const { rootNote, runtime, appContext } = prepared;
 
-  const stepObservers = new Set<StepObserver>();
+  const frameObservers = new Set<FrameObserver>();
   const stepIndexByExecution = new Map<string, number>();
   const notifyStep = createStepEmitter(
-    stepObservers,
+    frameObservers,
     stepIndexByExecution,
     authoritativeStepSink
   );
@@ -445,9 +446,9 @@ export function execute(args: {
 
   return {
     cancel: () => runtime.cancelToken.cancel("user"),
-    observeStep: (fn:StepObserver) => {
-      stepObservers.add(fn);
-      return () => stepObservers.delete(fn);
+    observeFrame: (fn: FrameObserver) => {
+      frameObservers.add(fn);
+      return () => frameObservers.delete(fn);
     },
     done,
   };
@@ -584,7 +585,7 @@ const dispatchSemEvent = async (ev: SemanticEvent, deps: DispatchDeps) => {
 };
 
 const createStepEmitter = (
-  observers: Set<StepObserver>,
+  observers: Set<FrameObserver>,
   stepIndexByExecution: Map<string, number>,
   authoritativeStepSink?: (step: PerformanceStep) => void | Promise<void>
 ) => async (step: PerformanceStepDraft) => {
@@ -603,9 +604,19 @@ const createStepEmitter = (
     await authoritativeStepSink(finalizedStep);
   }
 
+  const toPlans = (effect: unknown): DripPlan<any>[] => {
+    if (!effect || typeof effect !== "object" || (effect as any).kind !== "done") return [];
+    return [{ dripper: (effect as any).dripper, value: (effect as any).value }];
+  };
+  const frame: FrameRecord = {
+    step: finalizedStep,
+    plans: toPlans(finalizedStep.effect),
+    timestamp: finalizedStep.timestamp,
+  };
+
   if (observers.size) observers.forEach((observer)=>{
     try {
-      const maybePromise = observer(finalizedStep);
+      const maybePromise = observer(frame);
       if (
         maybePromise &&
         typeof (maybePromise as any).then === "function" &&

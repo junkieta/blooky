@@ -21,16 +21,16 @@ describe("runtime bridge", () => {
     consoleErrorSpy.mockRestore();
   });
 
-  test("monitoring observers are isolated from each other", async () => {
+  test("frame observers are isolated from each other", async () => {
     const submitPlan = jest.fn(async () => {});
-    const bridge = createDefaultBridge({ submitPlan });
+    const bridge = createDefaultBridge({ runtime: { submitPlan } });
 
     const called: string[] = [];
-    bridge.observeStep(() => {
+    bridge.observeFrame(() => {
       called.push("a");
       throw new Error("observer boom");
     });
-    bridge.observeStep(() => {
+    bridge.observeFrame(() => {
       called.push("b");
     });
 
@@ -42,7 +42,7 @@ describe("runtime bridge", () => {
 
   test("done effect is submitted as plan", async () => {
     const submitPlan = jest.fn(async () => {});
-    const bridge = createDefaultBridge({ submitPlan });
+    const bridge = createDefaultBridge({ runtime: { submitPlan } });
     const dripper = { kind: "dripper" };
 
     await bridge.onStep(
@@ -58,7 +58,7 @@ describe("runtime bridge", () => {
 
   test("frame observer receives plan batch for done effect", async () => {
     const submitPlan = jest.fn(async () => {});
-    const bridge = createDefaultBridge({ submitPlan });
+    const bridge = createDefaultBridge({ runtime: { submitPlan } });
     const dripper = { kind: "dripper" };
     const frames: any[] = [];
 

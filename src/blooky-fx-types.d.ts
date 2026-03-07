@@ -188,8 +188,7 @@ export type FrameObserver = (frame: FrameRecord) => void | Promise<void>
 // ─── ExecutionHandle ───
 export interface ExecutionHandle {
   cancel: () => void;
-  observeStep: (fn: StepObserver) => () => void
-  observeFrame?: (fn: FrameObserver) => () => void
+  observeFrame: (fn: FrameObserver) => () => void
   done: Promise<unknown>;
 }
 

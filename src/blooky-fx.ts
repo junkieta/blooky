@@ -34,7 +34,7 @@ export const prepare = (
 
 export const execute = (prepared: PreparedFx): ExecutionHandle => {
   const bridge = createDefaultBridge({
-    submitPlan: (plan) => clock.submitPlan(plan),
+    runtime: { submitPlan: clock.submitPlan },
   });
   const hub = new LocalYieldHub();
   const drivers: any = {};
@@ -61,7 +61,6 @@ export const execute = (prepared: PreparedFx): ExecutionHandle => {
   return {
     cancel: handle.cancel,
     done: handle.done,
-    observeStep: bridge.observeStep,
     observeFrame: bridge.observeFrame,
   };
 };
