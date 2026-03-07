@@ -18,6 +18,7 @@ import { createRegistry, registerDefault } from "./runtime/registry";
 import { createDefaultProfile } from "./runtime/profile";
 import { createDefaultBridge } from "./runtime/bridge";
 import { clock } from "./runtime/clock";
+import { emitRuntimeStep, observeRuntimeStep } from "./runtime/step-line";
 import { TemplateYieldDriver, CompositeYieldDriver, LocalYieldHub } from "./runtime/yield";
 
 // registry は1回だけ作る
@@ -56,13 +57,21 @@ export const execute = (prepared: PreparedFx): ExecutionHandle => {
     yieldDriver: new CompositeYieldDriver(drivers),
   });
   const handle = executeImpl({
-    prepared, registry, profile, authoritativeStepSink: bridge.onStep
+    prepared,
+    registry,
+    profile,
+    authoritativeStepSink: async (step) => {
+      await bridge.onStep(step);
+      emitRuntimeStep(step);
+    },
   });
   return {
     cancel: handle.cancel,
     done: handle.done,
   };
 };
+
+export { observeRuntimeStep };
 
 export const query = (note: FxNote, app: AppContext = {}, ctx?: Partial<FxRuntime>) =>
   execute(prepare(note, app, ctx));

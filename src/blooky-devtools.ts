@@ -6,8 +6,11 @@
   FxEffectElement,
 } from "./blooky-fxdom";
 import type { AppContext, FxRuntime, FxNote, PerformanceStep } from "./blooky-fx-types";
+import { clock } from "./runtime/clock";
+import { observeRuntimeStep } from "./runtime/step-line";
+import { decode } from "./blooky-context";
 
-import { isChainedProp, isDripperStream, isStream, isVertex, Prop, Stream, vertex } from "./blooky-fp";
+import { drip, isChainedProp, isDripperStream, isStream, isVertex, Prop, Stream, vertex } from "./blooky-fp";
 import { Vertex, DripperStream, MergedStream } from "./blooky-fp-types";
 
 // ---------------------------------------------------------------------------
@@ -19,7 +22,7 @@ import { Vertex, DripperStream, MergedStream } from "./blooky-fp-types";
  * NOTE: Spec recommends external binding tables (WeakMap), not embedding into FxNote.
  */
 const FxElementStates = new WeakMap<HTMLElement, CustomStateSet>();
-type NoteElementCollector = (noteId: string, element: HTMLElement) => void;
+type NoteElementCollector = (note: FxNote, element: HTMLElement) => void;
 type NoteElementResolver = (noteId: string, executionId: string) => HTMLElement | undefined;
 let activeNoteElementCollector: NoteElementCollector | null = null;
 
@@ -114,7 +117,7 @@ Object.entries(EffectElementTagNameMap).forEach(([tag, fxClass]) => {
 
   toFxNote(): FxNote {
     const result = super.toFxNote() as FxNote;
-    activeNoteElementCollector?.(resolveNoteId(result), this);
+    activeNoteElementCollector?.(result, this);
     return result;
   }
 } as any;
@@ -163,6 +166,47 @@ const resolveNoteId = (note: FxNote): string => {
   const generated = `note-${autoNoteIdCounter++}`;
   (note as any)[NOTE_ID_SYMBOL] = generated;
   return generated;
+};
+
+const isFxRefKeyLike = (v: unknown): v is { key: string } =>
+  !!v && typeof v === "object" && typeof (v as any).key === "string";
+
+const resolveDoneProp = (note: FxNote, app: AppContext): Prop<any> | null => {
+  const done = (note as any).done;
+  if (done === undefined || done === null) return null;
+
+  let resolved: unknown = done;
+  if (isFxRefKeyLike(done)) {
+    const key = done.key;
+    if (key.startsWith("#") || key.startsWith("$_")) return null;
+    try {
+      resolved = decode(app as any, { kind: "ctx", key });
+    } catch {
+      return null;
+    }
+  }
+
+  if (!isDripperStream(resolved)) return null;
+  const plan = drip({ dripper: resolved as DripperStream<any>, value: undefined });
+  return (plan[0]?.[0] as Prop<any> | undefined) ?? null;
+};
+
+const tickToFxState = (
+  tick: { effects_summary: Map<Prop<any>, unknown> },
+  propBindings: ReadonlyMap<Prop<any>, Set<HTMLElement>>
+) => {
+  try {
+    tick.effects_summary.forEach((_value, prop) => {
+      const targets = propBindings.get(prop);
+      if (!targets) return;
+      targets.forEach((el) => {
+        clearFxStates(el, ["running", "paused", "failed", "cancelled", "terminated"]);
+        setFxState(el, "completed", true);
+      });
+    });
+  } catch (error) {
+    console.error("[devtools] Tick observer error (isolated):", error);
+  }
 };
 
 // fx-switch: expose named slots in shadowRoot for visual inspection
@@ -325,7 +369,10 @@ export const executeByElement = (
   ctx?: Partial<FxRuntime>
 ) => {
   const bindings = new Map<string, HTMLElement>();
-  const collectBindings: NoteElementCollector = (noteId, element) => {
+  const propBindings = new Map<Prop<any>, Set<HTMLElement>>();
+  const executionScope = new Set<string>();
+  const collectBindings: NoteElementCollector = (note, element) => {
+    const noteId = resolveNoteId(note);
     const existing = bindings.get(noteId);
     if (existing && existing !== element) {
       // Duplicate explicit id means ambiguous projection target.
@@ -333,6 +380,12 @@ export const executeByElement = (
       return;
     }
     bindings.set(noteId, element);
+
+    const doneProp = resolveDoneProp(note, app);
+    if (doneProp) {
+      if (!propBindings.has(doneProp)) propBindings.set(doneProp, new Set());
+      propBindings.get(doneProp)!.add(element);
+    }
   };
 
   const prevCollector = activeNoteElementCollector;
@@ -345,8 +398,23 @@ export const executeByElement = (
     activeNoteElementCollector = prevCollector;
   }
 
+  const unobserveTick = clock.observeTick((tick) => {
+    tickToFxState(tick, propBindings);
+  });
+  const unobserveStep = observeRuntimeStep((step) => {
+    if (!executionScope.has(step.execution_id)) {
+      if (!bindings.has(step.note_id)) return;
+      executionScope.add(step.execution_id);
+    }
+    stepToFxState(step, (noteId) => getFxElement(bindings, noteId));
+  });
+
   void handle.done.finally(() => {
+    unobserveStep();
+    unobserveTick();
+    executionScope.clear();
     bindings.clear();
+    propBindings.clear();
   });
   return handle;
 };
