@@ -16,7 +16,7 @@ import {
 import { prepare as prepareImpl, execute as executeImpl, FxRefSymbol } from "./runtime/engine";
 import { createRegistry, registerDefault } from "./runtime/registry";
 import { createDefaultProfile } from "./runtime/profile";
-import { DripPlan } from "./blooky-fp-types";
+import { createDefaultBridge } from "./runtime/bridge";
 import { clock } from "./runtime/clock";
 import { TemplateYieldDriver, CompositeYieldDriver, LocalYieldHub } from "./runtime/yield";
 
@@ -33,7 +33,9 @@ export const prepare = (
 };
 
 export const execute = (prepared: PreparedFx): ExecutionHandle => {
-  const commit = (plan: DripPlan<any>) => clock.submitPlan(plan);
+  const bridge = createDefaultBridge({
+    submitPlan: (plan) => clock.submitPlan(plan),
+  });
   const hub = new LocalYieldHub();
   const drivers: any = {};
   // template driver は DOM が必要（ただし profile は分岐不要。driver を差し替えるだけ）
@@ -49,14 +51,19 @@ export const execute = (prepared: PreparedFx): ExecutionHandle => {
   // remote driver は transport があるなら常に注入可能
   // drivers["remote"] = new RemoteYieldDriver({ hub, client: remoteClient });
   const profile = createDefaultProfile({
-    commit,
     observeCommit: clock.observeCommit,
     yieldHub: hub,
     yieldDriver: new CompositeYieldDriver(drivers),
   });
-  return executeImpl({
-    prepared, registry, profile
+  const handle = executeImpl({
+    prepared, registry, profile, authoritativeStepSink: bridge.onStep
   });
+  return {
+    cancel: handle.cancel,
+    done: handle.done,
+    observeStep: bridge.observeStep,
+    observeFrame: bridge.observeFrame,
+  };
 };
 
 export const query = (note: FxNote, app: AppContext = {}, ctx?: Partial<FxRuntime>) =>

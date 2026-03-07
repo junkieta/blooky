@@ -160,3 +160,36 @@ describe("score validation contract", () => {
     ).toThrow("switch.cases must be a Map");
   });
 });
+
+describe("authoritative step sink contract", () => {
+  test("exit step carries done effect for bridge extraction", async () => {
+    const dripper = { kind: "dripper" } as any;
+    const prepared = prepare(
+      {
+        type: "none",
+        id: "n4",
+        done: () => dripper,
+      } as any,
+      {}
+    );
+
+    const seen: PerformanceStep[] = [];
+    const handle = execute({
+      prepared,
+      registry: makeRegistry([{ type: "result", value: 42 }]),
+      profile: makeProfile(),
+      authoritativeStepSink: async (step) => {
+        // Simulate bridge-side async handling.
+        if (step.effect) await Promise.resolve();
+        seen.push(step);
+      },
+    });
+
+    await handle.done;
+    const exit = seen.find((s) => s.phase === "exit");
+    expect(exit).toBeTruthy();
+    expect((exit!.effect as any)?.kind).toBe("done");
+    expect((exit!.effect as any)?.dripper).toBe(dripper);
+    expect((exit!.effect as any)?.value).toBe(42);
+  });
+});

@@ -261,17 +261,29 @@ export function execute(args: {
   prepared: PreparedFx;
   registry: Registry;
   profile: RunnerProfile;
+  authoritativeStepSink?: (step: PerformanceStep) => void | Promise<void>;
 }): ExecutionHandle {
-  const { prepared, registry, profile } = args;
+  const { prepared, registry, profile, authoritativeStepSink } = args;
   const { rootNote, runtime, appContext } = prepared;
 
   const stepObservers = new Set<StepObserver>();
   const stepIndexByExecution = new Map<string, number>();
-  const notifyStep = createStepEmitter(stepObservers, stepIndexByExecution);
+  const notifyStep = createStepEmitter(
+    stepObservers,
+    stepIndexByExecution,
+    authoritativeStepSink
+  );
   const executionSeed =
     runtime.executionId ?? `exec-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   let executionSeq = 0;
   const nextExecutionId = () => `${executionSeed}:n${executionSeq++}`;
+  const resolveExitEffect = (note: FxNote, ctx: PerfCtx, result: unknown) => {
+    const done = (note as any).done;
+    if (done === undefined) return undefined;
+    const dripper = ctx.runtime.resolver(done as FxRef<unknown>, ctx)();
+    const value = ctx.runtime.resolver(result as FxRef<unknown>, ctx)();
+    return { kind: "done", dripper, value };
+  };
 
   const run = async (
     note: FxNote,
@@ -286,12 +298,12 @@ export function execute(args: {
     };
 
     const fsm = new RunnerFSM();
-    notifyStep({
+    await notifyStep({
       phase: "enter",
       note_id: resolveNoteId(note),
       execution_id: ctx.executionId,
     });
-    notifyStep({
+    await notifyStep({
       phase: "active",
       note_id: resolveNoteId(note),
       execution_id: ctx.executionId,
@@ -319,11 +331,12 @@ export function execute(args: {
         });
 
         fsm.onExit();
-        notifyStep({
+        await notifyStep({
           phase: "exit",
           note_id: resolveNoteId(note),
           execution_id: ctx.executionId,
           payload: { result: value },
+          effect: resolveExitEffect(note, ctx, value),
         });
         await profile.applyExitBoundary(note, ctx, value);
         return value;
@@ -357,11 +370,12 @@ export function execute(args: {
       }
 
       fsm.onExit();
-      notifyStep({
+      await notifyStep({
         phase: "exit",
         note_id: resolveNoteId(note),
         execution_id: ctx.executionId,
         payload: { result: final },
+        effect: resolveExitEffect(note, ctx, final),
       });
       // note と note の間（exit直後）で done 境界処理
       await profile.applyExitBoundary(note, ctx, final);
@@ -369,11 +383,12 @@ export function execute(args: {
     } catch (e) {
       if (e instanceof Terminated) {
         fsm.onExit();
-        notifyStep({
+        await notifyStep({
           phase: "exit",
           note_id: resolveNoteId(note),
           execution_id: ctx.executionId,
           payload: { result: e.value, terminated: true },
+          effect: resolveExitEffect(note, ctx, e.value),
         });
         await profile.applyExitBoundary(note, ctx, e.value);
         throw e;
@@ -381,7 +396,7 @@ export function execute(args: {
 
       if (e instanceof Cancelled) {
         fsm.onCancel();
-        notifyStep({
+        await notifyStep({
           phase: "cancel",
           note_id: resolveNoteId(note),
           execution_id: ctx.executionId,
@@ -393,7 +408,7 @@ export function execute(args: {
       if (isCancelledError(e)) {
         const reason = cancelledReasonFromError(e);
         fsm.onCancel();
-        notifyStep({
+        await notifyStep({
           phase: "cancel",
           note_id: resolveNoteId(note),
           execution_id: ctx.executionId,
@@ -490,7 +505,7 @@ const dispatchSemEvent = async (ev: SemanticEvent, deps: DispatchDeps) => {
 
     case "effect": {
       const projected = deps.profile.projectEffect(ev.ref, deps.ctx);
-      deps.emit({
+      await deps.emit({
         phase: "active",
         note_id: resolveNoteId(deps.ctx.note),
         execution_id: deps.ctx.executionId,
@@ -500,7 +515,7 @@ const dispatchSemEvent = async (ev: SemanticEvent, deps: DispatchDeps) => {
 
       const value = await deps.profile.applyEffect(ev.ref, deps.ctx);
       if (value.kind === "none") return { kind: "continue" as const };
-      deps.emit({
+      await deps.emit({
         phase: "active",
         note_id: resolveNoteId(deps.ctx.note),
         execution_id: deps.ctx.executionId,
@@ -510,7 +525,7 @@ const dispatchSemEvent = async (ev: SemanticEvent, deps: DispatchDeps) => {
     }
 
     case "suspend": {
-      deps.emit({
+      await deps.emit({
         phase: "suspend",
         note_id: resolveNoteId(deps.ctx.note),
         execution_id: deps.ctx.executionId,
@@ -518,13 +533,13 @@ const dispatchSemEvent = async (ev: SemanticEvent, deps: DispatchDeps) => {
       });
 
       const out = await deps.profile.awaitSuspend(ev.until, deps.ctx, deps.cancelToken);
-      deps.emit({
+      await deps.emit({
         phase: "resume",
         note_id: resolveNoteId(deps.ctx.note),
         execution_id: deps.ctx.executionId,
         payload: { until: ev.until },
       });
-      deps.emit({
+      await deps.emit({
         phase: "active",
         note_id: resolveNoteId(deps.ctx.note),
         execution_id: deps.ctx.executionId,
@@ -533,7 +548,7 @@ const dispatchSemEvent = async (ev: SemanticEvent, deps: DispatchDeps) => {
 
       if (out.kind === "continue") return out;
 
-      deps.emit({
+      await deps.emit({
         phase: "active",
         note_id: resolveNoteId(deps.ctx.note),
         execution_id: deps.ctx.executionId,
@@ -545,7 +560,7 @@ const dispatchSemEvent = async (ev: SemanticEvent, deps: DispatchDeps) => {
     case "result":
       {
         const value = deps.ctx.runtime.resolver(ev.value as FxRef<unknown>, deps.ctx)();
-        deps.emit({
+        await deps.emit({
           phase: "active",
           note_id: resolveNoteId(deps.ctx.note),
           execution_id: deps.ctx.executionId,
@@ -557,7 +572,7 @@ const dispatchSemEvent = async (ev: SemanticEvent, deps: DispatchDeps) => {
     case "terminate":
       {
         const value = deps.ctx.runtime.resolver(ev.value as FxRef<unknown>, deps.ctx)();
-        deps.emit({
+        await deps.emit({
           phase: "active",
           note_id: resolveNoteId(deps.ctx.note),
           execution_id: deps.ctx.executionId,
@@ -570,8 +585,9 @@ const dispatchSemEvent = async (ev: SemanticEvent, deps: DispatchDeps) => {
 
 const createStepEmitter = (
   observers: Set<StepObserver>,
-  stepIndexByExecution: Map<string, number>
-) => (step: PerformanceStepDraft) => {
+  stepIndexByExecution: Map<string, number>,
+  authoritativeStepSink?: (step: PerformanceStep) => void | Promise<void>
+) => async (step: PerformanceStepDraft) => {
   const stepIndex =
     step.step_index ??
     ((stepIndexByExecution.get(step.execution_id) ?? -1) + 1);
@@ -582,6 +598,10 @@ const createStepEmitter = (
     step_index: stepIndex,
     timestamp: step.timestamp ?? Date.now(),
   };
+
+  if (authoritativeStepSink) {
+    await authoritativeStepSink(finalizedStep);
+  }
 
   if (observers.size) observers.forEach((observer)=>{
     try {

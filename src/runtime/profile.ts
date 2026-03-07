@@ -1,5 +1,5 @@
 import { isChainedProp } from "../blooky-fp";
-import { DripperStream, DripPlan, Prop, PropPlan } from "../blooky-fp-types";
+import { Prop, PropPlan } from "../blooky-fp-types";
 import type { CancelToken, FxNote, FxRef, OutcomeBase, PerfCtx, RunnerProfile, SuspendOutcome, SuspendUntil, YieldConditionRef, YieldDriver, YieldHub, YieldLocator, YieldSession } from "../blooky-fx-types";
 import { resolveYieldLocator } from "./yield";
 
@@ -16,7 +16,6 @@ export const isOutcome = <T>(v: unknown) : v is OutcomeBase<T> => {
 }
 
 export const createDefaultProfile = (deps: {
-  commit: (plan: DripPlan<any>) => Promise<void>|void;
   observeCommit: (f: (plan: Map<Prop<any>, any>) => void) => (p: Prop<any>) => () => void;
   yieldHub: YieldHub;
   yieldDriver: YieldDriver;
@@ -169,11 +168,6 @@ export const createDefaultProfile = (deps: {
     // 1) idSlotに結果を反映
     if(note.id) {
       ctx.runtime.idSlots["#"+note.id] = value;
-    }
-    // 2) done があれば FRP 接続（必要なときだけ）
-    const done = (note as any).done;
-    if (done !== undefined) {
-      await deps.commit({ dripper: resolveRef<DripperStream<any>>(done, ctx)(), value });
     }
   };
 
