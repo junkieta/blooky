@@ -1,7 +1,7 @@
 import type {
   FxNote,
   AppContext,
-  FxRuntime,
+  ExecutionConfig,
   PreparedFx,
   ExecutionHandle,
   PerformanceStep,
@@ -11,7 +11,7 @@ import type {
   FxRefSymbol as FxRefSymbolDec,
   FxRefKey,
   Registry,
-  PerfCtx,
+  ExecutionContext as ExecutionContext,
   SemanticEvent,
   StepSink,
   YieldConditionRef,
@@ -62,11 +62,11 @@ export const isFxCallActionObject = (v: unknown): v is FxCallAction =>
  * - Prop: callable をそのまま
  * - value: 定数
  */
-const defaultResolve = <T>(ref: FxRef<T>, ctx: PerfCtx): Prop<T> => {
+const defaultResolve = <T>(ref: FxRef<T>, ctx: ExecutionContext): Prop<T> => {
   if (isFxRefKey(ref)) {
     const k = ref.key;
     if(k.startsWith("#") || k.startsWith("$_"))
-      return () => ctx.runtime.idSlots[k] ?? (typeof document !== "undefined" ? document.getElementById(k.slice(1)) : null);
+      return () => ctx.config.idSlots[k] ?? (typeof document !== "undefined" ? document.getElementById(k.slice(1)) : null);
     const v = decode(ctx.appContext as any, { kind: "ctx", key: k }) as FxRef<T>;
     return defaultResolve(v, ctx);
   }
@@ -218,7 +218,7 @@ const validateScore = (flow: FxNote) => {
   walk(flow, "root");
 };
 
-export function prepare(flow: FxNote, initialAppContext: AppContext = {}, parent?: Partial<FxRuntime>): PreparedFx {
+export function prepare(flow: FxNote, initialAppContext: AppContext = {}, parent?: Partial<ExecutionConfig>): PreparedFx {
   validateScore(flow);
 
   const idSlots: Record<string, any> = Object.create(parent?.idSlots ?? null);
@@ -231,7 +231,7 @@ export function prepare(flow: FxNote, initialAppContext: AppContext = {}, parent
   Object.seal(idSlots);
 
   const cancelToken = createCancelToken(parent?.cancelToken);
-  const runtime: FxRuntime = {
+  const execContext: ExecutionConfig = {
     resolver: parent?.resolver ?? defaultResolve,
     cancelToken,
     idSlots,
@@ -253,7 +253,7 @@ export function prepare(flow: FxNote, initialAppContext: AppContext = {}, parent
 
   names.forEach((key)=>bind(appContext, key, appContext[key]));
 
-  return { rootNote: flow, runtime, appContext };
+  return { rootNote: flow, config: execContext, appContext };
 }
 
 export function execute(args: {
@@ -263,19 +263,19 @@ export function execute(args: {
   authoritativeStepSink?: (step: PerformanceStep) => void | Promise<void>;
 }): ExecutionHandle {
   const { prepared, registry, profile, authoritativeStepSink } = args;
-  const { rootNote, runtime, appContext } = prepared;
+  const { rootNote, config, appContext } = prepared;
 
   const stepIndexByExecution = new Map<string, number>();
   const notifyStep = createStepEmitter(stepIndexByExecution, authoritativeStepSink);
   const executionSeed =
-    runtime.executionId ?? `exec-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    config.executionId ?? `exec-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   let executionSeq = 0;
   const nextExecutionId = () => `${executionSeed}:n${executionSeq++}`;
-  const resolveExitEffect = (note: FxNote, ctx: PerfCtx, result: unknown) => {
+  const resolveExitEffect = (note: FxNote, ctx: ExecutionContext, result: unknown) => {
     const done = (note as any).done;
     if (done === undefined) return undefined;
-    const dripper = ctx.runtime.resolver(done as FxRef<unknown>, ctx)();
-    const value = ctx.runtime.resolver(result as FxRef<unknown>, ctx)();
+    const dripper = ctx.config.resolver(done as FxRef<unknown>, ctx)();
+    const value = ctx.config.resolver(result as FxRef<unknown>, ctx)();
     return { kind: "done", dripper, value };
   };
 
@@ -284,9 +284,9 @@ export function execute(args: {
     appCtx: Record<string, any>,
     cancelToken: CancelToken
   ): Promise<unknown> => {
-    const ctx: PerfCtx = {
+    const ctx: ExecutionContext = {
       note,
-      runtime: runtime,
+      config: config,
       appContext: appCtx,
       executionId: nextExecutionId(),
     };
@@ -372,7 +372,8 @@ export function execute(args: {
         effect: resolveExitEffect(note, ctx, final),
       });
       // note と note の間（exit直後）で done 境界処理
-      await profile.applyExitBoundary(note, ctx, final);
+      // await profile.applyExitBoundary(note, ctx, final);
+      if (note.id) config.idSlots["#" + note.id] = final;
       return final;
     } catch (e) {
       if (e instanceof Terminated) {
@@ -421,7 +422,7 @@ export function execute(args: {
         let finalValue: unknown = undefined;
 
         try {
-          finalValue = await run(rootNote, appContext, runtime.cancelToken);
+          finalValue = await run(rootNote, appContext, config.cancelToken);
         } catch (e) {
           if (e instanceof Terminated) {
             finalValue = e.value;
@@ -431,14 +432,14 @@ export function execute(args: {
           }
         }
 
-        if (rootNote.id) runtime.idSlots["#" + rootNote.id] = finalValue;
+        if (rootNote.id) config.idSlots["#" + rootNote.id] = finalValue;
         resolve(finalValue);
       })().catch(reject);
     });
   });
 
   return {
-    cancel: () => runtime.cancelToken.cancel("user"),
+    cancel: () => config.cancelToken.cancel("user"),
     done,
   };
 }
@@ -483,7 +484,7 @@ export class Cancelled extends Error {
 
 export type DispatchDeps = {
   profile: RunnerProfile;
-  ctx: PerfCtx;
+  ctx: ExecutionContext;
   cancelToken: CancelToken;
   emit: StepSink;
 };
@@ -549,7 +550,7 @@ const dispatchSemEvent = async (ev: SemanticEvent, deps: DispatchDeps) => {
 
     case "result":
       {
-        const value = deps.ctx.runtime.resolver(ev.value as FxRef<unknown>, deps.ctx)();
+        const value = deps.ctx.config.resolver(ev.value as FxRef<unknown>, deps.ctx)();
         await deps.emit({
           phase: "active",
           note_id: resolveNoteId(deps.ctx.note),
@@ -561,7 +562,7 @@ const dispatchSemEvent = async (ev: SemanticEvent, deps: DispatchDeps) => {
 
     case "terminate":
       {
-        const value = deps.ctx.runtime.resolver(ev.value as FxRef<unknown>, deps.ctx)();
+        const value = deps.ctx.config.resolver(ev.value as FxRef<unknown>, deps.ctx)();
         await deps.emit({
           phase: "active",
           note_id: resolveNoteId(deps.ctx.note),

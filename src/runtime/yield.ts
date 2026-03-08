@@ -1,7 +1,7 @@
 // runtime/yield-hub-local.ts
 
 import { query } from "../blooky-fx";
-import { FxRef, PerfCtx, YieldConditionRef, YieldDriver, YieldHub, YieldLocator, YieldRequest } from "../blooky-fx-types";
+import { FxRef, ExecutionContext, YieldConditionRef, YieldDriver, YieldHub, YieldLocator, YieldRequest } from "../blooky-fx-types";
 
 type Entry =
   | { state: "pending"; p: Promise<void>; resolve: () => void; reject: (e: unknown) => void }
@@ -120,7 +120,7 @@ export class TemplateYieldDriver implements YieldDriver {
       // connected 要件のため attach
       this.deps.attachParent.appendChild(host);
 
-      const runtime = req.ctx.runtime;
+      const runtime = req.ctx.config;
       const handle = query(host.toFxNote(), req.ctx.appContext, {
         idSlots: input ? { $_: input } : undefined,
         cancelToken: runtime.cancelToken,
@@ -175,14 +175,14 @@ export class RemoteYieldDriver implements YieldDriver {
 // base.resolveRef を引数でもらう（default profile の resolveRef を使う想定）
 export const resolveYieldLocator = (
   until: YieldConditionRef,
-  ctx: PerfCtx
+  ctx: ExecutionContext
 ): YieldLocator => {
   if (until.kind !== "yield") throw new Error("unsupported yield condition");
   const t = until.target;
   const raw = (t as any).ref;
   const resolved =
     isFxRefKey(raw) || typeof raw === "function"
-      ? ctx.runtime.resolver(raw as FxRef<unknown>, ctx)() || document.getElementById(raw.key?.slice(1))
+      ? ctx.config.resolver(raw as FxRef<unknown>, ctx)() || document.getElementById(raw.key?.slice(1))
       : raw;
 
   if (typeof raw === "string") return { kind: "template", templateId: raw };

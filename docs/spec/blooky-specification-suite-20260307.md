@@ -31,7 +31,7 @@
    * Dripper
 6. Runtime Integration Concepts
 
-   * RuntimeFx Adapter
+   * FxRuntime Adapter
 7. Observability Concepts
 
    * Projection
@@ -100,12 +100,12 @@ state commit boundary
 ### 章構成
 
 1. Purpose
-2. RuntimeFx Interface
+2. FxRuntime Interface
 3. ExecutionStep Handling
 4. Effect Extraction
 5. Commit Submission
 6. Observer Frames
-7. Default RuntimeFx Adapter Implementation
+7. Default FxRuntime Adapter Implementation
 8. Integration with Clock
 
 役割

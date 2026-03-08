@@ -5,7 +5,7 @@
   FxEffectElement as ConcreteEffectElementConstructor,
   FxEffectElement,
 } from "./blooky-fxdom";
-import type { AppContext, FxRuntime, FxNote, PerformanceStep } from "./blooky-fx-types";
+import type { AppContext, ExecutionConfig, FxNote, PerformanceStep } from "./blooky-fx-types";
 import { clock } from "./runtime/clock";
 import { observeRuntimeStep } from "./runtime/step-line";
 import { decode } from "./blooky-context";
@@ -366,7 +366,7 @@ export const stepToFxState = (
 export const executeByElement = (
   root: FxEffectElement,
   app: AppContext = {},
-  ctx?: Partial<FxRuntime>
+  ctx?: Partial<ExecutionConfig>
 ) => {
   const bindings = new Map<string, HTMLElement>();
   const propBindings = new Map<Prop<any>, Set<HTMLElement>>();

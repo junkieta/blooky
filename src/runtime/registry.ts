@@ -106,7 +106,7 @@ const runLoop: StructureRunner = async (note, ctx, deps) => {
   if (note.type !== "loop") return undefined;
   let i = 0;
   let last: unknown = undefined;
-  const p = ctx.runtime.resolver(note.cond as any, ctx);
+  const p = ctx.config.resolver(note.cond as any, ctx);
   while (p()) {
     if (deps.cancelToken.cancelled()) {
       throw new Cancelled(deps.cancelToken.reason ?? "user");

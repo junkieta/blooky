@@ -1,7 +1,7 @@
 import {
   type FxNote,
   type AppContext,
-  type FxRuntime,
+  type ExecutionConfig,
   type PreparedFx,
   type ExecutionHandle,
   type FxRef,
@@ -28,7 +28,7 @@ registerDefault(registry);
 export const prepare = (
   flow: FxNote,
   initialAppContext: AppContext = {},
-  parent?: Partial<FxRuntime>
+  parent?: Partial<ExecutionConfig>
 ): PreparedFx => {
   return prepareImpl(flow, initialAppContext, parent);
 };
@@ -73,7 +73,7 @@ export const execute = (prepared: PreparedFx): ExecutionHandle => {
 
 export { observeRuntimeStep };
 
-export const query = (note: FxNote, app: AppContext = {}, ctx?: Partial<FxRuntime>) =>
+export const query = (note: FxNote, app: AppContext = {}, ctx?: Partial<ExecutionConfig>) =>
   execute(prepare(note, app, ctx));
 
 export const ref = <T = unknown>(key: string): FxRefKey =>

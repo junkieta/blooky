@@ -76,7 +76,7 @@ Projection は次の観測源を入力としてよい (MAY)。
 
 1. `ObservedTick`
 2. `ObservedDripPlan`
-3. RuntimeFx / Execution 由来の execution step 観測
+3. FxRuntime / Execution 由来の execution step 観測
 4. FRP graph metadata
 5. DOM / FxDOM binding metadata
 
@@ -151,9 +151,9 @@ Projection は runtime 観測の結果を外部イベントへ投影してよい
 
 ---
 
-## 9. RuntimeFx / Execution Step Projection
+## 9. FxRuntime / Execution Step Projection
 
-Projection は RuntimeFx または Execution 由来の execution step を補助表示に利用してよい (MAY)。
+Projection は FxRuntime または Execution 由来の execution step を補助表示に利用してよい (MAY)。
 
 ただし、これらは Timeline authority を持たない。
 Timeline authority は Clock Tick にのみある。

@@ -476,7 +476,7 @@ Semantics Registry は **拡張可能で、肥大しない中核**として固�
 
 ---
 
-# Appendix A: RuntimeFx Submission Mapping
+# Appendix A: FxRuntime Submission Mapping
 
 **Status:** Informative Appendix
 **Applies to:** Runner / host runtime integration
@@ -511,7 +511,7 @@ Runner
    ↓
 PerformanceStep
    ↓
-RuntimeFx Adapter
+FxRuntime Adapter
    ↓
 Runtime
 ```
@@ -565,9 +565,9 @@ SemanticEvent を PerformanceStep として記録する。
 
 ---
 
-## A.5 RuntimeFx Adapter
+## A.5 FxRuntime Adapter
 
-RuntimeFx adapter は PerformanceStep.effect を runtime operation に変換する。
+FxRuntime adapter は PerformanceStep.effect を runtime operation に変換する。
 
 典型例:
 
@@ -587,7 +587,7 @@ Semantics はこの変換を前提としてはならない（MUST NOT）。
 
 ## A.6 Relationship to Clock
 
-RuntimeFx adapter は必要に応じて runtime effect を
+FxRuntime adapter は必要に応じて runtime effect を
 **Clock transaction submission** に変換する。
 
 例:

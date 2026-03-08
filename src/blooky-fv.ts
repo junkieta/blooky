@@ -182,7 +182,7 @@ const extractElementSource = (s: JSHTMLElementSource): JSHTMLExtractedElementSou
 
 export const createFV = (rt: FVRuntime) => {
   /**
-   * PropとDOM要素（ノード、属性、スタイルなど）間の双方向バインディングを管理するインターフェース。
+   * Prop -> DOM要素（ノード、属性、スタイルなど）のバインディングを管理するインターフェース。
    */
   type PropBridgeInterface<A> = {
     prop: Prop<A>;

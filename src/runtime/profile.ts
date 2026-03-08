@@ -1,6 +1,6 @@
 import { isChainedProp } from "../blooky-fp";
 import { Prop, PropPlan } from "../blooky-fp-types";
-import type { CancelToken, FxNote, FxRef, OutcomeBase, PerfCtx, RunnerProfile, SuspendOutcome, SuspendUntil, YieldConditionRef, YieldDriver, YieldHub, YieldLocator, YieldSession } from "../blooky-fx-types";
+import type { CancelToken, FxNote, FxRef, OutcomeBase, ExecutionContext, RunnerProfile, SuspendOutcome, SuspendUntil, YieldConditionRef, YieldDriver, YieldHub, YieldLocator, YieldSession } from "../blooky-fx-types";
 import { resolveYieldLocator } from "./yield";
 
 export const isOutcome = <T>(v: unknown) : v is OutcomeBase<T> => {
@@ -21,7 +21,7 @@ export const createDefaultProfile = (deps: {
   yieldDriver: YieldDriver;
 }): RunnerProfile => {
   const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
-  const resolveRef = <T>(ref: FxRef<T>, _ctx?: PerfCtx): Prop<T> => _ctx.runtime.resolver(ref, _ctx);
+  const resolveRef = <T>(ref: FxRef<T>, _ctx?: ExecutionContext): Prop<T> => _ctx.config.resolver(ref, _ctx);
 
   const resolveSelection: RunnerProfile["resolveSelection"] = (note, ctx) => {
     if (note.type === "condition") {
@@ -90,7 +90,7 @@ export const createDefaultProfile = (deps: {
 
   const awaitSuspend = async (
     until: SuspendUntil,
-    ctx: PerfCtx,
+    ctx: ExecutionContext,
     cancel: CancelToken
   ): Promise<SuspendOutcome<unknown>> => {
 
@@ -147,8 +147,8 @@ export const createDefaultProfile = (deps: {
     const e: any = ref;
     if (e?.kind !== "call") return { kind: "none" };
 
-    if (ctx.runtime.cancelToken.cancelled()) {
-      return { kind: "cancel", reason: ctx.runtime.cancelToken.reason };
+    if (ctx.config.cancelToken.cancelled()) {
+      return { kind: "cancel", reason: ctx.config.cancelToken.reason };
     }
 
     try {
@@ -162,12 +162,12 @@ export const createDefaultProfile = (deps: {
     }
   };
 
-  const applyExitBoundary: RunnerProfile["applyExitBoundary"] = async(note: FxNote, ctx: PerfCtx, result: unknown) => {
+  const applyExitBoundary: RunnerProfile["applyExitBoundary"] = async(note: FxNote, ctx: ExecutionContext, result: unknown) => {
     // resultに(Prop/getterではない)関数そのものを値として返すパターンは認められないので注意
     const value = resolveRef(result, ctx)();
     // 1) idSlotに結果を反映
     if(note.id) {
-      ctx.runtime.idSlots["#"+note.id] = value;
+      ctx.config.idSlots["#"+note.id] = value;
     }
   };
 

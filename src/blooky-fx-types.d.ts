@@ -58,45 +58,6 @@ export type CancelToken = {
   reason?: CancelReason; // 🆕 キャンセルの理由
 };
 
-// ─── ExecutionContext: ノード実行時のコンテキスト ───
-export interface ExecutionContext {
-  Note: FxNote;
-  appContext: AppContext;
-  executionId: string;
-  
-  // ユーティリティ
-  resolve: <T>(ref: FxRef<T>) => Prop<T>;
-  
-  // 子ノードの実行
-  executeChild: (child: FxNote) => AsyncGenerator<PerformanceStep, any, any>;
-  
-  cancelToken: CancelToken;
-  
-  onStep?: (step: PerformanceStep) => void | Promise<void>;
-}
-
-// ─── NoteDefinition Interface ───
-export interface INoteDefinition<T extends FxNote['type']> {
-  readonly type: T;
-  
-  /**
-   * ノードを実行し、各段階を yield する
-   */
-  execute(
-    ctx: ExecutionContext & { Note: Extract<FxNote, { type: T }> }
-  ): AsyncGenerator<PerformanceStep, any, any>;
-  
-  /**
-   * ノードが持つ子ノードを返す（グラフ可視化用）
-   */
-  getSubNotes?(Note: Extract<FxNote, { type: T }>): FxNote[] | null;
-  
-  /**
-   * ファクトリ関数（fx.call(...) のような API）
-   */
-  factory(...args: any[]): Extract<FxNote, { type: T }>;
-}
-
 // ─── FxNote 定義 ───
 type FxNoteBase<T extends string, P = {}> = P & {
   type: T;
@@ -161,9 +122,9 @@ export type FxNote =
 
 export type FxNoteType = FxNote["type"];
 
-// ─── FxRuntime: prepare で生成される実行設定 ───
-export interface FxRuntime {
-  resolver: <T>(ref: FxRef<T>, ctx: PerfCtx) => Prop<T>;
+// ─── prepare で生成される実行設定 ───
+export interface ExecutionConfig {
+  resolver: <T>(ref: FxRef<T>, ctx: ExecutionContext) => Prop<T>;
   cancelToken: CancelToken;
   executionId?: string;
   idSlots: Record<string, any>
@@ -172,7 +133,7 @@ export interface FxRuntime {
 // ─── PreparedFx ───
 export interface PreparedFx {
   readonly rootNote: FxNote;
-  readonly runtime: FxRuntime;
+  readonly config: ExecutionConfig;
   readonly appContext: AppContext;
 }
 
@@ -215,21 +176,21 @@ export interface RunnerProfile {
 
   resolveSelection(
     note: Extract<FxNote, { type: "condition" | "switch" }>,
-    ctx: PerfCtx
+    ctx: ExecutionContext
   ): FxNote | null;
 
   // Yield or Wait
-  awaitSuspend(until: SuspendUntil, ctx: PerfCtx, cancel: CancelToken): Promise<SuspendOutcome<unknown>>;
+  awaitSuspend(until: SuspendUntil, ctx: ExecutionContext, cancel: CancelToken): Promise<SuspendOutcome<unknown>>;
 
-  projectEffect(ref: unknown, ctx: PerfCtx): unknown;
-  applyEffect(ref: unknown, ctx: PerfCtx): Promise<EffectOutcome<unknown>>;
+  projectEffect(ref: unknown, ctx: ExecutionContext): unknown;
+  applyEffect(ref: unknown, ctx: ExecutionContext): Promise<EffectOutcome<unknown>>;
 
   /**
    * note の exit 境界で呼ばれる（note と note の間）
    * - done が DripperStream を参照している場合だけ FRP に接続する
    * - 呼び出し側（runner）は await する（タイムライン同期のため）
    */
-  applyExitBoundary(note: FxNote, ctx: PerfCtx, result: unknown, meta?: { terminated?: boolean }): Promise<void>;
+  applyExitBoundary(note: FxNote, ctx: ExecutionContext, result: unknown, meta?: { terminated?: boolean }): Promise<void>;
 
 }
 
@@ -268,14 +229,14 @@ export type YieldConditionRef = {
   meta?: Record<string, unknown>; // 診断用（任意）
 };
 
-export type PerfCtx = {
+export type ExecutionContext = {
   note: FxNote;
+  config: ExecutionConfig;
   appContext: AppContext;
-  runtime: FxRuntime;
   executionId: string;
 };
 
-export type Semantics = (note: FxNote, ctx: PerfCtx) => Generator<SemanticEvent, void, void>;
+export type Semantics = (note: FxNote, ctx: ExecutionContext) => Generator<SemanticEvent, void, void>;
 export type RunChild = (
   n: FxNote,
   overrideAppContext?: AppContext,
@@ -289,7 +250,7 @@ export type StructureDeps = {
   cancelToken: CancelToken;
 };
 
-export type StructureRunner = (note: FxNote, ctx: PerfCtx, deps: StructureDeps) => Promise<unknown>;
+export type StructureRunner = (note: FxNote, ctx: ExecutionContext, deps: StructureDeps) => Promise<unknown>;
 
 export interface Registry {
   semantics: Map<FxNote["type"], Semantics>;
@@ -307,7 +268,7 @@ export type YieldRequest = {
   id: string;
   locator: YieldLocator;
   input?: unknown;
-  ctx: PerfCtx;
+  ctx: ExecutionContext;
   /** 任意：cancel を driver 側でも参照したい場合 */
   cancelToken?: CancelToken;
 };
@@ -324,6 +285,24 @@ export interface YieldDriver {
   requestYield(req: YieldRequest): void | Promise<void>;
 }
 
-interface FxCallAction<A = void, B = unknown> {
+export interface FxCallAction<A = void, B = unknown> {
   call(context: Readonly<AppContext>, input: A): B | Promise<B>
 }
+
+/**
+ * FxRuntime — Execution → Clock の書き込み契約
+ *
+ * FVRuntime が「Clock → DOM」の観測側アダプターであるのに対し、
+ * FxRuntime は「Execution → Clock」の書き込み側アダプターである。
+ *
+ * Runner が生成した PerformanceStep を受け取り、
+ * step.effect を Clock transaction（submitPlan）へ変換する唯一の経路。
+ *
+ * - runtime semantics を変更してはならない（MUST NOT）
+ * - step の順序・内容を書き換えてはならない（MUST NOT）
+ * - submitPlan の失敗は Execution failure として上位に伝播してよい（MAY）
+ */
+export interface _FxRuntime {
+  onStep(step: PerformanceStep): Promise<void>;
+}
+

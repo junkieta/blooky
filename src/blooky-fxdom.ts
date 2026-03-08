@@ -4,7 +4,7 @@ import {
   query, 
   ref,
 } from "./blooky-fx";
-import { FxNote, AppContext, FxRef, FxRuntime } from "./blooky-fx-types";
+import { FxNote, AppContext, FxRef, ExecutionConfig } from "./blooky-fx-types";
 
 type FxDomErrorCode =
   | "INVALID_JSON_ARGUMENT"
@@ -511,7 +511,7 @@ export const fxdom = {
 
 }
 
-export const executeByElement = (root: FxEffectElement, app: AppContext = {}, ctx?: Partial<FxRuntime>) => {
+export const executeByElement = (root: FxEffectElement, app: AppContext = {}, ctx?: Partial<ExecutionConfig>) => {
   if(root.tagName.toLowerCase() !== "fx-effect")
     throw new Error("[ExecuteError] executeByElement needs `fx-effect` Element");
   else if(!root.isConnected)
