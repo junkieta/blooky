@@ -389,7 +389,7 @@ class FxFlowElement extends EffectElement {
       ? nodes[0]
       : fx.sequence(nodes);
       
-    return fx.context(this.context, child, this.id);
+    return fx.flow(this.context, child, this.id);
   }
 
   /**

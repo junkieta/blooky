@@ -4,6 +4,7 @@ import {
   type ExecutionConfig,
   type PreparedFx,
   type ExecutionHandle,
+  type PerformanceStep,
   type FxRef,
   type FxRefKey,
   type FxCallNote,
@@ -12,11 +13,11 @@ import {
   type FxFlowNote,
   type FxLoopNote,
   FxCallAction,
+  BridgeEffect,
 } from "./blooky-fx-types";
-import { prepare as prepareImpl, execute as executeImpl, FxRefSymbol } from "./runtime/engine";
+import { prepare, execute as executeImpl, FxRefSymbol } from "./runtime/engine";
 import { createRegistry, registerDefault } from "./runtime/registry";
 import { createDefaultProfile } from "./runtime/profile";
-import { createDefaultBridge } from "./runtime/bridge";
 import { clock } from "./runtime/clock";
 import { emitRuntimeStep, observeRuntimeStep } from "./runtime/step-line";
 import { TemplateYieldDriver, CompositeYieldDriver, LocalYieldHub } from "./runtime/yield";
@@ -25,18 +26,10 @@ import { TemplateYieldDriver, CompositeYieldDriver, LocalYieldHub } from "./runt
 const registry = createRegistry();
 registerDefault(registry);
 
-export const prepare = (
-  flow: FxNote,
-  initialAppContext: AppContext = {},
-  parent?: Partial<ExecutionConfig>
-): PreparedFx => {
-  return prepareImpl(flow, initialAppContext, parent);
-};
+// prepareは変更なし
+export {prepare};
 
 export const execute = (prepared: PreparedFx): ExecutionHandle => {
-  const bridge = createDefaultBridge({
-    runtime: { submitPlan: clock.submitPlan },
-  });
   const hub = new LocalYieldHub();
   const drivers: any = {};
   // template driver は DOM が必要（ただし profile は分岐不要。driver を差し替えるだけ）
@@ -52,18 +45,26 @@ export const execute = (prepared: PreparedFx): ExecutionHandle => {
   // remote driver は transport があるなら常に注入可能
   // drivers["remote"] = new RemoteYieldDriver({ hub, client: remoteClient });
   const profile = createDefaultProfile({
-    observeCommit: clock.observeCommit,
+    runtime: {
+      observeCommit: clock.observeCommit,
+      unobserveCommit: clock.unobserveCommit,
+      submitPlan: clock.submitPlan
+    },
     yieldHub: hub,
     yieldDriver: new CompositeYieldDriver(drivers),
   });
+  const onStep = async (step: PerformanceStep) => {
+    const effect = step.effect as BridgeEffect | undefined;
+    if (effect?.kind === "done") {
+      await clock.submitPlan({ dripper: effect.dripper, value: effect.value });
+    }
+    emitRuntimeStep(step);
+  };
   const handle = executeImpl({
     prepared,
     registry,
     profile,
-    authoritativeStepSink: async (step) => {
-      await bridge.onStep(step);
-      emitRuntimeStep(step);
-    },
+    onStep,
   });
   return {
     cancel: handle.cancel,
@@ -120,7 +121,7 @@ export const fx = {
     ...opt,
   }),
   yield: (note: Omit<FxYieldNote, "type">): FxYieldNote => ({ type: "yield", ...note }),
-  context: (context: AppContext, child: FxNote, id?: string): FxFlowNote => ({
+  flow: (context: AppContext, child: FxNote, id?: string): FxFlowNote => ({
     type: "context",
     context,
     child,

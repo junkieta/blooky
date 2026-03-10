@@ -45,7 +45,7 @@ const collectSteps = async (
     prepared,
     registry,
     profile,
-    authoritativeStepSink: (step) => {
+    onStep: (step) => {
       steps.push(step);
     },
   });
@@ -165,8 +165,8 @@ describe("score validation contract", () => {
   });
 });
 
-describe("authoritative step sink contract", () => {
-  test("exit step carries done effect for bridge extraction", async () => {
+describe("step sink contract", () => {
+  test("exit step carries done effect for onStep consumers", async () => {
     const dripper = { kind: "dripper" } as any;
     const prepared = prepare(
       {
@@ -182,8 +182,7 @@ describe("authoritative step sink contract", () => {
       prepared,
       registry: makeRegistry([{ type: "result", value: 42 }]),
       profile: makeProfile(),
-      authoritativeStepSink: async (step) => {
-        // Simulate bridge-side async handling.
+      onStep: async (step) => {
         if (step.effect) await Promise.resolve();
         seen.push(step);
       },

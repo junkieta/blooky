@@ -1,6 +1,6 @@
 import { stream, hold, vertex } from "../blooky-fp";
 import type { FVRuntime } from "../blooky-fv";
-import type { DripperStream, Prop } from "../blooky-fp-types";
+import type { DripperStream, Prop, Vertex } from "../blooky-fp-types";
 import {
   CommitConflictError,
   CommitDripPlan,
@@ -36,7 +36,13 @@ const runtime: CommitRuntime = createCommitRuntime({
   scheduler,
   gate,
   buildBeatPlan: (t) => ({ dripper: beat$, value: t }),
-  shouldKeepAlive: () => vertex(beat$).props.length > 1,
+  // beat$から
+  shouldKeepAlive: () => {
+    const visited = new WeakSet<Vertex>();
+    const walk = (v: Vertex) =>
+      !visited.has(v) && [...v.next, ...v.lazyNext].some((v) => v.props.length > 0 || walk(v));
+    return walk(vertex(beat$));
+  }
 });
 
 export const clock: Clock = Object.assign(hold(0)(beat$), {

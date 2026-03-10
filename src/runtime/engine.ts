@@ -14,7 +14,6 @@ import type {
   ExecutionContext as ExecutionContext,
   SemanticEvent,
   StepSink,
-  YieldConditionRef,
   RunnerProfile,
   FxCallAction
 } from "../blooky-fx-types";
@@ -44,6 +43,49 @@ function createCancelToken(parent?: CancelToken): CancelToken {
     },
   };
 }
+
+// ExecutionConfig.idSlots の生成
+const createIdSlots = (flow: FxNote, parentSlot?: Record<string, any>) => {
+  // id - final value の slot
+  const idSlots: Record<string, any> = {};
+  // 親slotsからの指定があれば引き継ぐ(yield.inputは$_)
+  if(parentSlot) {
+    Object.assign(idSlots, parentSlot);
+  }
+  flatten(flow).forEach((n) => {
+    if (n.id) idSlots["#" + n.id] = NotResolved;
+  });
+  // 書き込みはツリー内のid情報に基づいたキーだけにこの時点で閉じる
+  return Object.seal(idSlots);
+}
+
+const createAppContext = (initialAppContext: AppContext) => {
+  const names = Object.getOwnPropertyNames(initialAppContext);
+  const descriptors = names.reduce((descs, name)=>{
+    descs[name] = {
+      value: initialAppContext[name],
+      writable: false,
+      enumerable: true,
+      configurable: false,
+    };
+    return descs;
+  }, {} as PropertyDescriptorMap);
+  
+  const appContext = Object.create(null, descriptors);
+  names.forEach((key)=>bind(appContext, key, appContext[key]));
+  return appContext;
+}
+
+const createExecutionIdGenerator = function * (seed?: string) {
+  const executionSeed = typeof seed === "string"
+    ? seed
+    : `exec-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  let executionSeq = 0;
+  while(true) {
+    yield `${executionSeed}:${executionSeq++}`;
+  }
+}
+
 
 export const FxRefSymbol = Symbol("FxRefSymbol") as typeof FxRefSymbolDec;
 export const isFxRefKey = (v: unknown): v is FxRefKey =>
@@ -220,57 +262,29 @@ const validateScore = (flow: FxNote) => {
 
 export function prepare(flow: FxNote, initialAppContext: AppContext = {}, parent?: Partial<ExecutionConfig>): PreparedFx {
   validateScore(flow);
-
-  const idSlots: Record<string, any> = Object.create(parent?.idSlots ?? null);
-
-  flatten(flow).forEach((n) => {
-    if (n.id) idSlots["#" + n.id] = NotResolved;
-  });
-
-  // 書き込みはツリー内のid情報に基づいたキーだけに閉じる
-  Object.seal(idSlots);
-
-  const cancelToken = createCancelToken(parent?.cancelToken);
-  const execContext: ExecutionConfig = {
-    resolver: parent?.resolver ?? defaultResolve,
-    cancelToken,
-    idSlots,
-    executionId: parent?.executionId ?? `exec-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  return {
+    rootNote: flow,
+    appContext: createAppContext(initialAppContext),
+    config: {
+      resolver: parent?.resolver ?? defaultResolve,
+      cancelToken: createCancelToken(parent?.cancelToken),
+      idSlots: createIdSlots(flow, parent?.idSlots),
+      executionId: parent?.executionId ?? `exec-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    },
   };
-
-  const names = Object.getOwnPropertyNames(initialAppContext);
-  const descriptors = names.reduce((descs, name)=>{
-    descs[name] = {
-      value: initialAppContext[name],
-      writable: false,
-      enumerable: true,
-      configurable: false,
-    };
-    return descs;
-  }, {} as PropertyDescriptorMap);
-  
-  const appContext = Object.create(null, descriptors);
-
-  names.forEach((key)=>bind(appContext, key, appContext[key]));
-
-  return { rootNote: flow, config: execContext, appContext };
 }
 
 export function execute(args: {
   prepared: PreparedFx;
   registry: Registry;
   profile: RunnerProfile;
-  authoritativeStepSink?: (step: PerformanceStep) => void | Promise<void>;
+  onStep?: (step: PerformanceStep) => void | Promise<void>;
 }): ExecutionHandle {
-  const { prepared, registry, profile, authoritativeStepSink } = args;
+  const { prepared, registry, profile, onStep } = args;
   const { rootNote, config, appContext } = prepared;
 
-  const stepIndexByExecution = new Map<string, number>();
-  const notifyStep = createStepEmitter(stepIndexByExecution, authoritativeStepSink);
-  const executionSeed =
-    config.executionId ?? `exec-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  let executionSeq = 0;
-  const nextExecutionId = () => `${executionSeed}:n${executionSeq++}`;
+  const nextExecutionId = createExecutionIdGenerator(config.executionId);
+  const notifyStep = onStep ? createStepEmitter(onStep) : ()=>{};
   const resolveExitEffect = (note: FxNote, ctx: ExecutionContext, result: unknown) => {
     const done = (note as any).done;
     if (done === undefined) return undefined;
@@ -281,26 +295,29 @@ export function execute(args: {
 
   const run = async (
     note: FxNote,
-    appCtx: Record<string, any>,
+    appContext: Record<string, any>,
     cancelToken: CancelToken
   ): Promise<unknown> => {
+    
+    const execution_id = nextExecutionId.next().value;
+
     const ctx: ExecutionContext = {
       note,
-      config: config,
-      appContext: appCtx,
-      executionId: nextExecutionId(),
+      config,
+      appContext,
+      executionId: execution_id,
     };
 
     const fsm = new RunnerFSM();
     await notifyStep({
       phase: "enter",
       note_id: resolveNoteId(note),
-      execution_id: ctx.executionId,
+      execution_id,
     });
     await notifyStep({
       phase: "active",
       note_id: resolveNoteId(note),
-      execution_id: ctx.executionId,
+      execution_id,
       payload: { reason: "entered" },
     });
     fsm.onEnter();
@@ -328,11 +345,11 @@ export function execute(args: {
         await notifyStep({
           phase: "exit",
           note_id: resolveNoteId(note),
-          execution_id: ctx.executionId,
+          execution_id,
           payload: { result: value },
           effect: resolveExitEffect(note, ctx, value),
         });
-        await profile.applyExitBoundary(note, ctx, value);
+        if(note.id) config.idSlots["#"+note.id] = value;
         return value;
       }
 
@@ -342,19 +359,11 @@ export function execute(args: {
       let final: unknown = undefined;
       for (const ev of sem(note, ctx)) {
         fsm.onEvent(ev);
-
-        const r = await dispatchSemEvent(ev, {
-          profile,
-          ctx,
-          cancelToken,
-          emit: notifyStep,
-        });
-
+        const r = await dispatchSemEvent(ev, { profile, ctx, cancelToken, emit: notifyStep, });
         if (ev.type === "suspend") {
           fsm.onResume();
           fsm.onActive();
         }
-
         if (r.kind === "result") {
           if (ev.type !== "result") {
             fsm.onEvent({ type: "result", value: r.value });
@@ -367,52 +376,46 @@ export function execute(args: {
       await notifyStep({
         phase: "exit",
         note_id: resolveNoteId(note),
-        execution_id: ctx.executionId,
+        execution_id,
         payload: { result: final },
         effect: resolveExitEffect(note, ctx, final),
       });
-      // note と note の間（exit直後）で done 境界処理
-      // await profile.applyExitBoundary(note, ctx, final);
       if (note.id) config.idSlots["#" + note.id] = final;
       return final;
+
     } catch (e) {
       if (e instanceof Terminated) {
         fsm.onExit();
         await notifyStep({
           phase: "exit",
           note_id: resolveNoteId(note),
-          execution_id: ctx.executionId,
+          execution_id,
           payload: { result: e.value, terminated: true },
           effect: resolveExitEffect(note, ctx, e.value),
         });
-        await profile.applyExitBoundary(note, ctx, e.value);
+        if(note.id) config.idSlots["#"+note.id] = e.value;
         throw e;
       }
 
-      if (e instanceof Cancelled) {
-        fsm.onCancel();
-        await notifyStep({
-          phase: "cancel",
-          note_id: resolveNoteId(note),
-          execution_id: ctx.executionId,
-          payload: { reason: e.reason },
-        });
+      let reason: string, err: Error;
+      if(e instanceof Cancelled) {
+        reason  = e.reason;
+        err = e;
+      } else if(isCancelledError(e)) {
+        reason = cancelledReasonFromError(e);
+        err = new Cancelled(reason);
+      } else {
         throw e;
       }
-
-      if (isCancelledError(e)) {
-        const reason = cancelledReasonFromError(e);
-        fsm.onCancel();
-        await notifyStep({
-          phase: "cancel",
-          note_id: resolveNoteId(note),
-          execution_id: ctx.executionId,
-          payload: { reason },
-        });
-        throw new Cancelled(reason);
-      }
-
-      throw e;
+      
+      fsm.onCancel();
+      await notifyStep({
+        phase: "cancel",
+        note_id: resolveNoteId(note),
+        execution_id,
+        payload: { reason },
+      });
+      throw err;
     }
   };
 
@@ -432,6 +435,7 @@ export function execute(args: {
           }
         }
 
+        // gcされるため余計な処理ではある
         if (rootNote.id) config.idSlots["#" + rootNote.id] = finalValue;
         resolve(finalValue);
       })().catch(reject);
@@ -574,25 +578,18 @@ const dispatchSemEvent = async (ev: SemanticEvent, deps: DispatchDeps) => {
   }
 };
 
-const createStepEmitter = (
-  stepIndexByExecution: Map<string, number>,
-  authoritativeStepSink?: (step: PerformanceStep) => void | Promise<void>
-) => async (step: PerformanceStepDraft) => {
-  const stepIndex =
-    step.step_index ??
-    ((stepIndexByExecution.get(step.execution_id) ?? -1) + 1);
-  stepIndexByExecution.set(step.execution_id, stepIndex);
-
-  const finalizedStep: PerformanceStep = {
-    ...step,
-    step_index: stepIndex,
-    timestamp: step.timestamp ?? Date.now(),
+const createStepEmitter = (onStep: (step: PerformanceStep) => void | Promise<void>) => {
+  const index = new Map<string, number>();
+  return async (step: PerformanceStepDraft) => {
+    const stepIndex = step.step_index ?? ((index.get(step.execution_id) ?? -1) + 1);
+    index.set(step.execution_id, stepIndex);
+    await onStep({
+      ...step,
+      step_index: stepIndex,
+      timestamp: step.timestamp ?? Date.now(),
+    });
   };
-
-  if (authoritativeStepSink) {
-    await authoritativeStepSink(finalizedStep);
-  }
-};
+}
 
 const NOTE_ID_SYMBOL = Symbol.for("blooky.note_id");
 let autoNoteIdCounter = 0;

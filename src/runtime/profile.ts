@@ -1,6 +1,7 @@
 import { isChainedProp } from "../blooky-fp";
-import { Prop, PropPlan } from "../blooky-fp-types";
-import type { CancelToken, FxNote, FxRef, OutcomeBase, ExecutionContext, RunnerProfile, SuspendOutcome, SuspendUntil, YieldConditionRef, YieldDriver, YieldHub, YieldLocator, YieldSession } from "../blooky-fx-types";
+import { Prop } from "../blooky-fp-types";
+import { FVRuntime } from "../blooky-fv";
+import type { CancelToken, FxNote, FxRef, OutcomeBase, ExecutionContext, RunnerProfile, SuspendOutcome, SuspendUntil, YieldDriver, YieldHub, YieldLocator, YieldSession } from "../blooky-fx-types";
 import { resolveYieldLocator } from "./yield";
 
 export const isOutcome = <T>(v: unknown) : v is OutcomeBase<T> => {
@@ -16,7 +17,7 @@ export const isOutcome = <T>(v: unknown) : v is OutcomeBase<T> => {
 }
 
 export const createDefaultProfile = (deps: {
-  observeCommit: (f: (plan: Map<Prop<any>, any>) => void) => (p: Prop<any>) => () => void;
+  runtime: FVRuntime;
   yieldHub: YieldHub;
   yieldDriver: YieldDriver;
 }): RunnerProfile => {
@@ -77,7 +78,7 @@ export const createDefaultProfile = (deps: {
       if(p()) {
         resolve(void 0);
       } else {
-        dispose = deps.observeCommit((plan) => {
+        dispose = deps.runtime.observeCommit((plan) => {
           if (plan.has(p) && plan.get(p) === true) {
             resolve(void 0);
             dispose();
@@ -170,8 +171,6 @@ export const createDefaultProfile = (deps: {
       ctx.config.idSlots["#"+note.id] = value;
     }
   };
-
-
   return {
     resolveSelection,
     awaitSuspend,
@@ -189,3 +188,4 @@ const waitCancel = async (cancelToken: CancelToken) => {
   }
   throw new Error(`cancelled:${cancelToken.reason ?? "user"}`);
 };
+

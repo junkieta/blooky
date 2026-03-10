@@ -27,6 +27,7 @@ export type PerformanceStepDraft = Omit<PerformanceStep, "step_index"> & {
   step_index?: number;
 };
 
+
 // ─── FxRef: 実行時解決される値への参照 ───
 export declare const FxRefSymbol: unique symbol;
 
@@ -126,8 +127,8 @@ export type FxNoteType = FxNote["type"];
 export interface ExecutionConfig {
   resolver: <T>(ref: FxRef<T>, ctx: ExecutionContext) => Prop<T>;
   cancelToken: CancelToken;
+  idSlots: Record<string, any>;
   executionId?: string;
-  idSlots: Record<string, any>
 }
 
 // ─── PreparedFx ───
@@ -157,6 +158,13 @@ export type YieldSession = {
   until: YieldConditionRef;
 };
 
+
+export type BridgeEffect = {
+  kind: "done";
+  dripper: DripperStream<any>;
+  value: unknown;
+};
+
 export type OutcomeBase<T> = 
   | { kind: "value"; value: T }
   | { kind: "error"; error: unknown }
@@ -173,7 +181,6 @@ export type SuspendOutcome<T> =
   | Exclude<OutcomeBase<T>, { kind: "error" }>;
 
 export interface RunnerProfile {
-
   resolveSelection(
     note: Extract<FxNote, { type: "condition" | "switch" }>,
     ctx: ExecutionContext
