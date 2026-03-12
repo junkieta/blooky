@@ -76,17 +76,6 @@ const createAppContext = (initialAppContext: AppContext) => {
   return appContext;
 }
 
-const createExecutionIdGenerator = function * (seed?: string) {
-  const executionSeed = typeof seed === "string"
-    ? seed
-    : `exec-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  let executionSeq = 0;
-  while(true) {
-    yield `${executionSeed}:${executionSeq++}`;
-  }
-}
-
-
 export const FxRefSymbol = Symbol("FxRefSymbol") as typeof FxRefSymbolDec;
 export const isFxRefKey = (v: unknown): v is FxRefKey =>
   !!v &&
@@ -141,127 +130,119 @@ const failValidation = (
   });
 };
 
-const validateWaitNote = (
-  note: Extract<FxNote, { type: "wait" }>,
-  path: string
-) => {
-  const hasTimer = note.timer !== undefined;
-  const hasUntil = note.until !== undefined;
-  if (hasTimer === hasUntil) {
-    failValidation("fx-wait requires exactly one of 'timer' or 'until'", path, note);
+const validateScore = (note: unknown, path: string): void => {
+  if (!note || typeof note !== "object") {
+    failValidation("FxNote must be an object", path, note);
+  }
+
+  const typed = note as any;
+  if (typeof typed.type !== "string") {
+    failValidation("FxNote.type must be a string", path, note);
+  }
+  if (typed.id !== undefined && typeof typed.id !== "string") {
+    failValidation("FxNote.id must be a string when provided", path, note);
+  }
+
+  switch (typed.type as FxNote["type"]) {
+    case "none":
+      return;
+    case "sequence":
+    case "parallel":
+    case "race":
+      if (!Array.isArray(typed.steps)) {
+        failValidation(`${typed.type}.steps must be an array`, path, note);
+      }
+      typed.steps.forEach((child: unknown, i: number) => validateScore(child, `${path}.steps[${i}]`));
+      return;
+    case "wait":
+      const hasTimer = typed.timer !== "undefined";
+      const hasUntil = typed.until !== undefined;
+      if (hasTimer === hasUntil) {
+        failValidation("fx-wait requires exactly one of 'timer' or 'until'", path, note);
+      }      
+      return;
+    case "loop":
+      if (typed.cond === undefined) {
+        failValidation("loop.cond is required", path, note);
+      }
+      if (typed.body === undefined) {
+        failValidation("loop.body is required", path, note);
+      }
+      if (
+        typed.maxIterations !== undefined &&
+        (typeof typed.maxIterations !== "number" ||
+          (!Number.isFinite(typed.maxIterations) && typed.maxIterations !== Infinity) ||
+          typed.maxIterations < 0)
+      ) {
+        failValidation("loop.maxIterations must be a non-negative number or Infinity", path, note);
+      }
+      if (
+        typed.maxDuration !== undefined &&
+        (typeof typed.maxDuration !== "number" || !Number.isFinite(typed.maxDuration) || typed.maxDuration < 0)
+      ) {
+        failValidation("loop.maxDuration must be a non-negative finite number", path, note);
+      }
+      validateScore(typed.body, `${path}.body`);
+      return;
+    case "condition":
+      if (typed.if === undefined) {
+        failValidation("condition.if is required", path, note);
+      }
+      if (typed.then === undefined) {
+        failValidation("condition.then is required", path, note);
+      }
+      validateScore(typed.then, `${path}.then`);
+      if (typed.else !== undefined) validateScore(typed.else, `${path}.else`);
+      return;
+    case "switch":
+      if (typed.by === undefined) {
+        failValidation("switch.by is required", path, note);
+      }
+      if (!(typed.cases instanceof Map)) {
+        failValidation("switch.cases must be a Map", path, note);
+      }
+      let caseIndex = 0;
+      for (const [key, child] of typed.cases.entries()) {
+        const keyType = typeof key;
+        if (keyType !== "string" && keyType !== "number" && keyType !== "symbol") {
+          failValidation("switch.cases key must be string | number | symbol", `${path}.cases[${caseIndex}]`, note);
+        }
+        validateScore(child, `${path}.cases[${String(key)}]`);
+        caseIndex += 1;
+      }
+      if (typed.default !== undefined) validateScore(typed.default, `${path}.default`);
+      return;
+    case "call":
+      if (typed.action === undefined) {
+        failValidation("call.action is required", path, note);
+      }
+      if (typeof typed.action.call !== "function") {
+        failValidation("call.action.call must be an function", path, note);
+      }
+      return;
+    case "yield":
+      if (typed.score === undefined) {
+        failValidation("yield.score is required", path, note);
+      }
+      return;
+    case "context":
+      if (!typed.context || typeof typed.context !== "object" || Array.isArray(typed.context)) {
+        failValidation("context.context must be an object", path, note);
+      }
+      if (typed.child === undefined) {
+        failValidation("context.child is required", path, note);
+      }
+      validateScore(typed.child, `${path}.child`);
+      return;
+    case "return":
+      return;
+    default:
+      failValidation(`Unsupported FxNote.type: ${String(typed.type)}`, path, note);
   }
 };
 
-const validateScore = (flow: FxNote) => {
-  const walk = (note: unknown, path: string): void => {
-    if (!note || typeof note !== "object") {
-      failValidation("FxNote must be an object", path, note);
-    }
-
-    const typed = note as any;
-    if (typeof typed.type !== "string") {
-      failValidation("FxNote.type must be a string", path, note);
-    }
-    if (typed.id !== undefined && typeof typed.id !== "string") {
-      failValidation("FxNote.id must be a string when provided", path, note);
-    }
-
-    switch (typed.type as FxNote["type"]) {
-      case "none":
-        return;
-      case "sequence":
-      case "parallel":
-      case "race":
-        if (!Array.isArray(typed.steps)) {
-          failValidation(`${typed.type}.steps must be an array`, path, note);
-        }
-        typed.steps.forEach((child: unknown, i: number) => walk(child, `${path}.steps[${i}]`));
-        return;
-      case "wait":
-        validateWaitNote(typed, path);
-        return;
-      case "loop":
-        if (typed.cond === undefined) {
-          failValidation("loop.cond is required", path, note);
-        }
-        if (typed.body === undefined) {
-          failValidation("loop.body is required", path, note);
-        }
-        if (
-          typed.maxIterations !== undefined &&
-          (typeof typed.maxIterations !== "number" ||
-            (!Number.isFinite(typed.maxIterations) && typed.maxIterations !== Infinity) ||
-            typed.maxIterations < 0)
-        ) {
-          failValidation("loop.maxIterations must be a non-negative number or Infinity", path, note);
-        }
-        if (
-          typed.maxDuration !== undefined &&
-          (typeof typed.maxDuration !== "number" || !Number.isFinite(typed.maxDuration) || typed.maxDuration < 0)
-        ) {
-          failValidation("loop.maxDuration must be a non-negative finite number", path, note);
-        }
-        walk(typed.body, `${path}.body`);
-        return;
-      case "condition":
-        if (typed.if === undefined) {
-          failValidation("condition.if is required", path, note);
-        }
-        if (typed.then === undefined) {
-          failValidation("condition.then is required", path, note);
-        }
-        walk(typed.then, `${path}.then`);
-        if (typed.else !== undefined) walk(typed.else, `${path}.else`);
-        return;
-      case "switch":
-        if (typed.by === undefined) {
-          failValidation("switch.by is required", path, note);
-        }
-        if (!(typed.cases instanceof Map)) {
-          failValidation("switch.cases must be a Map", path, note);
-        }
-        let caseIndex = 0;
-        for (const [key, child] of typed.cases.entries()) {
-          const keyType = typeof key;
-          if (keyType !== "string" && keyType !== "number" && keyType !== "symbol") {
-            failValidation("switch.cases key must be string | number | symbol", `${path}.cases[${caseIndex}]`, note);
-          }
-          walk(child, `${path}.cases[${String(key)}]`);
-          caseIndex += 1;
-        }
-        if (typed.default !== undefined) walk(typed.default, `${path}.default`);
-        return;
-      case "call":
-        if (typed.action === undefined) {
-          failValidation("call.action is required", path, note);
-        }
-        return;
-      case "yield":
-        if (typed.score === undefined) {
-          failValidation("yield.score is required", path, note);
-        }
-        return;
-      case "context":
-        if (!typed.context || typeof typed.context !== "object" || Array.isArray(typed.context)) {
-          failValidation("context.context must be an object", path, note);
-        }
-        if (typed.child === undefined) {
-          failValidation("context.child is required", path, note);
-        }
-        walk(typed.child, `${path}.child`);
-        return;
-      case "return":
-        return;
-      default:
-        failValidation(`Unsupported FxNote.type: ${String(typed.type)}`, path, note);
-    }
-  };
-
-  walk(flow, "root");
-};
-
 export function prepare(flow: FxNote, initialAppContext: AppContext = {}, parent?: Partial<ExecutionConfig>): PreparedFx {
-  validateScore(flow);
+  validateScore(flow, "root");
   return {
     rootNote: flow,
     appContext: createAppContext(initialAppContext),
@@ -269,10 +250,27 @@ export function prepare(flow: FxNote, initialAppContext: AppContext = {}, parent
       resolver: parent?.resolver ?? defaultResolve,
       cancelToken: createCancelToken(parent?.cancelToken),
       idSlots: createIdSlots(flow, parent?.idSlots),
-      executionId: parent?.executionId ?? `exec-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      executionId: parent?.executionId,
     },
   };
 }
+
+const EXISTING_EXEC_ID = new Set();
+const generateExecutionId = (id?: string) => {
+  if(EXISTING_EXEC_ID.has(id)) return [id, EXISTING_EXEC_ID.delete.bind(EXISTING_EXEC_ID, id)];
+  let new_id: string;
+  do new_id = `exec-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  while(EXISTING_EXEC_ID.has(new_id));
+  return generateExecutionId(new_id);
+}
+
+const resolveExitEffect = (note: FxNote, ctx: ExecutionContext, result: unknown) => {
+  const done = (note as any).done;
+  if (done === undefined) return undefined;
+  const dripper = ctx.config.resolver(done as FxRef<unknown>, ctx)();
+  const value = ctx.config.resolver(result as FxRef<unknown>, ctx)();
+  return { kind: "done", dripper, value };
+};
 
 export function execute(args: {
   prepared: PreparedFx;
@@ -282,16 +280,8 @@ export function execute(args: {
 }): ExecutionHandle {
   const { prepared, registry, profile, onStep } = args;
   const { rootNote, config, appContext } = prepared;
-
-  const nextExecutionId = createExecutionIdGenerator(config.executionId);
+  const [ execution_id, unbind_exec_id] = generateExecutionId(config.executionId);
   const notifyStep = onStep ? createStepEmitter(onStep) : ()=>{};
-  const resolveExitEffect = (note: FxNote, ctx: ExecutionContext, result: unknown) => {
-    const done = (note as any).done;
-    if (done === undefined) return undefined;
-    const dripper = ctx.config.resolver(done as FxRef<unknown>, ctx)();
-    const value = ctx.config.resolver(result as FxRef<unknown>, ctx)();
-    return { kind: "done", dripper, value };
-  };
 
   const run = async (
     note: FxNote,
@@ -299,8 +289,6 @@ export function execute(args: {
     cancelToken: CancelToken
   ): Promise<unknown> => {
     
-    const execution_id = nextExecutionId.next().value;
-
     const ctx: ExecutionContext = {
       note,
       config,
@@ -397,6 +385,7 @@ export function execute(args: {
         throw e;
       }
 
+      // Cancelを正規化する
       let reason: string, err: Error;
       if(e instanceof Cancelled) {
         reason  = e.reason;
@@ -438,7 +427,10 @@ export function execute(args: {
         // gcされるため余計な処理ではある
         if (rootNote.id) config.idSlots["#" + rootNote.id] = finalValue;
         resolve(finalValue);
-      })().catch(reject);
+      })()
+        .catch(reject)
+        // execution_idのgc
+        .finally(unbind_exec_id);
     });
   });
 
