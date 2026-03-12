@@ -78,9 +78,7 @@ function assertContextObject(ctx: unknown): asserts ctx is ContextObject {
 }
 
 const getOrInitMeta = (ctx: object): ContextMeta => {
-  const existing = META.get(ctx);
-  if (existing) return existing;
-
+  if(META.has(ctx)) return META.get(ctx)!;
   const created: ContextMeta = {
     keyToValue: new Map<ContextKey, unknown>(),
     valueToKeyObj: new WeakMap<object, ContextKey>(),
@@ -150,12 +148,17 @@ export const encode = (ctx: unknown, value: unknown): ContextValue => {
     );
   }
 
-  if (isObjectLike(value)) {
-    const key = meta.valueToKeyObj.get(value);
-    if (key !== undefined) {
-      return { kind: "ctx", key };
-    }
+  // symbol and any other non-literal primitive not allowed by this profile
+  if (!isObjectLike(value)) {
+    throw new ContextCodecError(
+      "ENCODE_UNBOUND",
+      "[context] Unsupported value for encode.",
+      { phase: "encode", valueType: typeof value, hint: "only literal primitives or bound object/function are encodable" }
+    );
+  }
 
+  const key = meta.valueToKeyObj.get(value);
+  if (key === undefined) {
     throw new ContextCodecError(
       "ENCODE_UNBOUND",
       "[context] Value is not bound in this context.",
@@ -163,12 +166,8 @@ export const encode = (ctx: unknown, value: unknown): ContextValue => {
     );
   }
 
-  // symbol and any other non-literal primitive not allowed by this profile
-  throw new ContextCodecError(
-    "ENCODE_UNBOUND",
-    "[context] Unsupported value for encode.",
-    { phase: "encode", valueType: typeof value, hint: "only literal primitives or bound object/function are encodable" }
-  );
+  return { kind: "ctx", key };
+
 };
 
 export const decode = (ctx: unknown, ref: ContextRef): unknown => {
