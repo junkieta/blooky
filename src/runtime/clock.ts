@@ -23,9 +23,6 @@ type Clock = Prop<number> &
     unobserveTick: (f: TickObserver) => void;
     setMergeStrategy: <V>(dripper: DripperStream<V>, reducer: (a: V, b: V) => V) => void;
     deleteMergeStrategy: <V>(dripper: DripperStream<V>) => void;
-    // backward-compatible aliases
-    setConflictReducer: <V>(dripper: DripperStream<V>, reducer: (a: V, b: V) => V) => void;
-    deleteConflictReducer: <V>(dripper: DripperStream<V>) => void;
   };
 
 const beat$ = stream<number>();
@@ -53,9 +50,6 @@ export const clock: Clock = Object.assign(hold(0)(beat$), {
   unobserveTick: runtime.unobserveTick,
   setMergeStrategy: gate.setMergeStrategy,
   deleteMergeStrategy: gate.deleteMergeStrategy,
-  // aliases (migration path)
-  setConflictReducer: gate.setMergeStrategy,
-  deleteConflictReducer: gate.deleteMergeStrategy,
 });
 
 export const setFatalHandler = (handler: FatalHandler) => {
