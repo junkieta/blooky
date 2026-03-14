@@ -324,12 +324,7 @@ export function execute(args: {
       const struct = registry.structures.get(note.type);
       if (struct) {
         const value = await struct(note, ctx, {
-          runChild: (child, overrideAppContext, overrideCancelToken) =>
-            run(
-              child,
-              overrideAppContext ?? ctx.appContext,
-              overrideCancelToken ?? cancelToken
-            ),
+          runChild: (subnote, _appCtx, _cancelToken) => run(subnote, _appCtx ?? ctx.appContext, _cancelToken ?? cancelToken),
           profile
         });
 
@@ -414,7 +409,6 @@ export function execute(args: {
         resolve(finalValue);
       })()
         .catch(reject)
-        // execution_idのgc
         .finally(unbind_exec_id);
     });
   });
