@@ -73,7 +73,7 @@ const runParallel: StructureRunner = async (note, _ctx, deps) => {
 const runRace: StructureRunner = async (note, _ctx, deps) => {
   if (note.type !== "race") return undefined;
 
-  const childTokens = note.steps.map(() => createChildCancelToken(deps.cancelToken));
+  const childTokens = note.steps.map(() => createChildCancelToken(_ctx.cancelToken));
   let settled = false;
 
   const wrapped = note.steps.map((child, i) =>
@@ -108,8 +108,8 @@ const runLoop: StructureRunner = async (note, ctx, deps) => {
   let last: unknown = undefined;
   const p = ctx.config.resolver(note.cond as any, ctx);
   while (p()) {
-    if (deps.cancelToken.cancelled()) {
-      throw new Cancelled(deps.cancelToken.reason ?? "user");
+    if (ctx.cancelToken.cancelled()) {
+      throw new Cancelled(ctx.cancelToken.reason ?? "user");
     }
     if (note.maxIterations !== undefined && i >= note.maxIterations) break;
     i += 1;

@@ -23,9 +23,7 @@ export type PerformanceStep = {
   timestamp?: number;
 };
 
-export type PerformanceStepDraft = Omit<PerformanceStep, "step_index"> & {
-  step_index?: number;
-};
+export type PerformanceStepDraft = Omit<PerformanceStep, "step_index"|"execution_id"|"note_id">;
 
 
 // ─── FxRef: 実行時解決される値への参照 ───
@@ -126,7 +124,6 @@ export type FxNoteType = FxNote["type"];
 // ─── prepare で生成される実行設定 ───
 export interface ExecutionConfig {
   resolver: <T>(ref: FxRef<T>, ctx: ExecutionContext) => Prop<T>;
-  cancelToken: CancelToken;
   idSlots: Record<string, any>;
   executionId?: string;
 }
@@ -187,17 +184,10 @@ export interface RunnerProfile {
   ): FxNote | null;
 
   // Yield or Wait
-  awaitSuspend(until: SuspendUntil, ctx: ExecutionContext, cancel: CancelToken): Promise<SuspendOutcome<unknown>>;
+  awaitSuspend(until: SuspendUntil, ctx: ExecutionContext): Promise<SuspendOutcome<unknown>>;
 
   projectEffect(ref: unknown, ctx: ExecutionContext): unknown;
   applyEffect(ref: unknown, ctx: ExecutionContext): Promise<EffectOutcome<unknown>>;
-
-  /**
-   * note の exit 境界で呼ばれる（note と note の間）
-   * - done が DripperStream を参照している場合だけ FRP に接続する
-   * - 呼び出し側（runner）は await する（タイムライン同期のため）
-   */
-  applyExitBoundary(note: FxNote, ctx: ExecutionContext, result: unknown, meta?: { terminated?: boolean }): Promise<void>;
 
 }
 
@@ -238,9 +228,10 @@ export type YieldConditionRef = {
 
 export type ExecutionContext = {
   note: FxNote;
-  config: ExecutionConfig;
   appContext: AppContext;
   executionId: string;
+  cancelToken: CancelToken;
+  config: ExecutionConfig;
 };
 
 export type Semantics = (note: FxNote, ctx: ExecutionContext) => Generator<SemanticEvent, void, void>;
@@ -254,7 +245,6 @@ export type StepSink = (step: PerformanceStepDraft) => void | Promise<void>;
 export type StructureDeps = {
   runChild: RunChild;
   profile: RunnerProfile;
-  cancelToken: CancelToken;
 };
 
 export type StructureRunner = (note: FxNote, ctx: ExecutionContext, deps: StructureDeps) => Promise<unknown>;

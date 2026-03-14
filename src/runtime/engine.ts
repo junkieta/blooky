@@ -15,10 +15,13 @@ import type {
   SemanticEvent,
   StepSink,
   RunnerProfile,
-  FxCallAction
+  FxCallAction,
+  BridgeEffect
 } from "../blooky-fx-types";
 import { Prop } from "../blooky-fp-types";
 import { decode, bind } from "../blooky-context";
+import { stream } from "../blooky-fp";
+import { clock } from "./clock";
 
 const NotResolved = Symbol.for("NotResolved");
 
@@ -155,8 +158,8 @@ const validateScore = (note: unknown, path: string): void => {
       typed.steps.forEach((child: unknown, i: number) => validateScore(child, `${path}.steps[${i}]`));
       return;
     case "wait":
-      const hasTimer = typed.timer !== "undefined";
-      const hasUntil = typed.until !== undefined;
+      const hasTimer = typeof typed.timer !== "undefined";
+      const hasUntil = typeof typed.until !== "undefined";
       if (hasTimer === hasUntil) {
         failValidation("fx-wait requires exactly one of 'timer' or 'until'", path, note);
       }      
@@ -216,9 +219,6 @@ const validateScore = (note: unknown, path: string): void => {
       if (typed.action === undefined) {
         failValidation("call.action is required", path, note);
       }
-      if (typeof typed.action.call !== "function") {
-        failValidation("call.action.call must be an function", path, note);
-      }
       return;
     case "yield":
       if (typed.score === undefined) {
@@ -248,20 +248,19 @@ export function prepare(flow: FxNote, initialAppContext: AppContext = {}, parent
     appContext: createAppContext(initialAppContext),
     config: {
       resolver: parent?.resolver ?? defaultResolve,
-      cancelToken: createCancelToken(parent?.cancelToken),
       idSlots: createIdSlots(flow, parent?.idSlots),
       executionId: parent?.executionId,
     },
   };
 }
 
-const EXISTING_EXEC_ID = new Set();
-const generateExecutionId = (id?: string) => {
-  if(EXISTING_EXEC_ID.has(id)) return [id, EXISTING_EXEC_ID.delete.bind(EXISTING_EXEC_ID, id)];
+const EXISTING_EXEC_ID = new Set<string>("");
+const generateExecutionId = (id?: string) : [string, ()=>void] => {
   let new_id: string;
-  do new_id = `exec-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  do new_id = `exec-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   while(EXISTING_EXEC_ID.has(new_id));
-  return generateExecutionId(new_id);
+  EXISTING_EXEC_ID.add(new_id);
+  return [new_id, EXISTING_EXEC_ID.delete.bind(EXISTING_EXEC_ID, new_id)];
 }
 
 const resolveExitEffect = (note: FxNote, ctx: ExecutionContext, result: unknown) => {
@@ -280,8 +279,11 @@ export function execute(args: {
 }): ExecutionHandle {
   const { prepared, registry, profile, onStep } = args;
   const { rootNote, config, appContext } = prepared;
-  const [ execution_id, unbind_exec_id] = generateExecutionId(config.executionId);
-  const notifyStep = onStep ? createStepEmitter(onStep) : ()=>{};
+  const [ execution_id, unbind_exec_id] = generateExecutionId();
+  const rootCancelToken = createCancelToken();
+
+  let stepCount = 0;
+  const stepDripper = stream<PerformanceStep[]>();
 
   const run = async (
     note: FxNote,
@@ -291,23 +293,26 @@ export function execute(args: {
     
     const ctx: ExecutionContext = {
       note,
+      cancelToken,
       config,
       appContext,
       executionId: execution_id,
     };
 
+    const note_id = resolveNoteId(note);
+    const emitStep = onStep
+      ? async (draft: PerformanceStepDraft) => await onStep({
+          ...draft,
+          note_id,
+          execution_id,
+          step_index: stepCount++
+        })
+      : async () => {};
+
     const fsm = new RunnerFSM();
-    await notifyStep({
-      phase: "enter",
-      note_id: resolveNoteId(note),
-      execution_id,
-    });
-    await notifyStep({
-      phase: "active",
-      note_id: resolveNoteId(note),
-      execution_id,
-      payload: { reason: "entered" },
-    });
+
+    await emitStep({ phase: "enter", });
+    await emitStep({ phase: "active", payload: { reason: "entered" }, });
     fsm.onEnter();
     fsm.onActive();
 
@@ -325,18 +330,11 @@ export function execute(args: {
               overrideAppContext ?? ctx.appContext,
               overrideCancelToken ?? cancelToken
             ),
-          profile,
-          cancelToken,
+          profile
         });
 
         fsm.onExit();
-        await notifyStep({
-          phase: "exit",
-          note_id: resolveNoteId(note),
-          execution_id,
-          payload: { result: value },
-          effect: resolveExitEffect(note, ctx, value),
-        });
+        await emitStep({ phase: "exit", payload: { result: value }, effect: resolveExitEffect(note, ctx, value), });
         if(note.id) config.idSlots["#"+note.id] = value;
         return value;
       }
@@ -347,7 +345,7 @@ export function execute(args: {
       let final: unknown = undefined;
       for (const ev of sem(note, ctx)) {
         fsm.onEvent(ev);
-        const r = await dispatchSemEvent(ev, { profile, ctx, cancelToken, emit: notifyStep, });
+        const r = await dispatchSemEvent(ev, { profile, ctx, cancelToken, emit: emitStep, });
         if (ev.type === "suspend") {
           fsm.onResume();
           fsm.onActive();
@@ -361,10 +359,8 @@ export function execute(args: {
       }
 
       fsm.onExit();
-      await notifyStep({
+      await emitStep({
         phase: "exit",
-        note_id: resolveNoteId(note),
-        execution_id,
         payload: { result: final },
         effect: resolveExitEffect(note, ctx, final),
       });
@@ -374,10 +370,8 @@ export function execute(args: {
     } catch (e) {
       if (e instanceof Terminated) {
         fsm.onExit();
-        await notifyStep({
+        await emitStep({
           phase: "exit",
-          note_id: resolveNoteId(note),
-          execution_id,
           payload: { result: e.value, terminated: true },
           effect: resolveExitEffect(note, ctx, e.value),
         });
@@ -398,12 +392,7 @@ export function execute(args: {
       }
       
       fsm.onCancel();
-      await notifyStep({
-        phase: "cancel",
-        note_id: resolveNoteId(note),
-        execution_id,
-        payload: { reason },
-      });
+      await emitStep({ phase: "cancel", payload: { reason }, });
       throw err;
     }
   };
@@ -412,9 +401,8 @@ export function execute(args: {
     queueMicrotask(() => {
       (async () => {
         let finalValue: unknown = undefined;
-
         try {
-          finalValue = await run(rootNote, appContext, config.cancelToken);
+          finalValue = await run(rootNote, appContext, rootCancelToken);
         } catch (e) {
           if (e instanceof Terminated) {
             finalValue = e.value;
@@ -423,9 +411,6 @@ export function execute(args: {
             return;
           }
         }
-
-        // gcされるため余計な処理ではある
-        if (rootNote.id) config.idSlots["#" + rootNote.id] = finalValue;
         resolve(finalValue);
       })()
         .catch(reject)
@@ -435,7 +420,7 @@ export function execute(args: {
   });
 
   return {
-    cancel: () => config.cancelToken.cancel("user"),
+    cancel: () => rootCancelToken.cancel("user"),
     done,
   };
 }
@@ -494,8 +479,6 @@ const dispatchSemEvent = async (ev: SemanticEvent, deps: DispatchDeps) => {
       const projected = deps.profile.projectEffect(ev.ref, deps.ctx);
       await deps.emit({
         phase: "active",
-        note_id: resolveNoteId(deps.ctx.note),
-        execution_id: deps.ctx.executionId,
         payload: { event: "effect", effect: projected },
         effect: projected,
       });
@@ -504,8 +487,6 @@ const dispatchSemEvent = async (ev: SemanticEvent, deps: DispatchDeps) => {
       if (value.kind === "none") return { kind: "continue" as const };
       await deps.emit({
         phase: "active",
-        note_id: resolveNoteId(deps.ctx.note),
-        execution_id: deps.ctx.executionId,
         payload: { event: "result", value },
       });
       return { kind: "result" as const, value };
@@ -514,22 +495,16 @@ const dispatchSemEvent = async (ev: SemanticEvent, deps: DispatchDeps) => {
     case "suspend": {
       await deps.emit({
         phase: "suspend",
-        note_id: resolveNoteId(deps.ctx.note),
-        execution_id: deps.ctx.executionId,
         payload: { until: ev.until },
       });
 
-      const out = await deps.profile.awaitSuspend(ev.until, deps.ctx, deps.cancelToken);
+      const out = await deps.profile.awaitSuspend(ev.until, deps.ctx);
       await deps.emit({
         phase: "resume",
-        note_id: resolveNoteId(deps.ctx.note),
-        execution_id: deps.ctx.executionId,
         payload: { until: ev.until },
       });
       await deps.emit({
         phase: "active",
-        note_id: resolveNoteId(deps.ctx.note),
-        execution_id: deps.ctx.executionId,
         payload: { reason: "resumed" },
       });
 
@@ -537,8 +512,6 @@ const dispatchSemEvent = async (ev: SemanticEvent, deps: DispatchDeps) => {
 
       await deps.emit({
         phase: "active",
-        note_id: resolveNoteId(deps.ctx.note),
-        execution_id: deps.ctx.executionId,
         payload: { event: "result", value: out },
       });
       return { kind: "result" as const, value: out };
@@ -549,8 +522,6 @@ const dispatchSemEvent = async (ev: SemanticEvent, deps: DispatchDeps) => {
         const value = deps.ctx.config.resolver(ev.value as FxRef<unknown>, deps.ctx)();
         await deps.emit({
           phase: "active",
-          note_id: resolveNoteId(deps.ctx.note),
-          execution_id: deps.ctx.executionId,
           payload: { event: "result", value },
         });
         return { kind: "result" as const, value };
@@ -561,8 +532,6 @@ const dispatchSemEvent = async (ev: SemanticEvent, deps: DispatchDeps) => {
         const value = deps.ctx.config.resolver(ev.value as FxRef<unknown>, deps.ctx)();
         await deps.emit({
           phase: "active",
-          note_id: resolveNoteId(deps.ctx.note),
-          execution_id: deps.ctx.executionId,
           payload: { event: "terminate", value },
         });
         throw new Terminated(value);
@@ -570,23 +539,10 @@ const dispatchSemEvent = async (ev: SemanticEvent, deps: DispatchDeps) => {
   }
 };
 
-const createStepEmitter = (onStep: (step: PerformanceStep) => void | Promise<void>) => {
-  const index = new Map<string, number>();
-  return async (step: PerformanceStepDraft) => {
-    const stepIndex = step.step_index ?? ((index.get(step.execution_id) ?? -1) + 1);
-    index.set(step.execution_id, stepIndex);
-    await onStep({
-      ...step,
-      step_index: stepIndex,
-      timestamp: step.timestamp ?? Date.now(),
-    });
-  };
-}
-
 const NOTE_ID_SYMBOL = Symbol.for("blooky.note_id");
 let autoNoteIdCounter = 0;
 
-const resolveNoteId = (note: FxNote): string => {
+export const resolveNoteId = (note: FxNote): string => {
   if (note.id && note.id.length) return note.id;
   const existing = (note as any)[NOTE_ID_SYMBOL];
   if (typeof existing === "string" && existing.length) return existing;
@@ -594,7 +550,6 @@ const resolveNoteId = (note: FxNote): string => {
   (note as any)[NOTE_ID_SYMBOL] = generated;
   return generated;
 };
-
 
 type Phase = "entered" | "active" | "suspended" | "exited" | "cancelled";
 

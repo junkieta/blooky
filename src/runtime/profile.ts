@@ -87,20 +87,20 @@ export const createDefaultProfile = (deps: {
       }
     }).finally(()=>dispose());
   };
-
-
+  
   const awaitSuspend = async (
     until: SuspendUntil,
     ctx: ExecutionContext,
-    cancel: CancelToken
   ): Promise<SuspendOutcome<unknown>> => {
+
+    const cancel = ctx.cancelToken;
 
     switch (until.kind) {
 
       case "yield": {
         try {
           const session = await startYield(until, ctx);
-          await awaitYield(session, ctx, cancel);
+          await awaitYield(session, ctx);
           const raw = await getYieldResult(session, ctx);
           return (isOutcome(raw) && (raw.kind === "value" || raw.kind === "crash"))
             ? raw
@@ -136,8 +136,8 @@ export const createDefaultProfile = (deps: {
   };
 
 
-  const awaitYield = async (session, _ctx, cancelToken) => {
-    await Promise.race([deps.yieldHub.await(session.id), waitCancel(cancelToken)]);
+  const awaitYield = async (session, ctx) => {
+    await Promise.race([deps.yieldHub.await(session.id), waitCancel(ctx.cancelToken)]);
   };
 
   const getYieldResult = async (session, _ctx) => deps.yieldHub.get(session.id);
@@ -148,8 +148,8 @@ export const createDefaultProfile = (deps: {
     const e: any = ref;
     if (e?.kind !== "call") return { kind: "none" };
 
-    if (ctx.config.cancelToken.cancelled()) {
-      return { kind: "cancel", reason: ctx.config.cancelToken.reason };
+    if (ctx.cancelToken.cancelled()) {
+      return { kind: "cancel", reason: ctx.cancelToken.reason };
     }
 
     try {
@@ -163,20 +163,11 @@ export const createDefaultProfile = (deps: {
     }
   };
 
-  const applyExitBoundary: RunnerProfile["applyExitBoundary"] = async(note: FxNote, ctx: ExecutionContext, result: unknown) => {
-    // resultに(Prop/getterではない)関数そのものを値として返すパターンは認められないので注意
-    const value = resolveRef(result, ctx)();
-    // 1) idSlotに結果を反映
-    if(note.id) {
-      ctx.config.idSlots["#"+note.id] = value;
-    }
-  };
   return {
     resolveSelection,
     awaitSuspend,
     projectEffect,
     applyEffect,
-    applyExitBoundary
   };
 
   

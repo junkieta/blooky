@@ -12,6 +12,7 @@ import { decode } from "./blooky-context";
 
 import { drip, isChainedProp, isDripperStream, isStream, isVertex, Prop, Stream, vertex } from "./blooky-fp";
 import { Vertex, DripperStream, MergedStream } from "./blooky-fp-types";
+import { resolveNoteId } from "./runtime/engine";
 
 // ---------------------------------------------------------------------------
 // FxDOM injection (core projection primitives)
@@ -155,18 +156,6 @@ const toSelectorExpression = (e: Element) => {
   return container;
 
 }
-
-const NOTE_ID_SYMBOL = Symbol.for("blooky.note_id");
-let autoNoteIdCounter = 0;
-
-const resolveNoteId = (note: FxNote): string => {
-  if (note.id && note.id.length) return note.id;
-  const existing = (note as any)[NOTE_ID_SYMBOL];
-  if (typeof existing === "string" && existing.length) return existing;
-  const generated = `note-${autoNoteIdCounter++}`;
-  (note as any)[NOTE_ID_SYMBOL] = generated;
-  return generated;
-};
 
 const isFxRefKeyLike = (v: unknown): v is { key: string } =>
   !!v && typeof v === "object" && typeof (v as any).key === "string";
