@@ -23,6 +23,11 @@ const PROP_FROM = new WeakMap<Prop<any>, Stream<any>>();
  * Propの値を更新する
  */
 const PROP_UPDATE = new WeakMap<Prop<any>, ((v:any)=>void)>();
+/**
+ * liftされた遅延処理のProp
+ */
+const DERIVED_UPSTREAMS = new WeakMap<Prop<any>,Prop<any>[]>();
+const DERIVED_FN = new WeakMap<Prop<any>,(v:any[])=>any>();
 
 /**
  * ストリーム/プロパティのメモリを解放する。
@@ -270,6 +275,20 @@ const vertex = (s:Stream<any>): Vertex => {
     return v;
 }
 
+const NOOP = ()=>{};
+
+function bindStreamToProp<A,B>(stream: Stream<A[]>, getter: Prop<B>, setter: (v:A[])=>void) : void;
+function bindStreamToProp<A>(stream: Stream<A>, getter: Prop<A>, setter: (v:A)=>void) : void;
+function bindStreamToProp<A>(stream: Stream<A>, getter: Prop<A>, setter: (v:A)=>void) {
+    PROP_UPDATE.set(getter, setter);
+    PROP_FROM.set(getter, stream);
+    cleanupRegistry.register(getter, new WeakRef(getter));
+    if(STREAM_PROP_RELATIONS.has(stream))
+        STREAM_PROP_RELATIONS.get(stream)!.push(getter);
+    else
+        STREAM_PROP_RELATIONS.set(stream, [getter]);
+    return getter;
+};
 
 /**
  * Streamから現在値を保持するPropを生成する。
@@ -278,13 +297,7 @@ const vertex = (s:Stream<any>): Vertex => {
  */
 const hold = <A>(v:A) => (s:Stream<A>): Prop<A> => {
     const p = () => v;
-    PROP_UPDATE.set(p, (_v)=>v=_v);
-    PROP_FROM.set(p, s);
-    cleanupRegistry.register(p, new WeakRef(p));
-    if(STREAM_PROP_RELATIONS.has(s))
-        STREAM_PROP_RELATIONS.get(s)!.push(p);
-    else
-        STREAM_PROP_RELATIONS.set(s, [p]);
+    bindStreamToProp(s,p,(_v)=>v=_v);
     return p;
 }
 
@@ -303,20 +316,26 @@ const remap = <A,B>(f:(v:A)=>B) => (p:Prop<A>) : Prop<B> =>
  * @param fn - 統合関数
  * @returns Props配列を受け取り新しいPropを返す関数
  */
-const lift = <A>(f: (values: any[]) => A) => (props: Prop<any>[]) : Prop<A> => {
-  type reservation = [number, any];
-  const valueFn = () => f(props.map(p => p()));
-  const streams : MappedStream<any,reservation[]>[] = 
-    props.flatMap((p, i) => PROP_FROM.has(p) ? map((v) => [[i, v]] as reservation[])(PROP_FROM.get(p)!) : []);
-  const mergedStream = merge<reservation[]>(streams, (a, b) => a.concat(b));
-  const transformed = map((updates: reservation[]) => {
-    const map = new Map(updates);
-    return f(props.map((p, i) => map.has(i) ? map.get(i)! : p()));
-  })(mergedStream);
-  STREAM_CLEANERS.set(transformed, () => {
-    streams.forEach((s)=>clear(s));
+const lift = <A>(f: (values: any[]) => A) => (props: Prop<any>[]): Prop<A> => {
+  // 循環検出：新しい derived prop が props のいずれかの祖先に自分自身を持つか
+  const reachable = new Set<Prop<any>>();
+  props.forEach(function walk(p:Prop<any>) {
+    if (reachable.has(p)) return;
+    reachable.add(p);
+    DERIVED_UPSTREAMS.get(p)?.forEach(walk);
   });
-  return hold(valueFn())(transformed);
+
+  const p = () => f(props.map(p => p()));
+
+  // props のいずれかが p の downstream になりうるかを検査
+  if ([...reachable].some(u => DERIVED_UPSTREAMS.get(u)?.includes(u))) {
+    throw new Error("lift: circular dependency detected in upstream graph");
+  }
+
+  bindStreamToProp(merge(props.filter(p => PROP_FROM.has(p)).map(p => PROP_FROM.get(p)!)), p, NOOP);
+  DERIVED_UPSTREAMS.set(p, props);
+  DERIVED_FN.set(p, f);
+  return p;
 };
 
 // 内部実装用の関数群
@@ -377,6 +396,84 @@ const flowLazy = <A>(v:A) => (s:Stream<A>) : FlowingState => {
 const drip = <A>({dripper,value}: DripPlan<A>) : PropPlan<any>[] => flowLazy(value)(dripper)[0];
 
 /**
+ * 同時生成のPropPlanを合成する。conflictは同値の破棄とliftの遅延による解決が試みられる。
+ * @param plans 
+ * @param is 
+ * @returns 
+ */
+const concatenate = (plans: DripPlan<any>[]|PropPlan<any>[], is: (a:unknown,b:unknown)=>boolean = Object.is) : {
+  plan: Map<Prop<any>, any>;
+  conflicts: Map<Prop<any>, any[]>;
+} => {
+  // 1. 全 drip を評価して PropPlan[] に展開
+  const raw = plans.flatMap<PropPlan<any>>((dp:DripPlan<any>|PropPlan<any>)=>Array.isArray(dp) ? [dp] : drip(dp));
+
+  // 2. dedup + conflict 検出（derived も含めて全部処理、早期リターンしない）
+  const resolved = new Map<Prop<any>, any>();
+  const conflicts = new Map<Prop<any>, any[]>();
+
+  for (const [p, v] of raw) {
+    if (!resolved.has(p)) {
+      resolved.set(p, v);
+      continue;
+    }
+    const prev = resolved.get(p);
+    if (is(prev, v)) continue;
+    conflicts.set(p, conflicts.has(p) ? [...conflicts.get(p)!, v] : [prev, v]);
+  }
+
+  // 3. derived prop をトポロジカル順に解決
+  // resolved と conflicts 両方に含まれる derived prop を対象にする
+  const allDerived = [...new Set([...resolved.keys(), ...conflicts.keys()])]
+    .filter(p => DERIVED_UPSTREAMS.has(p));
+
+  const inDegree = new Map<Prop<any>, number>();
+  const dependents = new Map<Prop<any>, Prop<any>[]>();
+  const derivedSet = new Set(allDerived);
+
+  for (const p of allDerived) {
+    inDegree.set(p, 0);
+  }
+
+  for (const p of allDerived) {
+    for (const u of DERIVED_UPSTREAMS.get(p)!) {
+      if (!derivedSet.has(u)) continue;
+      if (!dependents.has(u)) dependents.set(u, []);
+      dependents.get(u)!.push(p);
+      inDegree.set(p, inDegree.get(p)! + 1);
+    }
+  }
+
+  const queue = allDerived.filter(p => inDegree.get(p) === 0);
+  const sorted: Prop<any>[] = [];
+
+  while (queue.length) {
+    const p = queue.shift()!;
+    sorted.push(p);
+    for (const dep of (dependents.get(p) ?? [])) {
+      const next = inDegree.get(dep)! - 1;
+      inDegree.set(dep, next);
+      if (next === 0) queue.push(dep);
+    }
+  }
+
+  if (sorted.length < allDerived.length) {
+    throw new Error("[blooky-fp] lift: circular dependency detected (invariant violation)");
+  }
+
+  // 4. トポロジカル順に再評価し、conflicts から除去する
+  for (const p of sorted) {
+    const upstreams = DERIVED_UPSTREAMS.get(p)!;
+    const fn = DERIVED_FN.get(p)!;
+    const values = upstreams.map(u => resolved.has(u) ? resolved.get(u) : u());
+    resolved.set(p, fn(values));
+    conflicts.delete(p); // derived prop のコンフリクトは topology 解決で確定する
+  }
+
+  return { plan: resolved, conflicts };
+}
+
+/**
  * PropPlanの競合を収集する
  * @param plan 
  * @param equals 
@@ -402,7 +499,7 @@ const commit = (plan: PropPlan<any>[]) => plan.forEach(([p,v]) => PROP_UPDATE.ge
 
 export {
     // Core
-    drip, conflict, commit, stream,
+    drip, concatenate, conflict, commit, stream,
     // Stream operators
     merge, junction, map, filter,
     // Prop creators

@@ -35,7 +35,7 @@ export const getFxElementStates = (el: HTMLElement): CustomStateSet | undefined 
 
 // ---- Stylesheets (dev-only visual aid) ----
 
-const devtoolsCSSPath = ["./blooky-devtools-nested.css", "./blooky-devtools-theme.css"];
+const devtoolsCSSPath = []//["./blooky-devtools-nested.css", "./blooky-devtools-theme.css"];
 
 /**
  * Load style sheets for EffectElement projections.
@@ -309,6 +309,12 @@ export const stepToFxState = (
       case "active": {
         setFxState(el, "running", true);
         setFxState(el, "paused", false);
+        if(el.tagName.toLowerCase() === "fx-loop") {
+          [...el.getElementsByTagName("*")].forEach((e)=>{
+            console.log(e);
+            clearFxStates(e as FxEffectElement, ["running","paused","completed","failed","cancelled","terminated"]);
+          })
+        }
         break;
       }
       case "suspend": {

@@ -72,33 +72,18 @@ const runParallel: StructureRunner = async (note, _ctx, deps) => {
 
 const runRace: StructureRunner = async (note, _ctx, deps) => {
   if (note.type !== "race") return undefined;
-
   const childTokens = note.steps.map(() => createChildCancelToken(_ctx.cancelToken));
   let settled = false;
-
-  const wrapped = note.steps.map((child, i) =>
-    deps
-      .runChild(child, undefined, childTokens[i])
-      .then((v) => {
-        if (!settled) {
-          settled = true;
-          childTokens.forEach((t, j) => {
-            if (j !== i) t.cancel("race_loser");
-          });
-        }
-        return v;
-      })
-      .catch((e) => {
-        if (!settled) {
-          settled = true;
-          childTokens.forEach((t, j) => {
-            if (j !== i) t.cancel("race_loser");
-          });
-        }
-        throw e;
-      })
-  );
-
+  const settle_fn = (winner_number:number) => () => {
+    if(!settled) {
+      settled = true;
+      childTokens.forEach((t, j) => {
+        if (j !== winner_number) t.cancel("race_loser");
+      });
+    }
+  }
+  const wrapped = note.steps.map((child, i) => 
+    deps.runChild(child, undefined, childTokens[i]).finally(settle_fn(i)));
   return Promise.race(wrapped);
 };
 

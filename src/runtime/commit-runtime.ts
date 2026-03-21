@@ -1,4 +1,4 @@
-import { commit } from "../blooky-fp";
+import { commit, concatenate } from "../blooky-fp";
 import type { FVRuntime, ObservedDripPlan } from "../blooky-fv";
 import type { DripPlan, DripperStream, Prop, PropPlan } from "../blooky-fp-types";
 import type { TickScheduler } from "./scheduler";
@@ -53,32 +53,6 @@ export type CommitRuntime = FVRuntime & {
   observeTick: (f: TickObserver) => () => void;
   unobserveTick: (f: TickObserver) => void;
   setFatalHandler: (handler: FatalHandler) => void;
-};
-
-const normalizePlan = (
-  plan: PropPlan<any>[],
-  equals: Eq = Object.is
-): { commitPlanMap: Map<Prop<any>, any>; conflicts: Map<Prop<any>, any[]> } => {
-  const commitPlanMap = new Map<Prop<any>, any>();
-  const conflicts = new Map<Prop<any>, any[]>();
-
-  for (const [p, v] of plan) {
-    if (!commitPlanMap.has(p)) {
-      commitPlanMap.set(p, v);
-      continue;
-    }
-
-    const prev = commitPlanMap.get(p);
-    if (equals(prev, v)) {
-      continue;
-    }
-
-    const arr = conflicts.get(p);
-    if (arr) arr.push(v);
-    else conflicts.set(p, [prev, v]);
-  }
-
-  return { commitPlanMap, conflicts };
 };
 
 export const createCommitRuntime = (deps: {
@@ -182,7 +156,8 @@ export const createCommitRuntime = (deps: {
         return;
       }
 
-      const { commitPlanMap, conflicts } = normalizePlan(builtPlan.commitIntent);
+      const {plan,conflicts} = concatenate(builtPlan.commitIntent);
+
       if (conflicts.size) {
         const err = new CommitConflictError(conflicts);
         reservations.forEach(({ reject }) => reject(err));
@@ -190,16 +165,16 @@ export const createCommitRuntime = (deps: {
         return;
       }
 
-      notifyAllObservers(commitPlanMap);
+      notifyAllObservers(plan);
 
       try {
-        commit([...commitPlanMap]);
+        commit([...plan]);
       } catch (err) {
         enterFatalState(new CommitExecutionError(err));
         return;
       }
 
-      reservations.forEach(({ resolve }) => resolve(commitPlanMap));
+      reservations.forEach(({ resolve }) => resolve(plan));
       if (tickQueue.length || deps.shouldKeepAlive?.()) advanceClock();
     });
   };
