@@ -97,7 +97,7 @@ export type FxYieldNote = FxNoteBase<"yield", {
   input?: FxRef<any>;
   done?: FxRef<DripperStream<any>>;
 }>;
-export type FxFlowNote = FxNoteBase<"context", { 
+export type FxFlowNote = FxNoteBase<"flow", { 
   context: AppContext; 
   child: FxNote; 
 }>;
@@ -191,13 +191,9 @@ export interface RunnerProfile {
 
 }
 
-
-export type ConditionRef = unknown;
-
 export type SemanticEvent =
   | { type: "result"; value: unknown }
   | { type: "suspend"; until: SuspendUntil }
-//  | { type: "suspend"; until: ConditionRef }
   | { type: "effect"; ref: unknown }
   | { type: "terminate"; value?: unknown };
 
@@ -242,12 +238,18 @@ export type RunChild = (
 ) => Promise<unknown>;
 export type StepSink = (step: PerformanceStepDraft) => void | Promise<void>;
 
-export type StructureDeps = {
-  runChild: RunChild;
-  profile: RunnerProfile;
-};
+export type StructureEvent =
+  | { type: "run";              note: FxNote; appContext?: AppContext; cancelToken?: CancelToken }
+  | { type: "run-all";          notes: FxNote[] }
+  | { type: "run-race";         notes: FxNote[]; childTokens: CancelToken[] }
+  | { type: "resolve-selection"; note: Extract<FxNote, { type: "condition" | "switch" }> }
+  | { type: "iterate", iteration: number };
 
-export type StructureRunner = (note: FxNote, ctx: ExecutionContext, deps: StructureDeps) => Promise<unknown>;
+// AsyncGenerator<yield型, return型, next型>
+export type StructureRunner = (
+  note: FxNote,
+  ctx: ExecutionContext
+) => AsyncGenerator<StructureEvent, unknown, unknown>;
 
 export interface Registry {
   semantics: Map<FxNote["type"], Semantics>;

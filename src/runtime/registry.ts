@@ -1,5 +1,5 @@
 import { bind } from "../blooky-context";
-import type { Registry, Semantics, StructureRunner, YieldConditionRef } from "../blooky-fx-types";
+import type { FxNote, Registry, Semantics, StructureEvent, StructureRunner, YieldConditionRef } from "../blooky-fx-types";
 import type { CancelToken } from "../blooky-fx-types";
 import { Cancelled } from "./engine";
 
@@ -56,63 +56,59 @@ const semCall: Semantics = function* (note) {
   yield { type: "effect", ref: { kind: "call", action: note.action, input: note.input, done: note.done } };
 };
 
-const runSequence: StructureRunner = async (note, _ctx, deps) => {
+const runSequence: StructureRunner = async function* (note, _ctx) {
   if (note.type !== "sequence") return undefined;
   let last: unknown = undefined;
   for (const child of note.steps) {
-    last = await deps.runChild(child);
+    last = yield { type: "run", note: child };
   }
   return last;
 };
 
-const runParallel: StructureRunner = async (note, _ctx, deps) => {
+const runParallel: StructureRunner = async function* (note, _ctx) {
   if (note.type !== "parallel") return undefined;
-  return Promise.all(note.steps.map((n) => deps.runChild(n)));
+  return yield { type: "run-all", notes: note.steps };
 };
 
-const runRace: StructureRunner = async (note, _ctx, deps) => {
+const runRace: StructureRunner = async function* (note, ctx) {
   if (note.type !== "race") return undefined;
-  const childTokens = note.steps.map(() => createChildCancelToken(_ctx.cancelToken));
-  let settled = false;
-  const settle_fn = (winner_number:number) => () => {
-    if(!settled) {
-      settled = true;
-      childTokens.forEach((t, j) => {
-        if (j !== winner_number) t.cancel("race_loser");
-      });
-    }
-  }
-  const wrapped = note.steps.map((child, i) => 
-    deps.runChild(child, undefined, childTokens[i]).finally(settle_fn(i)));
-  return Promise.race(wrapped);
+  const childTokens = note.steps.map(() => createChildCancelToken(ctx.cancelToken));
+  return yield { type: "run-race", notes: note.steps, childTokens };
 };
 
-const runLoop: StructureRunner = async (note, ctx, deps) => {
+const runLoop: StructureRunner = async function* (note, ctx) {
   if (note.type !== "loop") return undefined;
+  const cond = ctx.config.resolver(note.cond as any, ctx);
   let i = 0;
   let last: unknown = undefined;
-  const p = ctx.config.resolver(note.cond as any, ctx);
-  while (p()) {
-    if (ctx.cancelToken.cancelled()) {
-      throw new Cancelled(ctx.cancelToken.reason ?? "user");
-    }
+  while (cond()) {
+    if (ctx.cancelToken.cancelled()) throw new Cancelled(ctx.cancelToken.reason ?? "user");
     if (note.maxIterations !== undefined && i >= note.maxIterations) break;
-    i += 1;
-    last = await deps.runChild(note.body);
+    if (i > 0) yield { type: "iterate", iteration: i };
+    i++;
+    last = yield { type: "run", note: note.body };
   }
   return last;
 };
 
-const runCondition: StructureRunner = async (note, ctx, deps) => {
+const runCondition: StructureRunner = async function* (note, _ctx) {
   if (note.type !== "condition") return undefined;
-  const selected = deps.profile.resolveSelection(note, ctx);
-  return selected ? deps.runChild(selected) : undefined;
+  const selected = yield { type: "resolve-selection", note } as StructureEvent;
+  if (!selected) return undefined;
+  return yield { type: "run", note: selected as FxNote };
 };
 
-const runSwitch: StructureRunner = async (note, ctx, deps) => {
+const runSwitch: StructureRunner = async function* (note, _ctx) {
   if (note.type !== "switch") return undefined;
-  const selected = deps.profile.resolveSelection(note, ctx);
-  return selected ? deps.runChild(selected) : undefined;
+  const selected = yield { type: "resolve-selection", note } as StructureEvent;
+  if (!selected) return undefined;
+  return yield { type: "run", note: selected as FxNote };
+};
+
+const runFlow: StructureRunner = async function* (note, ctx) {
+  if (note.type !== "flow") return undefined;
+  const scoped = overlayContext(ctx.appContext, note.context);
+  return yield { type: "run", note: note.child, appContext: scoped };
 };
 
 const overlayContext = (
@@ -140,12 +136,6 @@ const overlayContext = (
     });
   }
   return scoped as Record<string, any>;
-};
-
-const runContext: StructureRunner = async (note, ctx, deps) => {
-  if (note.type !== "context") return undefined;
-  const scoped = overlayContext(ctx.appContext, note.context);
-  return deps.runChild(note.child, scoped);
 };
 
 function createChildCancelToken(parent?: CancelToken): CancelToken {
@@ -178,5 +168,5 @@ export const registerDefault = (reg: Registry) => {
   reg.structures.set("loop", runLoop);
   reg.structures.set("condition", runCondition);
   reg.structures.set("switch", runSwitch);
-  reg.structures.set("context", runContext);
+  reg.structures.set("flow", runFlow);
 };

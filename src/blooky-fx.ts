@@ -122,7 +122,7 @@ export const fx = {
   }),
   yield: (note: Omit<FxYieldNote, "type">): FxYieldNote => ({ type: "yield", ...note }),
   flow: (context: AppContext, child: FxNote, id?: string): FxFlowNote => ({
-    type: "context",
+    type: "flow",
     context,
     child,
     ...(id ? { id } : {}),

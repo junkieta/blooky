@@ -16,7 +16,7 @@ import type {
   StepSink,
   RunnerProfile,
   FxCallAction,
-  BridgeEffect
+  StructureEvent
 } from "../blooky-fx-types";
 import { Prop } from "../blooky-fp-types";
 import { decode, bind } from "../blooky-context";
@@ -225,7 +225,7 @@ const validateScore = (note: unknown, path: string): void => {
         failValidation("yield.score is required", path, note);
       }
       return;
-    case "context":
+    case "flow":
       if (!typed.context || typeof typed.context !== "object" || Array.isArray(typed.context)) {
         failValidation("context.context must be an object", path, note);
       }
@@ -271,6 +271,8 @@ const resolveExitEffect = (note: FxNote, ctx: ExecutionContext, result: unknown)
   return { kind: "done", dripper, value };
 };
 
+
+
 export function execute(args: {
   prepared: PreparedFx;
   registry: Registry;
@@ -283,14 +285,14 @@ export function execute(args: {
   const rootCancelToken = createCancelToken();
 
   let stepCount = 0;
-  const stepDripper = stream<PerformanceStep[]>();
 
   const run = async (
     note: FxNote,
     appContext: Record<string, any>,
     cancelToken: CancelToken
   ): Promise<unknown> => {
-    
+
+    const fsm = new RunnerFSM();
     const ctx: ExecutionContext = {
       note,
       cancelToken,
@@ -298,9 +300,8 @@ export function execute(args: {
       appContext,
       executionId: execution_id,
     };
-
     const note_id = resolveNoteId(note);
-    const emitStep = onStep
+    const emit = onStep
       ? async (draft: PerformanceStepDraft) => await onStep({
           ...draft,
           note_id,
@@ -309,38 +310,47 @@ export function execute(args: {
         })
       : async () => {};
 
-    const fsm = new RunnerFSM();
-
-    await emitStep({ phase: "enter", });
-    await emitStep({ phase: "active", payload: { reason: "entered" }, });
-    fsm.onEnter();
-    fsm.onActive();
+    const depends: DispatchDepends = { profile, ctx, cancelToken, emit, };
 
     try {
       if (cancelToken.cancelled()) {
         throw new Cancelled(cancelToken.reason ?? "user");
       }
+      await emit({ phase: "enter", });
+      await emit({ phase: "active", payload: { reason: "entered" }, });
+      fsm.onEnter();
+      fsm.onActive();
 
       const struct = registry.structures.get(note.type);
       if (struct) {
-        const value = await struct(note, ctx, {
-          runChild: (subnote, _appCtx, _cancelToken) => run(subnote, _appCtx ?? ctx.appContext, _cancelToken ?? cancelToken),
-          profile
-        });
-
+        const gen = struct(note, ctx);
+        let value: unknown;
+        let cursor = await gen.next();
+        while(!cursor.done) {
+          const ev = cursor.value as StructureEvent;
+          value = await dispatchStructureEvent(ev, run, depends);
+          if(ev.type === "iterate") {
+            await emit({ phase: "active", payload: { iteration: value } });
+            if(note.id) config.idSlots["#"+note.id] = value;
+          }
+          cursor = await gen.next(value);
+        }
         fsm.onExit();
-        await emitStep({ phase: "exit", payload: { result: value }, effect: resolveExitEffect(note, ctx, value), });
-        if(note.id) config.idSlots["#"+note.id] = value;
+        await emit({
+          phase: "exit",
+          payload: { result: value },
+          effect: resolveExitEffect(note, ctx, value),
+        });
+        if (note.id) config.idSlots["#" + note.id] = value;
         return value;
       }
 
       const sem = registry.semantics.get(note.type);
       if (!sem) throw new Error(`No semantics for ${note.type}`);
-
       let final: unknown = undefined;
       for (const ev of sem(note, ctx)) {
         fsm.onEvent(ev);
-        const r = await dispatchSemEvent(ev, { profile, ctx, cancelToken, emit: emitStep, });
+        const r = await dispatchSemEvent(ev, depends);
         if (ev.type === "suspend") {
           fsm.onResume();
           fsm.onActive();
@@ -354,7 +364,7 @@ export function execute(args: {
       }
 
       fsm.onExit();
-      await emitStep({
+      await emit({
         phase: "exit",
         payload: { result: final },
         effect: resolveExitEffect(note, ctx, final),
@@ -365,7 +375,7 @@ export function execute(args: {
     } catch (e) {
       if (e instanceof Terminated) {
         fsm.onExit();
-        await emitStep({
+        await emit({
           phase: "exit",
           payload: { result: e.value, terminated: true },
           effect: resolveExitEffect(note, ctx, e.value),
@@ -387,7 +397,7 @@ export function execute(args: {
       }
       
       fsm.onCancel();
-      await emitStep({ phase: "cancel", payload: { reason }, });
+      await emit({ phase: "cancel", payload: { reason }, });
       throw err;
     }
   };
@@ -419,6 +429,8 @@ export function execute(args: {
   };
 }
 
+
+
 function flatten(n: FxNote): FxNote[] {
   switch (n.type) {
     case "sequence":
@@ -435,7 +447,7 @@ function flatten(n: FxNote): FxNote[] {
     case "switch":
       return [n, ...[...n.cases.values()].flatMap(flatten), ...(n.default ? flatten(n.default) : [])];
 
-    case "context":
+    case "flow":
       return [n, ...flatten(n.child)];
 
     default:
@@ -457,14 +469,59 @@ export class Cancelled extends Error {
   }
 }
 
-export type DispatchDeps = {
+export type DispatchDepends = {
   profile: RunnerProfile;
   ctx: ExecutionContext;
   cancelToken: CancelToken;
   emit: StepSink;
 };
 
-const dispatchSemEvent = async (ev: SemanticEvent, deps: DispatchDeps) => {
+const dispatchStructureEvent = async (
+  ev: StructureEvent,
+  run: (note: FxNote, app: AppContext, cancel: CancelToken) => Promise<unknown>,
+  {ctx,profile}: DispatchDepends,
+) => {
+  let childResult: unknown;
+  switch (ev.type) {
+    case "run":
+      childResult = await run(
+        ev.note,
+        ev.appContext ?? ctx.appContext,
+        ev.cancelToken ?? ctx.cancelToken
+      );
+      break;
+    case "run-all":
+      childResult = await Promise.all(
+        ev.notes.map(n => run(n, ctx.appContext, ctx.cancelToken))
+      );
+      break;
+    case "run-race": {
+      let settled = false;
+      const settle_fn = (winner_number:number) => () => {
+        if(!settled) {
+          settled = true;
+          ev.childTokens.forEach((t, j) => {
+            if (j !== winner_number) t.cancel("race_loser");
+          });
+        }
+      }
+      const wrapped = ev.notes.map((child, i) =>
+        run(child, ctx.appContext, ev.childTokens[i]).finally(settle_fn(i))
+      );
+      childResult = await Promise.race(wrapped);
+      break;
+    }
+    case "resolve-selection":
+      childResult = profile.resolveSelection(ev.note, ctx);
+      break;
+    case "iterate":
+      childResult = ev.iteration;
+      break;
+  }
+  return childResult;
+};
+
+const dispatchSemEvent = async (ev: SemanticEvent, deps: DispatchDepends) => {
   if (deps.cancelToken.cancelled()) throw new Cancelled(deps.cancelToken.reason ?? "user");
 
   switch (ev.type) {

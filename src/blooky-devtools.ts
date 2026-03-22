@@ -311,7 +311,6 @@ export const stepToFxState = (
         setFxState(el, "paused", false);
         if(el.tagName.toLowerCase() === "fx-loop") {
           [...el.getElementsByTagName("*")].forEach((e)=>{
-            console.log(e);
             clearFxStates(e as FxEffectElement, ["running","paused","completed","failed","cancelled","terminated"]);
           })
         }
