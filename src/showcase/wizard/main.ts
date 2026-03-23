@@ -30,7 +30,6 @@ fxdom.defineEffectElements(EffectElementTagNameMap);
 
 type Phase = "email" | "plan" | "confirm" | "done-free" | "done-pro" | "api-ready";
 
-const phaseNames: Phase[] = ["email","plan","confirm","done-free","done-pro","api-ready"];
 const restart$ = stream<void>();
 
 // restart$ はフェーズを "email" に戻す
@@ -38,10 +37,8 @@ const finishPhaseAction$ = stream<Event>();
 const endOfPhase$ = map<Event,Phase>((e)=>(e.target as HTMLButtonElement).value as Phase)(finishPhaseAction$);
 const doneConfirmResult$ = stream<"done-free"|"done-pro">();
 const $phase = hold<Phase>("email")(merge<Phase>([
-  map<Phase,Phase>((p) => phaseNames[phaseNames.indexOf(p)+1] ?? phaseNames[0])(
-    merge([endOfPhase$,doneConfirmResult$])
-  ),
-  map((): Phase => phaseNames[0])(restart$),
+  map<Phase,Phase>(getNextPhase)(merge([endOfPhase$,doneConfirmResult$])),
+  map((): Phase => "email")(restart$),
 ]))
 
 // フォーム値
@@ -53,14 +50,26 @@ const $email = hold("")(merge([
 
 const planSelect$ = stream<MouseEvent>();
 const $plan = hold("free")(merge([
-  map<Event,string>((e)=> {
-    return (e.target as HTMLElement).closest("*[id]")!.getAttribute("data-plan") ?? "free"
-  })(planSelect$),
+  map<Event,string>((e)=> (e.target as HTMLElement).closest("*[id]")!.getAttribute("data-plan") ?? "free")(planSelect$),
   map((): string => "free")(restart$),
 ]));
 
-const $emailEnd = remap((p)=> p !== "email"  )($phase);
-const $planEnd = remap((p)=> p !== "plan"   )($phase);
+
+function getNextPhase (current: Phase) : Phase {
+  switch(current) {
+    case "email": return "plan";
+    case "plan": return "confirm";
+    case "confirm": return $plan() === "pro" ? "done-pro" : "done-free";
+    case "done-pro": return "api-ready";
+    case "done-free":
+    case "api-ready": return "email";
+  }
+  return "email";
+}
+
+
+const $emailEnd = remap((p)=> p !== "email")($phase);
+const $planEnd = remap((p)=> p !== "plan")($phase);
 const $confirmEnd = remap((p)=> p !== "confirm")($phase);
 
 const log = (msg: unknown) => console.log("[wizard]", msg);
@@ -70,14 +79,17 @@ const log = (msg: unknown) => console.log("[wizard]", msg);
 const fxContext = {
   $email, $plan, doneConfirmResult$,
   emailInput$, planSelect$,
-  $emailEnd, $planEnd, $confirmEnd
+  $emailEnd, $planEnd, $confirmEnd,
+  String, log
 };
 
 // ─── 4. Score ─────────────────────────────────────────────────────────────
  
 const WizardEffect = prime(({
   $email, $plan, doneConfirmResult$,
-  $emailEnd, $planEnd, $confirmEnd
+  $emailEnd, $planEnd, $confirmEnd,
+  String,
+  log
 }: typeof fxContext) => ({
   "fx-effect": [
     {
@@ -85,20 +97,14 @@ const WizardEffect = prime(({
         { "fx-wait": jshtml.$({ until: $emailEnd }) },
         { "fx-wait": jshtml.$({ until: $planEnd }) },
         { "fx-wait": jshtml.$({ until: $confirmEnd }) },
+        { "fx-call": jshtml.$({ action: log, input: $plan }) },
         {
           "fx-switch": [
+            { "fx-call": jshtml.$({ slot: "free", action: "log", input: $plan }) },
             {
               "fx-sequence": [
-                { "fx-call": jshtml.$({ action: String, input: "done-free", done: doneConfirmResult$ }) },
-                { "fx-call": jshtml.$({ action: "log",    id: "call-log-free" }) },
-              ],
-              $: { slot: "free" },
-            },
-            {
-              "fx-sequence": [
-                { "fx-call": jshtml.$({ action: String, input: "done-pro", done: doneConfirmResult$ }) },
-                { "fx-call": jshtml.$({ action: "log",        id: "call-log-pro" }) },
-                { "fx-wait": jshtml.$({ timer: 1500,           id: "wait-api"     }) },
+                { "fx-call": jshtml.$({ action: "log", input: "call-pro" }) },
+                { "fx-wait": jshtml.$({ timer: 1500,   id: "wait-api"     }) },
                 { "fx-call": jshtml.$({ action: String, input: "api-ready", done: doneConfirmResult$ }) },
                 { "fx-call": jshtml.$({ action: "goApiReady",  id: "call-api-key" }) },
               ],
@@ -137,10 +143,38 @@ const $freePlanClass = remap((p: string) => "plan-card" + (p === "free" ? " sele
 const $proPlanClass  = remap((p: string) => "plan-card" + (p === "pro"  ? " selected" : ""))($plan);
 
 // 確認画面のプラン表示
-const $planLabel = remap((p: string) => p === "pro" ? "Pro  ¥2,980/月" : "Free  ¥0/月")($plan);
+const $planLabel = remap((p: string) => p === "pro" ? "Pro ¥2,980/月" : "Free  ¥0/月")($plan);
 const $planLabelCls = remap((p: string) => "summary-val " + (p === "pro" ? "plan-pro" : "plan-free"))($plan);
 
 // ステップカードの内容（$phase から派生）
+
+const nextStepBtn = prime(({
+  $phase,
+  finishPhaseAction$
+}:{
+  $phase: Prop<Phase>
+  finishPhaseAction$: Dripper<Event>
+})=>({
+  button: "Next →", 
+  $: {
+    type : "button",
+    class: "btn btn-primary",
+    value: $phase,
+    onclick: (e: Event) => {
+      const f = (e.target as HTMLButtonElement).form;
+      if(f && !f.checkValidity()) {
+        f.reportValidity();
+      } else {
+        const next = getNextPhase($phase());
+        clock.submitPlan({ dripper: finishPhaseAction$, value: e }).then(()=>{
+          [...f.children].filter((n)=>n.nodeName === "FIELDSET").forEach((n)=>{
+            (n as HTMLFieldSetElement).style.display = n.className === next ? "flex" : "none";
+          })
+        })
+      }
+    }
+  }
+}));
 
 const emailCard = prime(({emailInput$}:{emailInput$:Dripper<Event>})=>({
   fieldset: [
@@ -148,13 +182,13 @@ const emailCard = prime(({emailInput$}:{emailInput$:Dripper<Event>})=>({
     {
       div: [
         { label: "email", $: { for: "email-inp" } },
-        { input: jshtml.$({ type: "email", id: "email-inp", placeholder: "you@example.com", required: true, oninput: emailInput$ }) },
+        { input: jshtml.$({ type: "email", id: "email-inp", required: true, placeholder: "you@example.com", oninput: emailInput$ }) },
       ],
       $: { class: "field" },
     },
-    { button: "Next →", $: { class: "btn btn-primary", value: "email", onclick: finishPhaseAction$ } },
+    nextStepBtn({ $phase, finishPhaseAction$ }),
   ],
-  $: { class: "step-inner" },
+  $: { class: "email" },
 }));
 
 const planCard = prime(({planSelect$,$freePlanClass,$proPlanClass}:{
@@ -183,9 +217,9 @@ const planCard = prime(({planSelect$,$freePlanClass,$proPlanClass}:{
       ],
       $: { onclick: planSelect$, class: "plan-cards" },
     },
-    { button: "Next →", $: { class: "btn btn-primary", value: "plan", onclick: finishPhaseAction$ } },
+    nextStepBtn({ $phase, finishPhaseAction$ }),
   ],
-  $: { class: "step-inner" },
+  $: { class: "plan" },
 }));
 
 const confirmCard = prime(({
@@ -216,45 +250,52 @@ const confirmCard = prime(({
       ],
       $: { class: "summary" },
     },
-    { button: "登録する ✓",
-      $: {
-        class: "btn btn-primary",
-        value: "confirm",
-        onclick: ()=> {
-          clock.submitPlan({ dripper: doneConfirmResult$, value: $plan() === "pro" ? "done-pro" : "done-free" });
-        }
-      }
+    nextStepBtn({ $phase, finishPhaseAction$ }),
+  ],
+  $: { class: "confirm" },
+}));
+
+const doneCard = prime(({ $doneTitle, $doneSubTitle }:{
+  $doneTitle: Prop<JSHTMLNodeSource>
+  $doneSubTitle: Prop<JSHTMLNodeSource>
+})=>({
+  fieldset: [
+    { legend: [
+      { div: $doneTitle, $: { class: "done-title" } }          
+    ] 
     },
+    { div: $doneSubTitle,   $: { class: "done-sub" } },
+    { button: "↺ 最初から", $: { class: "btn btn-restart", value: "restart", onclick: restart } },
   ],
   $: { class: "step-inner" },
 }));
 
-const doneCard = (title: string, sub: JSHTMLNodeSource) =>
-  ({
-    fieldset: [
-      { legend: [
-        { div: title, $: { class: "done-title" } }          
-      ] 
-      },
-      { div: sub,   $: { class: "done-sub" } },
-      { button: "↺ 最初から", $: { class: "btn btn-restart", value: "restart", onclick: restart } },
-    ],
-    $: { class: "step-inner" },
-  });
+const $doneTitle = remap<Phase,string>((phase)=>{
+  if(phase === "done-free")
+    return "✅ 登録完了！";
+  if(phase === "done-pro")
+    return "🚀 Pro へようこそ！";
+  return "🔑 API キー発行完了！";
+})($phase);
 
-const doneFreeCard    = doneCard("✅ 登録完了！",           [$email,`に確認メールを送りました。`]);
-const doneProCard     = doneCard("🚀 Pro へようこそ！",     "API キーを発行中…");
-const doneApiReadyCard = doneCard("🔑 API キー発行完了！", "ダッシュボードからご確認ください。");
+const $doneSubTitle = remap<Phase,JSHTMLNodeSource>((phase)=>{
+  if(phase === "done-free")
+    return [$email,`に確認メールを送りました。`]
+  if(phase === "done-pro")
+    return "API キーを発行中…";
+  return "ダッシュボードからご確認ください。";
+})($phase);
 
 const stepCardForm = {
   form: [
     emailCard({ emailInput$ }),
     planCard({ planSelect$, $freePlanClass, $proPlanClass }),
     confirmCard({ $email, $planLabel, $planLabelCls }),
-    doneFreeCard,
-    doneProCard,
-    doneApiReadyCard
-  ],
+    doneCard({ $doneTitle, $doneSubTitle })
+  ].map((element, i)=>{
+    (element as HTMLElement).style.display = i ? "none" : "flex";
+    return element;
+  }),
   $: {
     onsubmit: (e: Event) => {
       e.preventDefault();
@@ -262,16 +303,6 @@ const stepCardForm = {
   }
 }
 
-document.documentElement.querySelector("head").append(jshtml(
-{ style: [
-  `form>fieldset { display: none !important; }
-   form>fieldset:nth-child(`, remap<Phase,number>((p)=>phaseToStep[p]+1)($phase), `) { display: flex !important; }`
-  ],
-  $: {
-    type: "text/css"
-  }
-}
-));
 
 // ─── Restart ───────────────────────────────────────────────────────────
 
@@ -302,7 +333,7 @@ const mo = new MutationObserver((records) => {
     .flatMap((r) => [...r.addedNodes])
     .flatMap((n): Element[] =>
       n instanceof Element
-        ? n.tagName.toLowerCase() === "fx-effect"
+        ? n.tagName.toLowerCase() === "fx-effect" 
           ? [n]
           : [...n.querySelectorAll("fx-effect")]
         : []
@@ -379,6 +410,7 @@ const buildScorePanel = () =>
 
 // ─── 11. Styles ──────────────────────────────────────────────────────────
 
+
 const STYLES = `
   @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;600&display=swap');
 
@@ -423,48 +455,6 @@ const STYLES = `
   .step-item.done   .step-num { background: rgba(52,211,153,0.1); }
   .step-connector { flex: 1; height: 1px; background: var(--border); margin: 0 0.5rem; min-width: 0.75rem; max-width: 2.5rem; }
 
-form {
-  background: var(--bg-inset);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 1.5rem;
-  min-height: 160px;
-}
-
-fieldset {
-  border: none;
-  padding: 0;
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-legend {
-  font-family: var(--mono);
-  font-size: 0.67rem;
-  color: var(--text-dim);
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  padding: 0;
-  margin-bottom: 0.5rem;
-  float: left;
-  width: 100%;
-}
-
-/* done カードの legend は icon + title を横並びにする */
-legend > .done-icon {
-  font-size: 1.6rem;
-  line-height: 1;
-}
-
-legend > .done-title {
-  font-family: var(--mono);
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: var(--green);
-  margin-top: 0.3rem;
-}
 
   .field { display: flex; flex-direction: column; gap: 0.4rem; }
   .field label { font-family: var(--mono); font-size: 0.65rem; color: var(--text-mid); }
@@ -536,6 +526,58 @@ legend > .done-title {
     .showcase-main { grid-template-columns: 1fr; }
     .panel-score { border-right: none; border-bottom: 1px solid var(--border); }
   }
+
+
+form {
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1.5rem;
+  min-height: 160px;
+}
+
+fieldset {
+  border: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+legend {
+  font-family: var(--mono);
+  font-size: 0.67rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  padding: 0;
+  margin-bottom: 0.5rem;
+  float: left;
+  width: 100%;
+}
+
+/* done カードの legend は icon + title を横並びにする */
+legend > .done-icon {
+  font-size: 1.6rem;
+  line-height: 1;
+}
+
+legend > .done-title {
+  font-family: var(--mono);
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--green);
+  margin-top: 0.3rem;
+}  
+
+form > fieldset {
+  display: none;
+}
+
+form > fieldset.active {
+  display: flex;
+}
 `;
 
 // ─── 12. Layout & Mount ──────────────────────────────────────────────────
