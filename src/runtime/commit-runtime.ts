@@ -1,10 +1,8 @@
 import { commit, concatenate } from "../blooky-fp";
 import type { FVRuntime, ObservedCommitPlan } from "../blooky-fv";
-import type { DripPlan, DripperStream, Prop, PropPlan } from "../blooky-fp-types";
+import type { CommitPlanMap, DripPlan, DripperStream, Prop, PropPlan } from "../blooky-fp-types";
 import type { TickScheduler } from "./scheduler";
 import type { TickGate } from "./tick-gate";
-
-export type CommitPlanMap = Map<Prop<any>, any>;
 
 export type ObservedTick = {
   tick_index: number;

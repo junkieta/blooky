@@ -1,9 +1,8 @@
 import { stream, hold, vertex } from "../blooky-fp";
 import type { FVRuntime } from "../blooky-fv";
-import type { DripperStream, Prop, Vertex } from "../blooky-fp-types";
+import type { CommitPlanMap, DripperStream, Prop, Vertex } from "../blooky-fp-types";
 import {
   CommitConflictError,
-  CommitPlanMap,
   CommitExecutionError,
   CommitRuntime,
   DripConflictError,

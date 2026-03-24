@@ -4,6 +4,8 @@
  */
 import { 
     CommitPlan,
+  CommitPlanMap,
+  ConflictPropMap,
   DripPlan, DripperStream, FilterStream, FlowingState,
   MappedStream, MergedStream, Prop, PropPlan, Stream, Vertex 
 } from "./blooky-fp-types";
@@ -400,13 +402,13 @@ const drip = <A>([dripper,value]: DripPlan<A>) : CommitPlan => flowLazy(value)(d
  * 同時生成のCommitPlanを合成する。conflictは同値の破棄とliftの遅延による解決が試みられる。
  * @param plans 
  * @param is 
- * @returns [正常なCommitPlanMap, Conflict判定されたCommitPlanMap]のタプル
+ * @returns 
  */
-const concatenate = (plans: CommitPlan, is: (a:unknown,b:unknown)=>boolean = Object.is) : [Map<Prop<any>, any>,Map<Prop<any>, any>] => {
+const concatenate = (plans: CommitPlan, is: (a:unknown,b:unknown)=>boolean = Object.is) : [CommitPlanMap,ConflictPropMap] => {
     
   // dedup + conflict 検出（derived も含めて全部処理、早期リターンしない）
-  const resolved = new Map<Prop<any>, any>();
-  const conflicts = new Map<Prop<any>, any[]>();
+  const resolved: CommitPlanMap = new Map<Prop<any>, any>();
+  const conflicts: ConflictPropMap = new Map<Prop<any>, any[]>();
 
   for (const [p, v] of plans) {
     if (!resolved.has(p)) {
