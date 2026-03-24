@@ -492,158 +492,12 @@ const buildScorePanel = () =>
 
 // ── CSS ───────────────────────────────────────────────────────────────────
 
-const STYLES = `
-  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;600&display=swap');
 
-  :root {
-    --bg:       #0d0f12;  --bg-panel: #13161b;  --bg-inset: #0a0c0f;
-    --border:   #222630;  --text:     #c8cdd8;  --text-dim: #4a5068;
-    --text-mid: #7a83a0;  --green:    #34d399;  --amber:    #fbbf24;
-    --blue:     #60a5fa;  --purple:   #a78bfa;  --red:      #f87171;
-    --mono: 'IBM Plex Mono', monospace;
-    --sans: 'IBM Plex Sans', sans-serif;
-  }
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 14px; line-height: 1.6; min-height: 100vh; }
+const styleElement = document.createElement("style");
+fetch("/blooky-showcase-basic.css")
+  .then((response)=>response.text())
+  .then((textContent)=>styleElement.textContent = textContent);
 
-  .showcase { display: grid; grid-template-rows: auto 1fr auto; min-height: 100vh; }
-
-  .showcase-header { padding: 1.5rem 2.5rem; border-bottom: 1px solid var(--border); display: flex; align-items: baseline; gap: 1.5rem; }
-  .logo { font-family: var(--mono); font-size: 1.3rem; font-weight: 600; color: #fff; letter-spacing: -0.02em; }
-  .logo em { color: var(--green); font-style: normal; }
-  .tagline { font-family: var(--mono); font-size: 0.68rem; color: var(--text-dim); letter-spacing: 0.08em; text-transform: uppercase; }
-  .header-badge { margin-left: auto; font-family: var(--mono); font-size: 0.65rem; color: var(--text-dim); border: 1px solid var(--border); padding: 0.2em 0.65em; border-radius: 2px; }
-
-  .showcase-main { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid var(--border); }
-  .panel { padding: 1.75rem 2rem; display: flex; flex-direction: column; gap: 1rem; }
-  .panel-score { border-right: 1px solid var(--border); overflow: hidden; }
-  .panel-label { font-family: var(--mono); font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.14em; color: var(--text-dim); }
-  .panel-desc  { font-size: 0.78rem; color: var(--text-mid); line-height: 1.65; }
-
-  .score-code { background: var(--bg-inset); border: 1px solid var(--border); border-radius: 4px; padding: 1rem 1.2rem; font-family: var(--mono); font-size: 0.63rem; line-height: 1.85; overflow: auto; flex: 1; min-height: 0; }
-  .score-line { display: block; white-space: pre; }
-  .token.tag       { color: #7dd3fc; }
-  .token.attr-name { color: #a5f3fc; }
-  .token.attr-val  { color: #86efac; }
-  .token.punct     { color: var(--text-dim); }
-  .token.comment   { color: var(--text-dim); font-style: italic; }
-
-  .battle-wrap { position: relative; flex: 1; display: flex; flex-direction: column; gap: 0.7rem; min-height: 0; }
-
-  .enemy-card, .player-card {
-    background: var(--bg-inset); border: 1px solid var(--border); border-radius: 5px;
-    padding: 0.9rem 1.1rem; display: flex; flex-direction: column; gap: 0.6rem;
-  }
-  .enemy-header { display: flex; align-items: center; gap: 0.7rem; }
-  .enemy-sprite { font-size: 1.8rem; line-height: 1; }
-  .enemy-name   { font-family: var(--mono); font-size: 0.76rem; font-weight: 600; }
-  .turn-badge   { margin-left: auto; font-family: var(--mono); font-size: 0.6rem; color: var(--text-dim); border: 1px solid var(--border); padding: 0.1em 0.5em; border-radius: 2px; min-width: 3.5em; text-align: center; }
-  .player-name  { font-family: var(--mono); font-size: 0.73rem; font-weight: 600; }
-
-  .stat-row  { display: flex; flex-direction: column; gap: 0.25rem; }
-  .stat-head { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 0.62rem; }
-  .stat-key  { color: var(--text-dim); }
-  .stat-val  { color: var(--text-mid); }
-  .bar-track { height: 5px; background: var(--bg-panel); border-radius: 3px; overflow: hidden; border: 1px solid var(--border); }
-  .bar-fill  { height: 100%; border-radius: 3px; transition: width 0.4s ease, background-color 0.4s; }
-  .bar-mp    { background: #818cf8 !important; }
-
-  .battle-log { background: var(--bg-inset); border: 1px solid var(--border); border-radius: 4px; padding: 0.65rem 0.9rem; min-height: 4.5rem; display: flex; flex-direction: column; gap: 0.15rem; overflow: hidden; }
-  .log-entry { font-family: var(--mono); font-size: 0.68rem; color: var(--text-mid); animation: slide-in 0.15s ease; line-height: 1.45; }
-  .log-start { color: var(--text-dim); font-style: italic; }
-  @keyframes slide-in { from { opacity:0; transform:translateX(-5px); } to { opacity:1; transform:none; } }
-
-  .action-area { display: flex; flex-direction: column; gap: 0.45rem; }
-  .action-panel, .item-panel { display: flex; gap: 0.45rem; flex-wrap: wrap; transition: opacity 0.15s, height 0.15s; }
-  .action-panel.hidden, .item-panel.hidden { opacity: 0; pointer-events: none; height: 0; overflow: hidden; margin: 0; padding: 0; }
-  .status-text { font-family: var(--mono); font-size: 0.7rem; color: var(--text-mid); min-height: 1.4em; }
-
-  .btn { font-family: var(--mono); font-size: 0.7rem; padding: 0.38em 0.9em; border: 1px solid var(--border); border-radius: 3px; background: var(--bg-panel); color: var(--text); cursor: pointer; transition: border-color 0.12s, color 0.12s, background 0.12s; }
-  .btn:hover:not([disabled]) { border-color: var(--text-mid); }
-  .btn[disabled] { opacity: 0.32; cursor: not-allowed; }
-  .btn-attack { border-color: var(--amber);  color: var(--amber);  }
-  .btn-attack:hover:not([disabled]) { background: rgba(251,191,36,0.07); }
-  .btn-magic  { border-color: var(--purple); color: var(--purple); }
-  .btn-magic:hover:not([disabled])  { background: rgba(167,139,250,0.07); }
-  .btn-item   { border-color: var(--blue);   color: var(--blue);   }
-  .btn-item:hover:not([disabled])   { background: rgba(96,165,250,0.07); }
-  .btn-restart { border-color: var(--green); color: var(--green); }
-  .btn-restart:hover { background: rgba(52,211,153,0.08); }
-  .btn-item-use { border-color: var(--border); color: var(--text-mid); font-size: 0.66rem; }
-  .btn-item-use:hover:not([disabled]) { border-color: var(--blue); color: var(--blue); }
-
-  .result-overlay {
-    position: absolute; inset: 0;
-    background: rgba(13,15,18,0.9);
-    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.8rem;
-    border-radius: 6px; z-index: 10; animation: fade-in 0.3s ease;
-  }
-  .result-overlay.hidden { display: none; }
-  @keyframes fade-in { from { opacity:0; } to { opacity:1; } }
-  .result-icon  { font-size: 2.5rem; }
-  .result-title { font-family: var(--mono); font-size: 1.4rem; font-weight: 600; letter-spacing: 0.12em; }
-  .result-title.victory { color: var(--green); }
-  .result-title.defeat  { color: var(--red);   }
-  .result-sub   { font-size: 0.8rem; color: var(--text-mid); }
-
-  fx-effect, fx-sequence, fx-yield, fx-wait, fx-call,
-  fx-switch, fx-if, fx-race, fx-loop {
-    display: block; font-family: var(--mono); font-size: 0.65rem;
-    padding: 0.25rem 0.6rem 0.25rem 0.7rem;
-    border-left: 2.5px solid var(--border); border-radius: 0 3px 3px 0;
-    background: var(--bg-inset); margin: 1.5px 0;
-    transition: border-color 0.2s, background 0.2s, color 0.2s;
-  }
-  fx-sequence, fx-race, fx-loop
-    { background: transparent; color: var(--text-mid); border-left-color: transparent; }
-  fx-sequence:state(running), fx-race:state(running), fx-loop:state(running), fx-parallel:state(running)
-    { border-left-color: var(--amber); }
-  fx-sequence:state(completed), fx-race:state(completed), fx-loop:state(completed), fx-parallel:state(completed)
-    { border-left-color: var(--green); }
-  fx-sequence:state(cancelled), fx-race:state(cancelled), fx-loop:state(cancelled), fx-parallel:state(cancelled)
-    { border-left-color: var(--red); opacity: 0.45; }
-
-  fx-yield:state(running), fx-wait:state(running), fx-call:state(running),
-  fx-switch:state(running), fx-if:state(running), fx-effect:state(running)
-    { border-left-color: var(--amber); background: rgba(251,191,36,0.04); color: var(--text); }
-  fx-yield:state(paused), fx-wait:state(paused)
-    { border-left-color: var(--blue); background: rgba(96,165,250,0.05); color: var(--blue); animation: pulse 1.6s ease-in-out infinite; }
-  fx-yield:state(completed), fx-wait:state(completed), fx-call:state(completed),
-  fx-switch:state(completed), fx-if:state(completed), fx-effect:state(completed)
-    { border-left-color: var(--green); background: rgba(52,211,153,0.04); color: var(--text-mid); }
-  fx-yield:state(cancelled), fx-wait:state(cancelled), fx-loop:state(cancelled)
-    { border-left-color: var(--red); opacity: 0.45; }
-
-  fx-yield.is-running, fx-wait.is-running, fx-call.is-running, fx-switch.is-running, fx-if.is-running, fx-effect.is-running
-    { border-left-color: var(--amber); background: rgba(251,191,36,0.04); color: var(--text); }
-  fx-yield.is-paused, fx-wait.is-paused
-    { border-left-color: var(--blue); background: rgba(96,165,250,0.05); color: var(--blue); animation: pulse 1.6s ease-in-out infinite; }
-  fx-yield.is-completed, fx-wait.is-completed, fx-call.is-completed, fx-switch.is-completed, fx-if.is-completed, fx-effect.is-completed
-    { border-left-color: var(--green); background: rgba(52,211,153,0.04); color: var(--text-mid); }
-  fx-yield.is-cancelled, fx-wait.is-cancelled, fx-loop.is-cancelled
-    { border-left-color: var(--red); opacity: 0.45; }
-
-  @keyframes pulse {
-    0%, 100% { box-shadow: inset 0 0 0 1px rgba(96,165,250,0.06); }
-    50%       { box-shadow: inset 0 0 0 1px rgba(96,165,250,0.28); }
-  }
-
-  .legend { display: flex; gap: 1.1rem; flex-wrap: wrap; }
-  .legend-item { display: flex; align-items: center; gap: 0.35rem; font-family: var(--mono); font-size: 0.63rem; color: var(--text-mid); }
-  .legend-dot  { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-
-  .showcase-footer { padding: 1.1rem 2rem; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 0.5rem; }
-  .commit-log { list-style: none; display: flex; flex-wrap: wrap; gap: 0.28rem; max-height: 4rem; overflow: hidden; }
-  .commit-entry { display: inline-flex; align-items: center; gap: 0.45rem; font-family: var(--mono); font-size: 0.63rem; padding: 0.14em 0.5em; border: 1px solid var(--border); border-radius: 3px; background: var(--bg-panel); animation: entry-in 0.14s ease; }
-  @keyframes entry-in { from { opacity:0; transform:translateY(3px); } to { opacity:1; transform:none; } }
-  .tick-id    { color: var(--text-dim); }
-  .commit-msg { color: var(--green); }
-
-  @media (max-width: 900px) {
-    .showcase-main { grid-template-columns: 1fr; }
-    .panel-score { border-right: none; border-bottom: 1px solid var(--border); max-height: 340px; }
-  }
-`;
 
 // ── Commit log ────────────────────────────────────────────────────────────
 
@@ -728,9 +582,7 @@ document.addEventListener("click", (e: MouseEvent) => {
 
 // ── Build & mount ─────────────────────────────────────────────────────────
 
-document.head.appendChild(
-  Object.assign(document.createElement("style"), { textContent: STYLES })
-);
+document.head.appendChild(styleElement);
 document.title = "blooky showcase / battle";
 
 const battleFxEl = BattleEffect(fxContext) as FxEffectElement;

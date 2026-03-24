@@ -148,26 +148,29 @@ const $planLabelCls = remap((p: string) => "summary-val " + (p === "pro" ? "plan
 
 // ステップカードの内容（$phase から派生）
 
+
+
 const nextStepBtn = prime(({
-  $phase,
-  finishPhaseAction$
+  $value,
+  action$
 }:{
-  $phase: Prop<Phase>
-  finishPhaseAction$: Dripper<Event>
+  $value: Prop<Phase>
+  action$: Dripper<Event>
 })=>({
   button: "Next →", 
   $: {
     type : "button",
     class: "btn btn-primary",
-    value: $phase,
+    value: $value,
     onclick: (e: Event) => {
-      const f = (e.target as HTMLButtonElement).form;
-      if(f && !f.checkValidity()) {
-        f.reportValidity();
+      const btn = e.currentTarget as HTMLButtonElement;
+      const formElement = btn.form;
+      if(formElement && !formElement.checkValidity()) {
+        formElement.reportValidity();
       } else {
-        const next = getNextPhase($phase());
-        clock.submitPlan({ dripper: finishPhaseAction$, value: e }).then(()=>{
-          [...f.children].filter((n)=>n.nodeName === "FIELDSET").forEach((n)=>{
+        const next = getNextPhase(btn.value as Phase);
+        clock.submitPlan({ dripper: action$, value: e }).then(()=>{
+          [...formElement.children].filter((n)=>n.nodeName === "FIELDSET").forEach((n)=>{
             (n as HTMLFieldSetElement).style.display = n.className === next ? "flex" : "none";
           })
         })
@@ -186,7 +189,7 @@ const emailCard = prime(({emailInput$}:{emailInput$:Dripper<Event>})=>({
       ],
       $: { class: "field" },
     },
-    nextStepBtn({ $phase, finishPhaseAction$ }),
+    nextStepBtn({ $value: $phase, action$: finishPhaseAction$ }),
   ],
   $: { class: "email" },
 }));
@@ -217,7 +220,7 @@ const planCard = prime(({planSelect$,$freePlanClass,$proPlanClass}:{
       ],
       $: { onclick: planSelect$, class: "plan-cards" },
     },
-    nextStepBtn({ $phase, finishPhaseAction$ }),
+    nextStepBtn({ $value: $phase, action$: finishPhaseAction$ }),
   ],
   $: { class: "plan" },
 }));
@@ -250,7 +253,7 @@ const confirmCard = prime(({
       ],
       $: { class: "summary" },
     },
-    nextStepBtn({ $phase, finishPhaseAction$ }),
+    nextStepBtn({ $value: $phase, action$: finishPhaseAction$ }),
   ],
   $: { class: "confirm" },
 }));
@@ -410,182 +413,15 @@ const buildScorePanel = () =>
 
 // ─── 11. Styles ──────────────────────────────────────────────────────────
 
-
-const STYLES = `
-  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;600&display=swap');
-
-  :root {
-    --bg:        #0d0f12;  --bg-panel:  #13161b;  --bg-inset:  #0a0c0f;
-    --border:    #222630;  --text:      #c8cdd8;  --text-dim:  #4a5068;
-    --text-mid:  #7a83a0;  --green:     #34d399;  --amber:     #fbbf24;
-    --blue:      #60a5fa;  --purple:    #a78bfa;
-    --mono: 'IBM Plex Mono', monospace;
-    --sans: 'IBM Plex Sans', sans-serif;
-  }
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 14px; line-height: 1.6; min-height: 100vh; }
-
-  .showcase { display: grid; grid-template-rows: auto 1fr auto; min-height: 100vh; }
-  .showcase-header { padding: 1.75rem 2.5rem; border-bottom: 1px solid var(--border); display: flex; align-items: baseline; gap: 1.5rem; }
-  .logo { font-family: var(--mono); font-size: 1.4rem; font-weight: 600; color: #fff; letter-spacing: -0.02em; }
-  .logo em { color: var(--green); font-style: normal; }
-  .tagline { font-family: var(--mono); font-size: 0.72rem; color: var(--text-dim); letter-spacing: 0.08em; text-transform: uppercase; }
-  .header-badge { margin-left: auto; font-family: var(--mono); font-size: 0.68rem; color: var(--text-dim); border: 1px solid var(--border); padding: 0.2em 0.65em; border-radius: 2px; }
-
-  .showcase-main { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid var(--border); }
-  .panel { padding: 2rem 2.5rem; display: flex; flex-direction: column; gap: 1.25rem; }
-  .panel-score { border-right: 1px solid var(--border); }
-  .panel-label { font-family: var(--mono); font-size: 0.63rem; text-transform: uppercase; letter-spacing: 0.14em; color: var(--text-dim); }
-  .panel-desc  { font-size: 0.8rem; color: var(--text-mid); line-height: 1.7; }
-
-  .score-code { background: var(--bg-inset); border: 1px solid var(--border); border-radius: 4px; padding: 1.25rem 1.5rem; font-family: var(--mono); font-size: 0.72rem; line-height: 2.1; overflow: auto; flex: 1; }
-  .score-line { display: block; white-space: pre; }
-  .token.tag       { color: #7dd3fc; }
-  .token.attr-name { color: #a5f3fc; }
-  .token.attr-val  { color: #86efac; }
-  .token.punct     { color: var(--text-dim); }
-  .token.comment   { color: var(--text-dim); font-style: italic; }
-
-  .stepper { display: flex; align-items: center; }
-  .step-item { display: flex; align-items: center; gap: 0.4rem; font-family: var(--mono); font-size: 0.65rem; color: var(--text-dim); transition: color 0.2s; }
-  .step-item.active { color: var(--amber); }
-  .step-item.done   { color: var(--green); }
-  .step-num { width: 20px; height: 20px; border-radius: 50%; border: 1.5px solid currentColor; display: flex; align-items: center; justify-content: center; font-size: 0.58rem; flex-shrink: 0; }
-  .step-item.active .step-num { background: rgba(251,191,36,0.1); }
-  .step-item.done   .step-num { background: rgba(52,211,153,0.1); }
-  .step-connector { flex: 1; height: 1px; background: var(--border); margin: 0 0.5rem; min-width: 0.75rem; max-width: 2.5rem; }
-
-
-  .field { display: flex; flex-direction: column; gap: 0.4rem; }
-  .field label { font-family: var(--mono); font-size: 0.65rem; color: var(--text-mid); }
-  .field input[type="email"] { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 3px; color: var(--text); font-family: var(--mono); font-size: 0.8rem; padding: 0.5em 0.8em; outline: none; width: 100%; transition: border-color 0.15s; }
-  .field input[type="email"]:focus { border-color: var(--blue); }
-
-  .plan-cards { display: flex; gap: 0.75rem; }
-  .plan-card { flex: 1; background: var(--bg-panel); border: 1.5px solid var(--border); border-radius: 4px; padding: 0.9rem 1rem; cursor: pointer; transition: border-color 0.15s, background 0.15s; font-family: var(--mono); user-select: none; }
-  .plan-card.selected { border-color: var(--green); background: rgba(52,211,153,0.06); }
-  .plan-name  { font-size: 0.82rem; font-weight: 600; color: var(--text); margin-bottom: 0.2rem; }
-  .plan-price { font-size: 0.67rem; color: var(--text-dim); }
-
-  .summary { display: flex; flex-direction: column; gap: 0.45rem; }
-  .summary-row { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 0.72rem; }
-  .summary-key { color: var(--text-dim); }
-  .summary-val { color: var(--text); }
-  .summary-val.plan-pro  { color: var(--purple); }
-  .summary-val.plan-free { color: var(--blue); }
-
-  .done-sub   { font-size: 0.78rem; color: var(--text-mid); }
-
-  .btn { font-family: var(--mono); font-size: 0.74rem; padding: 0.42em 1.1em; border: 1px solid var(--border); border-radius: 3px; background: var(--bg-panel); color: var(--text); cursor: pointer; align-self: flex-start; transition: border-color 0.12s, color 0.12s, background 0.12s; }
-  .btn:hover        { border-color: var(--text-mid); }
-  .btn-primary      { border-color: var(--green); color: var(--green); }
-  .btn-primary:hover{ background: rgba(52,211,153,0.08); }
-  .btn-restart      { border-color: var(--text-dim); color: var(--text-dim); }
-  .btn-restart:hover{ border-color: var(--text); color: var(--text); }
-
-  fx-effect, fx-sequence, fx-yield, fx-wait, fx-call, fx-switch {
-    display: block; font-family: var(--mono); font-size: 0.7rem;
-    padding: 0.3rem 0.7rem 0.3rem 0.8rem;
-    border-left: 2.5px solid var(--border); border-radius: 0 3px 3px 0;
-    background: var(--bg-inset); color: var(--text-dim); margin: 2px 0;
-    transition: border-color 0.2s, background 0.2s, color 0.2s;
-  }
-  fx-sequence { background: transparent; border-left-color: transparent; }
-
-  fx-effect:state(running), fx-yield:state(running), fx-wait:state(running), fx-call:state(running), fx-switch:state(running)
-    { border-left-color: var(--amber); background: rgba(251,191,36,0.04); color: var(--text); }
-  fx-yield:state(paused), fx-wait:state(paused)
-    { border-left-color: var(--blue); background: rgba(96,165,250,0.05); color: var(--blue); animation: pulse 1.6s ease-in-out infinite; }
-  fx-effect:state(completed), fx-yield:state(completed), fx-wait:state(completed), fx-call:state(completed), fx-switch:state(completed)
-    { border-left-color: var(--green); background: rgba(52,211,153,0.04); color: var(--text-mid); }
-
-  fx-effect.is-running, fx-yield.is-running, fx-wait.is-running, fx-call.is-running, fx-switch.is-running
-    { border-left-color: var(--amber); background: rgba(251,191,36,0.04); color: var(--text); }
-  fx-yield.is-paused, fx-wait.is-paused
-    { border-left-color: var(--blue); background: rgba(96,165,250,0.05); color: var(--blue); animation: pulse 1.6s ease-in-out infinite; }
-  fx-effect.is-completed, fx-yield.is-completed, fx-wait.is-completed, fx-call.is-completed, fx-switch.is-completed
-    { border-left-color: var(--green); background: rgba(52,211,153,0.04); color: var(--text-mid); }
-
-  @keyframes pulse {
-    0%, 100% { box-shadow: inset 0 0 0 1px rgba(96,165,250,0.08); }
-    50%       { box-shadow: inset 0 0 0 1px rgba(96,165,250,0.3); }
-  }
-
-  .score-legend { display: flex; gap: 1.25rem; flex-wrap: wrap; }
-  .legend-item  { display: flex; align-items: center; gap: 0.4rem; font-family: var(--mono); font-size: 0.67rem; color: var(--text-mid); }
-  .legend-dot   { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-
-  .showcase-footer { padding: 1.5rem 2.5rem; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 0.75rem; }
-  .commit-log { list-style: none; display: flex; flex-wrap: wrap; gap: 0.3rem; }
-  .commit-entry { display: inline-flex; align-items: center; gap: 0.5rem; font-family: var(--mono); font-size: 0.67rem; padding: 0.18em 0.6em; border: 1px solid var(--border); border-radius: 3px; background: var(--bg-panel); animation: slide-in 0.15s ease; }
-  @keyframes slide-in { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
-  .tick-id    { color: var(--text-dim); }
-  .commit-msg { color: var(--green); }
-
-  @media (max-width: 860px) {
-    .showcase-main { grid-template-columns: 1fr; }
-    .panel-score { border-right: none; border-bottom: 1px solid var(--border); }
-  }
-
-
-form {
-  background: var(--bg-inset);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 1.5rem;
-  min-height: 160px;
-}
-
-fieldset {
-  border: none;
-  padding: 0;
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-legend {
-  font-family: var(--mono);
-  font-size: 0.67rem;
-  color: var(--text-dim);
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  padding: 0;
-  margin-bottom: 0.5rem;
-  float: left;
-  width: 100%;
-}
-
-/* done カードの legend は icon + title を横並びにする */
-legend > .done-icon {
-  font-size: 1.6rem;
-  line-height: 1;
-}
-
-legend > .done-title {
-  font-family: var(--mono);
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: var(--green);
-  margin-top: 0.3rem;
-}  
-
-form > fieldset {
-  display: none;
-}
-
-form > fieldset.active {
-  display: flex;
-}
-`;
+const styleElement = document.createElement("style");
+fetch("/blooky-showcase-basic.css")
+  .then((response)=>response.text())
+  .then((textContent)=>styleElement.textContent = textContent);
 
 // ─── 12. Layout & Mount ──────────────────────────────────────────────────
 
-document.head.appendChild(
-  Object.assign(document.createElement("style"), { textContent: STYLES })
-);
 document.title = "blooky showcase / wizard";
+document.head.append(styleElement);
 
 const wizardFxEl = WizardEffect(fxContext) as FxEffectElement;
 
