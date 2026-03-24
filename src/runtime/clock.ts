@@ -3,7 +3,7 @@ import type { FVRuntime } from "../blooky-fv";
 import type { DripperStream, Prop, Vertex } from "../blooky-fp-types";
 import {
   CommitConflictError,
-  CommitDripPlan,
+  CommitPlanMap,
   CommitExecutionError,
   CommitRuntime,
   DripConflictError,
@@ -32,7 +32,7 @@ const gate = createTickGate();
 const runtime: CommitRuntime = createCommitRuntime({
   scheduler,
   gate,
-  buildBeatPlan: (t) => ({ dripper: beat$, value: t }),
+  buildBeatPlan: (t) => [beat$,t],
   // beat$から
   shouldKeepAlive: () => {
     const visited = new WeakSet<Vertex>();
@@ -64,5 +64,5 @@ export {
   DripConflictError,
   CommitExecutionError,
 };
-export type { CommitDripPlan, ObservedTick, FatalHandler };
+export type { CommitPlanMap, ObservedTick, FatalHandler };
 

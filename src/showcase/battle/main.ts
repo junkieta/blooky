@@ -30,7 +30,7 @@
 
 import { fxdom, EffectElementTagNameMap, executeByElement } from "../../blooky-devtools";
 import { stream, accum, merge, map, remap, hold } from "../../blooky-fp";
-import { Stream } from "../../blooky-fp-types";
+import { DripPlan, Stream } from "../../blooky-fp-types";
 import { createFV } from "../../blooky-fv";
 import { FxEffectElement } from "../../blooky-fxdom";
 import { clock } from "../../runtime/clock";
@@ -197,37 +197,37 @@ const $enemyHPColor  = remap(color(ENEMY_MAX_HP))($enemyHP);
 // sub() は互いに共通の lift 派生先を持たない独立した stream への
 // 同一 Tick 送信に限り安全に使用できる。
 
-const sub = (...plans: { dripper: any; value: any }[]) =>
+const sub = (...plans: DripPlan<any>[]) =>
   Promise.all(plans.map((p) => clock.submitPlan(p)));
 
 // ターン開始時のリセット
 const resetTurn = async () => {
   await sub(
-    { dripper: actionReset$, value: undefined },
-    { dripper: itemReset$,   value: undefined },
-    { dripper: phase$,       value: "waiting" },
-    { dripper: turnInc$,     value: undefined },
+    [actionReset$,undefined],
+    [itemReset$,undefined],
+    [phase$,"waiting"],
+    [turnInc$,undefined],
   );
 };
 
 const doAttack = async () => {
   const dmg = Math.floor(Math.random() * 15) + 8; // 8–22
   await sub(
-    { dripper: enemyDmg$,  value: dmg },
-    { dripper: logEntry$,  value: `⚔️  攻撃！${dmg} ダメージ！` },
+    [enemyDmg$,dmg],
+    [logEntry$,`⚔️  攻撃！${dmg} ダメージ！`],
   );
 };
 
 const doMagic = async () => {
   if ($playerMP() < MAGIC_MP_COST) {
-    await clock.submitPlan({ dripper: logEntry$, value: "💧 MP が足りない！" });
+    await clock.submitPlan([logEntry$,"💧 MP が足りない！"]);
     return;
   }
   const dmg = Math.floor(Math.random() * 20) + 15; // 15–34
   await sub(
-    { dripper: mpSpend$,   value: MAGIC_MP_COST },
-    { dripper: enemyDmg$,  value: dmg },
-    { dripper: logEntry$,  value: `✨ ファイア！${dmg} ダメージ！` },
+    [mpSpend$,MAGIC_MP_COST],
+    [enemyDmg$,dmg],
+    [logEntry$,`✨ ファイア！${dmg} ダメージ！`],
   );
 };
 
@@ -237,23 +237,23 @@ const doItem = async () => {
   const ec   = $etherCount();
   if (item === "potion" && pc > 0) {
     await sub(
-      { dripper: playerHeal$, value: 30 },
-      { dripper: potionUse$,  value: pc - 1 },
-      { dripper: logEntry$,   value: "💊 ポーション！HP +30！" },
+      [playerHeal$,30],
+      [potionUse$,pc - 1],
+      [logEntry$,"💊 ポーション！HP +30！"],
     );
   } else if (item === "ether" && ec > 0) {
     await sub(
-      { dripper: mpHeal$,    value: 20 },
-      { dripper: etherUse$,  value: ec - 1 },
-      { dripper: logEntry$,  value: "💎 エーテル！MP +20！" },
+      [mpHeal$,20],
+      [etherUse$,ec - 1],
+      [logEntry$,"💎 エーテル！MP +20！"],
     );
   } else {
-    await clock.submitPlan({ dripper: logEntry$, value: "❌ 使えない！" });
+    await clock.submitPlan([logEntry$,"❌ 使えない！"]);
   }
 };
 
 const doEnemyTurn = async () => {
-  await clock.submitPlan({ dripper: phase$, value: "enemy" });
+  await clock.submitPlan([phase$,"enemy"]);
   const roll = Math.random();
   let dmg: number, msg: string;
   if (roll < 0.4) {
@@ -267,24 +267,24 @@ const doEnemyTurn = async () => {
     msg = `💥 テールスマッシュ！${dmg} ダメージ！`;
   }
   await sub(
-    { dripper: playerDmg$, value: dmg },
-    { dripper: logEntry$,  value: msg },
+    [playerDmg$,dmg],
+    [logEntry$,msg],
   );
 };
 
 const onVictory = async () => {
   await sub(
-    { dripper: result$,   value: "victory" as BattleResult },
-    { dripper: logEntry$, value: "🏆 勝利！ドラゴンを倒した！" },
-    { dripper: phase$,    value: "result" },
+    [result$,"victory" as BattleResult],
+    [logEntry$,"🏆 勝利！ドラゴンを倒した！"],
+    [phase$,"result"],
   );
 };
 
 const onDefeat = async () => {
   await sub(
-    { dripper: result$,   value: "defeat" as BattleResult },
-    { dripper: logEntry$, value: "💀 敗北…勇者は力尽きた…" },
-    { dripper: phase$,    value: "result" },
+    [result$,"defeat" as BattleResult],
+    [logEntry$,"💀 敗北…勇者は力尽きた…"],
+    [phase$,"result"],
   );
 };
 
@@ -543,7 +543,7 @@ const restart = async () => {
   battleHandle?.cancel();
   battleHandle = null;
 
-  await clock.submitPlan({ dripper: restart$, value: undefined });
+  await clock.submitPlan([restart$,undefined]);
 
   if (battleFxContainer) {
     const old = battleFxContainer.querySelector("fx-effect");
@@ -560,19 +560,19 @@ document.addEventListener("click", (e: MouseEvent) => {
   switch (id) {
     case "btn-attack":
       // actionChoice$ と phase$ は共通の lift 派生先を持たないため sub() 安全
-      sub({ dripper: actionChoice$, value: "attack" }, { dripper: phase$, value: "acting" });
+      sub([actionChoice$,"attack"], [phase$,"acting"]);
       break;
     case "btn-magic":
-      sub({ dripper: actionChoice$, value: "magic" }, { dripper: phase$, value: "acting" });
+      sub([actionChoice$,"magic"], [phase$,"acting"]);
       break;
     case "btn-item":
-      sub({ dripper: actionChoice$, value: "item" }, { dripper: phase$, value: "item-select" });
+      sub([actionChoice$,"item"], [phase$,"item-select"]);
       break;
     case "btn-potion":
-      sub({ dripper: itemChoice$, value: "potion" }, { dripper: phase$, value: "acting" });
+      sub([itemChoice$,"potion"], [phase$,"acting"]);
       break;
     case "btn-ether":
-      sub({ dripper: itemChoice$, value: "ether" }, { dripper: phase$, value: "acting" });
+      sub([itemChoice$,"ether"], [phase$,"acting"]);
       break;
     case "btn-restart":
       restart();

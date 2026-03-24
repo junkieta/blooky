@@ -3,6 +3,7 @@
  * 関数型リアクティブプログラミングをTypeScriptで行うためのライブラリ。
  */
 import { 
+    CommitPlan,
   DripPlan, DripperStream, FilterStream, FlowingState,
   MappedStream, MergedStream, Prop, PropPlan, Stream, Vertex 
 } from "./blooky-fp-types";
@@ -393,7 +394,7 @@ const flowLazy = <A>(v:A) => (s:Stream<A>) : FlowingState => {
  * @param value - 流し込む値
  * @returns データフローを経由して生成されるProp更新計画
  */
-const drip = <A>({dripper,value}: DripPlan<A>) : PropPlan<any>[] => flowLazy(value)(dripper)[0];
+const drip = <A>([dripper,value]: DripPlan<A>) : CommitPlan => flowLazy(value)(dripper)[0];
 
 /**
  * 同時生成のPropPlanを合成する。conflictは同値の破棄とliftの遅延による解決が試みられる。
@@ -401,12 +402,17 @@ const drip = <A>({dripper,value}: DripPlan<A>) : PropPlan<any>[] => flowLazy(val
  * @param is 
  * @returns 
  */
-const concatenate = (plans: DripPlan<any>[]|PropPlan<any>[], is: (a:unknown,b:unknown)=>boolean = Object.is) : {
+const concatenate = (plans: CommitPlan, is: (a:unknown,b:unknown)=>boolean = Object.is) : {
   plan: Map<Prop<any>, any>;
   conflicts: Map<Prop<any>, any[]>;
 } => {
+    
   // 1. 全 drip を評価して PropPlan[] に展開
-  const raw = plans.flatMap<PropPlan<any>>((dp:DripPlan<any>|PropPlan<any>)=>Array.isArray(dp) ? [dp] : drip(dp));
+  const raw = plans.flatMap((plan: DripPlan<any>|PropPlan<any>) : CommitPlan => 
+    !Array.isArray(plan) || isDripperStream(plan[0])
+        ? drip(plan as DripPlan<any>)
+        : [plan as PropPlan<any>]
+    );
 
   // 2. dedup + conflict 検出（derived も含めて全部処理、早期リターンしない）
   const resolved = new Map<Prop<any>, any>();
@@ -479,7 +485,7 @@ const concatenate = (plans: DripPlan<any>[]|PropPlan<any>[], is: (a:unknown,b:un
  * @param equals 
  * @returns 
  */
-const conflict = (plan: PropPlan<any>[]): Map<Prop<any>,any[]> => {
+const conflict = (plan: CommitPlan): Map<Prop<any>,any[]> => {
     const seen = new WeakMap<Prop<any>,any>();
     const result = new Map<Prop<any>,any[]>();
     for (const [p,v] of plan) {
@@ -495,7 +501,11 @@ const conflict = (plan: PropPlan<any>[]): Map<Prop<any>,any[]> => {
  * 更新計画に基づいて値をPropに反映させる
  * @param plan 
  */
-const commit = (plan: PropPlan<any>[]) => plan.forEach(([p,v]) => PROP_UPDATE.get(p)!(v));
+const commit = (plan: CommitPlan) => {
+    if(plan.some(([p])=>!PROP_UPDATE.has(p)))
+        throw new Error("[blooky-fp] commit: chained prop only");
+    plan.forEach(([p,v]) => PROP_UPDATE.get(p)!(v));
+}
 
 export {
     // Core

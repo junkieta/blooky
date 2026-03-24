@@ -88,18 +88,28 @@ type PropPlan<A> = [Prop<A>, A]
 ### 1.3.2 DripPlan
 
 ```ts
-type DripPlan = PropPlan<any>[]
+type DripPlan<A> = [DripperStream<A>, A]
 ```
 
-DripPlan は複数の Prop 更新を表す列である。
+DripPlan は DripperStream への入力計画。
 
-* DripPlan は **状態を変更しない**（MUST）
-* DripPlan は純粋な更新計画である（MUST）
+---
+
+### 1.3.3 CommitPlan
+
+```ts
+type CommitPlan = PropPlan<any>[]
+```
+
+CommitPlan は複数の Prop 更新を表す列である。
+
+* CommitPlan は **状態を変更しない**（MUST）
+* CommitPlan は純粋な更新計画である（MUST）
 
 ### 規範
 
-1. DripPlan 内で同一 Prop が複数回出現してはならない（MUST NOT）。
-2. `drip` は同一 Prop を複数回含む DripPlan を生成してはならない（MUST NOT）。
+1. `drip` は同一 Prop を複数回含む CommitPlan を生成してはならない（MUST NOT）。
+2. CommitPlan 内で同一 Prop が複数回出現してはならない（MUST NOT）。
 
 ---
 
@@ -113,7 +123,7 @@ type DripperStream<A> = Stream<A>
 
 ### 規範
 
-1. DripperStream は `drip(value)(dripper)` の起点である（MUST）。
+1. DripperStream は `drip(plan)` の起点である（MUST）。
 2. DripperStream は値を保持してはならない（MUST NOT）。
 3. DripperStream は commit を発生させてはならない（MUST NOT）。
 
@@ -124,28 +134,28 @@ type DripperStream<A> = Stream<A>
 ## 2.1 drip
 
 ```ts
-drip(value)(dripper) : DripPlan
+drip(plan: DripPlan<A>) : CommitPlan
 ```
 
-`drip` は、`dripper` を起点として Stream グラフを **同期的に評価**し、DripPlan を生成する。
+`drip` は、`dripper` を起点として Stream グラフを **同期的に評価**し、CommitPlan を生成する。
 
 ### 規範
 
 1. `drip` は同期的に完了しなければならない（MUST）。
-2. `drip` は DripPlan を返さなければならない（MUST）。
+2. `drip` は CommitPlan を返さなければならない（MUST）。
 3. `drip` は commit を実行してはならない（MUST NOT）。
 4. `drip` は部分的な更新計画を公開してはならない（MUST NOT）。
-5. 同一入力と同一状態に対し、同一の DripPlan を生成しなければならない（MUST）。
+5. 同一入力と同一状態に対し、同一の CommitPlan を生成しなければならない（MUST）。
 
 ---
 
 ## 2.2 commit
 
 ```ts
-commit(plan: DripPlan): void
+commit(plan: CommitPlan): void
 ```
 
-`commit` は DripPlan に含まれる更新を単一状態遷移として適用する。
+`commit` は CommitPlan に含まれる更新を単一状態遷移として適用する。
 
 ### 規範
 
@@ -158,14 +168,14 @@ commit(plan: DripPlan): void
 # 3. Conflict Semantics
 
 ```ts
-conflict(plan: DripPlan): Set<Prop<any>>
+conflict(plan: CommitPlan): Set<Prop<any>>
 ```
 
 同一 plan 内で同一 Prop が複数回出現する場合を検出する。
 
 ### 規範
 
-1. DripPlan 内で同一 Prop が複数回出現してはならない（MUST NOT）。
+1. CommitPlan 内で同一 Prop が複数回出現してはならない（MUST NOT）。
 2. conflict を含む plan を commit してはならない（MUST NOT）。
 3. conflict 解決戦略（LWW 等）を提供してはならない（MUST NOT）。
 

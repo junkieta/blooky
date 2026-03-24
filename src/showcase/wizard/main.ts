@@ -169,7 +169,7 @@ const nextStepBtn = prime(({
         formElement.reportValidity();
       } else {
         const next = getNextPhase(btn.value as Phase);
-        clock.submitPlan({ dripper: action$, value: e }).then(()=>{
+        clock.submitPlan([action$,e]).then(()=>{
           [...formElement.children].filter((n)=>n.nodeName === "FIELDSET").forEach((n)=>{
             (n as HTMLFieldSetElement).style.display = n.className === next ? "flex" : "none";
           })
@@ -319,7 +319,7 @@ async function restart() {
     wizardHandle = null;
   }
   // restart$ 一本で全状態をリセット
-  await clock.submitPlan({ dripper: restart$, value: undefined });
+  await clock.submitPlan([restart$,undefined]);
 
   if (wizardFxContainer) {
     const old = wizardFxContainer.querySelector("fx-effect");

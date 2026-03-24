@@ -105,21 +105,21 @@ export interface FVRuntime {
    * reject: conflict（recoverable failure）のみ
    * fatal は submit の reject 経路で扱わない
    */
-  submitPlan(plan: DripPlan): Promise<DripPlan>
+  submitPlan(plan: DripPlan): Promise<CommitPlan>
 
   /**
    * 観測関数 f を登録し、観測対象 prop を追加する関数を返す。
    * f は ObservedPlan（view）を受け取る。
    * 返り値は当該 prop の購読解除関数（unobserver）。
    */
-  observeCommit(f: (plan: ObservedDripPlan) => void): (p: Prop<any>) => () => void
+  observeCommit(f: (plan: ObservedCommitPlan) => void): (p: Prop<any>) => () => void
 
   /**
    * 観測解除。
    * - p 指定あり: 当該 prop のみ解除
    * - p 省略: f 全体を解除
    */
-  unobserveCommit(f: (plan: ObservedDripPlan) => void): (p?: Prop<any>) => void
+  unobserveCommit(f: (plan: ObservedCommitPlan) => void): (p?: Prop<any>) => void
 }
 ```
 
@@ -130,7 +130,7 @@ export interface FVRuntime {
 - fatal（CommitExecutionError 相当）を submitPlan reject 経路で扱ってはならない（MUST NOT）
 - `observeCommit` は Prop 単位で購読を登録しなければならない（MUST）
 - `observeCommit` の返り値は購読解除関数（unobserver）を返す関数でなければならない（MUST）
-- `unobserveCmmit` は購読解除を行わなければならない（MUST）
+- `unobserveCommit` は購読解除を行わなければならない（MUST）
 - `unobserveCommit(f)()` は f に紐づく全購読を解除しなければならない（MUST）
 - `unobserveCommit(f)(p)` は f の p に対する購読のみを解除しなければならない（MUST）
 
@@ -143,7 +143,7 @@ export interface FVRuntime {
 `ObservedPlan` は runtime から通知される更新集合である。
 
 ```ts
-export type ObservedPlan = DripPlan
+export type ObservedPlan = CommitPlan
 ```
 
 ObservedPlan は commit-plan から生成される観測用 view である。

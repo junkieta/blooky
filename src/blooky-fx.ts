@@ -56,7 +56,7 @@ export const execute = (prepared: PreparedFx): ExecutionHandle => {
   const onStep = async (step: PerformanceStep) => {
     const effect = step.effect as BridgeEffect | undefined;
     if (effect?.kind === "done") {
-      await clock.submitPlan({ dripper: effect.dripper, value: effect.value });
+      await clock.submitPlan([effect.dripper, effect.value]);
     }
     emitRuntimeStep(step);
   };

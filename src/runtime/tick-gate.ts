@@ -29,7 +29,9 @@ export const createTickGate = (): TickGate => {
     const dripConflicts = new Map<DripperStream<any>, any[]>();
     const mergedPlans = new Map<DripperStream<any>, any>();
 
-    plans.forEach(({ dripper, value }) => {
+    plans
+    .map((plan) => Array.isArray(plan) ? plan : [plan.dripper, plan.value] as const)
+    .forEach(([dripper,value]) => {
       if (!mergedPlans.has(dripper)) {
         mergedPlans.set(dripper, value);
       } else if (mergeStrategies.has(dripper)) {

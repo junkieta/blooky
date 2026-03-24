@@ -75,7 +75,7 @@ Projection failure は隔離されなければならない (MUST)。
 Projection は次の観測源を入力としてよい (MAY)。
 
 1. `ObservedTick`
-2. `ObservedDripPlan`
+2. `ObservedCommitPlan`
 3. FxRuntime / Execution 由来の execution step 観測
 4. FRP graph metadata
 5. DOM / FxDOM binding metadata
@@ -113,7 +113,7 @@ Timeline Projection は commit 意味論を持たない。
 
 ## 6. Commit Projection
 
-Commit Projection は `ObservedDripPlan` または `ObservedTick.effects_summary` を view として投影する。
+Commit Projection は `ObservedCommitPlan` または `ObservedTick.effects_summary` を view として投影する。
 
 Projection は次を満たさなければならない (MUST)。
 

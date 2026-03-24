@@ -1,16 +1,16 @@
 import { commit, concatenate } from "../blooky-fp";
-import type { FVRuntime, ObservedDripPlan } from "../blooky-fv";
+import type { FVRuntime, ObservedCommitPlan } from "../blooky-fv";
 import type { DripPlan, DripperStream, Prop, PropPlan } from "../blooky-fp-types";
 import type { TickScheduler } from "./scheduler";
 import type { TickGate } from "./tick-gate";
 
-export type CommitDripPlan = Map<Prop<any>, any>;
+export type CommitPlanMap = Map<Prop<any>, any>;
 
 export type ObservedTick = {
   tick_index: number;
   tick_id: string | number;
   timestamp: number;
-  effects_summary: CommitDripPlan;
+  effects_summary: CommitPlanMap;
 };
 
 export type TickObserver = (tick: ObservedTick) => void;
@@ -43,7 +43,7 @@ export class CommitExecutionError extends Error {
 
 type Reservation = {
   plan: DripPlan<any>;
-  resolve: (v: ObservedDripPlan) => void;
+  resolve: (v: ObservedCommitPlan) => void;
   reject: (v: unknown) => void;
 };
 
@@ -62,7 +62,7 @@ export const createCommitRuntime = (deps: {
   shouldKeepAlive?: () => boolean;
 }): CommitRuntime => {
   const tickQueue: Reservation[] = [];
-  const clockObservers = new Map<(plan: ObservedDripPlan) => void, Set<Prop<unknown>>>();
+  const clockObservers = new Map<(plan: ObservedCommitPlan) => void, Set<Prop<unknown>>>();
   const tickObservers = new Set<TickObserver>();
 
   let tickIndexCounter = 0;
@@ -79,13 +79,13 @@ export const createCommitRuntime = (deps: {
     console.error("fatal: commit execution failed", error);
   };
 
-  const buildObservedTick = (commitPlan: CommitDripPlan): ObservedTick => {
+  const buildObservedTick = (commits: CommitPlanMap): ObservedTick => {
     const tick_index = tickIndexCounter++;
     return {
       tick_index,
       tick_id: tick_index,
       timestamp: Date.now(),
-      effects_summary: commitPlan,
+      effects_summary: commits,
     };
   };
 
@@ -106,21 +106,21 @@ export const createCommitRuntime = (deps: {
     }
   };
 
-  const notifyAllObservers = (commitPlanMap: CommitDripPlan) => {
+  const notifyAllObservers = (commits: CommitPlanMap) => {
     const errors: Error[] = [];
-    const observedTick = buildObservedTick(commitPlanMap);
+    const observedTick = buildObservedTick(commits);
 
     tickObservers.forEach((f) => handleObserver(async () => f(observedTick), errors));
     if (errors.length) console.error("runtimeTickObserver: thrown errors", ...errors);
 
-    const propAll = new Set(commitPlanMap.keys());
+    const propAll = new Set(commits.keys());
     clockObservers.forEach((props, f) => {
       const subset = propAll.intersection(props);
       if (subset.size) {
         handleObserver(
           async () =>
             f(
-              new Map([...subset].map((p) => [p, commitPlanMap.get(p)!])) as ObservedDripPlan
+              new Map([...subset].map((p) => [p, commits.get(p)!])) as ObservedCommitPlan
             ),
           errors
         );
@@ -181,7 +181,7 @@ export const createCommitRuntime = (deps: {
 
   const submitPlan: FVRuntime["submitPlan"] = (plan: DripPlan<any>) => {
     if (fatalState) throw fatalState;
-    return new Promise<ObservedDripPlan>((resolve, reject) => {
+    return new Promise<ObservedCommitPlan>((resolve, reject) => {
       tickQueue.push({ plan, resolve, reject });
       advanceClock();
     });

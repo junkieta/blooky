@@ -176,7 +176,7 @@ const resolveDoneProp = (note: FxNote, app: AppContext): Prop<any> | null => {
   }
 
   if (!isDripperStream(resolved)) return null;
-  const plan = drip({ dripper: resolved as DripperStream<any>, value: undefined });
+  const plan = drip([resolved,undefined]);
   return (plan[0]?.[0] as Prop<any> | undefined) ?? null;
 };
 

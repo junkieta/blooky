@@ -32,11 +32,9 @@ export type Vertex = {
 };
 
 
+export type DripPlan<A> = [DripperStream<A>, A];
 export type PropPlan<A> = [Prop<A>, A];
-export type DripPlan<A> = {
-  dripper: DripperStream<A>,
-  value: A
-};
+export type CommitPlan = PropPlan<any>[];
 
 // Informative / internal
 export type FlowingState = [PropPlan<unknown>[], [MergedStream<any>, any][]];
