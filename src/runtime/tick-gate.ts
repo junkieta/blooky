@@ -1,10 +1,10 @@
 import { drip } from "../blooky-fp";
-import type { DripPlan, DripperStream, PropPlan } from "../blooky-fp-types";
+import type { CommitPlan, DripPlan, DripperStream, PropPlan } from "../blooky-fp-types";
 
 export type MergeStrategy<V> = (prev: V, next: V) => V;
 
 export type TickGateBuildResult = {
-  commitIntent: PropPlan<any>[];
+  commitIntent: CommitPlan;
   dripConflicts: Map<DripperStream<any>, any[]>;
 };
 
@@ -29,9 +29,7 @@ export const createTickGate = (): TickGate => {
     const dripConflicts = new Map<DripperStream<any>, any[]>();
     const mergedPlans = new Map<DripperStream<any>, any>();
 
-    plans
-    .map((plan) => Array.isArray(plan) ? plan : [plan.dripper, plan.value] as const)
-    .forEach(([dripper,value]) => {
+    plans.forEach(([dripper,value]) => {
       if (!mergedPlans.has(dripper)) {
         mergedPlans.set(dripper, value);
       } else if (mergeStrategies.has(dripper)) {
@@ -45,9 +43,7 @@ export const createTickGate = (): TickGate => {
       }
     });
 
-    const reservedPropPlans = [...mergedPlans.entries()].flatMap(([dripper, value]) =>
-      drip({ dripper, value })
-    );
+    const reservedPropPlans = [...mergedPlans.entries()].flatMap(([dripper, value])=>drip([dripper,value]));
     const beatPropPlans = beatPlan ? drip(beatPlan) : [];
 
     return {

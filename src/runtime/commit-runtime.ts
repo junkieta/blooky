@@ -156,7 +156,7 @@ export const createCommitRuntime = (deps: {
         return;
       }
 
-      const {plan,conflicts} = concatenate(builtPlan.commitIntent);
+      const [commits,conflicts] = concatenate(builtPlan.commitIntent);
 
       if (conflicts.size) {
         const err = new CommitConflictError(conflicts);
@@ -165,16 +165,16 @@ export const createCommitRuntime = (deps: {
         return;
       }
 
-      notifyAllObservers(plan);
+      notifyAllObservers(commits);
 
       try {
-        commit([...plan]);
+        commit([...commits]);
       } catch (err) {
         enterFatalState(new CommitExecutionError(err));
         return;
       }
 
-      reservations.forEach(({ resolve }) => resolve(plan));
+      reservations.forEach(({ resolve }) => resolve(commits));
       if (tickQueue.length || deps.shouldKeepAlive?.()) advanceClock();
     });
   };

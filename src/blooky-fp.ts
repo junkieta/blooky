@@ -397,28 +397,18 @@ const flowLazy = <A>(v:A) => (s:Stream<A>) : FlowingState => {
 const drip = <A>([dripper,value]: DripPlan<A>) : CommitPlan => flowLazy(value)(dripper)[0];
 
 /**
- * 同時生成のPropPlanを合成する。conflictは同値の破棄とliftの遅延による解決が試みられる。
+ * 同時生成のCommitPlanを合成する。conflictは同値の破棄とliftの遅延による解決が試みられる。
  * @param plans 
  * @param is 
- * @returns 
+ * @returns [正常なCommitPlanMap, Conflict判定されたCommitPlanMap]のタプル
  */
-const concatenate = (plans: CommitPlan, is: (a:unknown,b:unknown)=>boolean = Object.is) : {
-  plan: Map<Prop<any>, any>;
-  conflicts: Map<Prop<any>, any[]>;
-} => {
+const concatenate = (plans: CommitPlan, is: (a:unknown,b:unknown)=>boolean = Object.is) : [Map<Prop<any>, any>,Map<Prop<any>, any>] => {
     
-  // 1. 全 drip を評価して PropPlan[] に展開
-  const raw = plans.flatMap((plan: DripPlan<any>|PropPlan<any>) : CommitPlan => 
-    !Array.isArray(plan) || isDripperStream(plan[0])
-        ? drip(plan as DripPlan<any>)
-        : [plan as PropPlan<any>]
-    );
-
-  // 2. dedup + conflict 検出（derived も含めて全部処理、早期リターンしない）
+  // dedup + conflict 検出（derived も含めて全部処理、早期リターンしない）
   const resolved = new Map<Prop<any>, any>();
   const conflicts = new Map<Prop<any>, any[]>();
 
-  for (const [p, v] of raw) {
+  for (const [p, v] of plans) {
     if (!resolved.has(p)) {
       resolved.set(p, v);
       continue;
@@ -428,7 +418,7 @@ const concatenate = (plans: CommitPlan, is: (a:unknown,b:unknown)=>boolean = Obj
     conflicts.set(p, conflicts.has(p) ? [...conflicts.get(p)!, v] : [prev, v]);
   }
 
-  // 3. derived prop をトポロジカル順に解決
+  // derived prop をトポロジカル順に解決
   // resolved と conflicts 両方に含まれる derived prop を対象にする
   const allDerived = [...new Set([...resolved.keys(), ...conflicts.keys()])]
     .filter(p => DERIVED_UPSTREAMS.has(p));
@@ -476,7 +466,7 @@ const concatenate = (plans: CommitPlan, is: (a:unknown,b:unknown)=>boolean = Obj
     conflicts.delete(p); // derived prop のコンフリクトは topology 解決で確定する
   }
 
-  return { plan: resolved, conflicts };
+  return [resolved, conflicts];
 }
 
 /**
