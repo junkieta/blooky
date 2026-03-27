@@ -7,10 +7,13 @@ export type StreamBase<A, T> = {
   lazyNext: Set<MergedStream<A>>;
 } & T;
 
-export type DripperStream<A> = StreamBase<A, { isDripper: true }>;
+export type DripperStream<A> = StreamBase<A, {
+  isDripper: true,
+  reduceFn: (a: A, b: A) => A
+}>;
 export type Dripper<A> = DripperStream<A>;
 
-export type MergedStream<A> = StreamBase<A, { reduceFn: (a: A, b: A) => A }>;
+export type MergedStream<A> = Omit<DripperStream<A>,"isDripper">;
 
 export type MappedStream<A,B> = StreamBase<B, { mapFn: (v: A) => B }>;
 
