@@ -9,11 +9,12 @@ export type StreamBase<A, T> = {
 
 export type DripperStream<A> = StreamBase<A, {
   isDripper: true,
-  reduceFn: (a: A, b: A) => A
 }>;
 export type Dripper<A> = DripperStream<A>;
 
-export type MergedStream<A> = Omit<DripperStream<A>,"isDripper">;
+export type MergedStream<A> = StreamBase<A, {
+  reduceFn: (a: A, b: A) => A
+}>
 
 export type MappedStream<A,B> = StreamBase<B, { mapFn: (v: A) => B }>;
 
@@ -42,4 +43,4 @@ export type CommitPlanMap = Map<Prop<any>,any>;
 export type ConflictPropMap = Map<Prop<any>,any[]>;
 
 // Informative / internal
-export type FlowingState = [PropPlan<unknown>[], [MergedStream<any>, any][]];
+export type FlowingState = [CommitPlan, [MergedStream<any>, any][]];

@@ -4,8 +4,6 @@
  */
 import { 
   CommitPlan,
-  CommitPlanMap,
-  ConflictPropMap,
   DripPlan, DripperStream, FilterStream, FlowingState,
   MappedStream, MergedStream, Prop, PropPlan, Stream, Vertex 
 } from "./blooky-fp-types";
@@ -26,11 +24,6 @@ const PROP_FROM = new WeakMap<Prop<any>, Stream<any>>();
  * Propの値を更新する
  */
 const PROP_UPDATE = new WeakMap<Prop<any>, ((v:any)=>void)>();
-/**
- * liftされた遅延処理のProp
- */
-const DERIVED_UPSTREAMS = new WeakMap<Prop<any>,Prop<any>[]>();
-const DERIVED_FN = new WeakMap<Prop<any>,(v:any[])=>any>();
 
 /**
  * ストリーム/プロパティのメモリを解放する。
@@ -106,23 +99,21 @@ const toPredicate = <A>(predicate: Predicate<unknown>) =>
 ;
 
 
-const lastWriteWins = <A>(_:A,v:A) => v;
-
 /**
  * 値を流し込むための「入り口」となるDripperStreamを生成する。
- * @param reduceFn - 単一のCommitPlan内で複数回のdripが生じた際のマージ戦略
  * @returns 新しいDripper
  */
-const stream = <A>(reduceFn: (a:A,b:A)=>A = lastWriteWins) : DripperStream<A> => {
+const stream = <A>() : DripperStream<A> => {
     const s: DripperStream<A> = {
         next: new Set(),
         lazyNext: new Set(),
         isDripper: true,
-        reduceFn
     };
     cleanupRegistry.register(s, new WeakRef(s));
     return s;
 };
+
+const lastWriteWins = <A>(_:A,v:A) => v;
 
 /**
  * 複数のStreamを一つに合流させる。
@@ -247,7 +238,15 @@ const isStream = <A>(v:unknown) : v is Stream<A> =>
  * @returns Dripperならtrue
  */
 const isDripperStream = <A>(v:unknown) : v is DripperStream<A> =>
-    isStream<A>(v) && v["isDripper"] === true;
+    isStream<A>(v) && (v as any)["isDripper"] === true;
+
+/**
+ * 引数がDripPlanの要件を満たしているか判定。
+ * @param v 
+ * @returns 
+ */
+const isDripPlan = <A>(v:unknown) : v is DripPlan<A> => 
+    Array.isArray(v) && v.length === 2 && isDripperStream(v[0]);
 
 /**
  * PropがStreamから生成されたものかを判定。
@@ -267,9 +266,9 @@ const isVertex = (v: unknown) : v is Vertex =>  v ? isStream((v as Vertex).sourc
 const VERTEX_MAP = new WeakMap<Stream<any>,Vertex>();
 
 /**
- * Streamをグラフ構造（Vertex）に変換する。データフローの可視化に使用。
+ * Streamのデータフローをグラフ構造として安全に辿るための手段を提供する。
  * @param s - 変換するStream
- * @returns グラフ構造
+ * @returns Vertex
  */
 const vertex = (s:Stream<any>): Vertex => {
     if(VERTEX_MAP.has(s)) return VERTEX_MAP.get(s)!;
@@ -283,21 +282,6 @@ const vertex = (s:Stream<any>): Vertex => {
     return v;
 }
 
-const NOOP = ()=>{};
-
-function bindStreamToProp<A,B>(stream: Stream<A[]>, getter: Prop<B>, setter: (v:A[])=>void) : void;
-function bindStreamToProp<A>(stream: Stream<A>, getter: Prop<A>, setter: (v:A)=>void) : void;
-function bindStreamToProp<A>(stream: Stream<A>, getter: Prop<A>, setter: (v:A)=>void) {
-    PROP_UPDATE.set(getter, setter);
-    PROP_FROM.set(getter, stream);
-    cleanupRegistry.register(getter, new WeakRef(getter));
-    if(STREAM_PROP_RELATIONS.has(stream))
-        STREAM_PROP_RELATIONS.get(stream)!.push(getter);
-    else
-        STREAM_PROP_RELATIONS.set(stream, [getter]);
-    return getter;
-};
-
 /**
  * Streamから現在値を保持するPropを生成する。
  * @param initial - 初期値
@@ -305,7 +289,13 @@ function bindStreamToProp<A>(stream: Stream<A>, getter: Prop<A>, setter: (v:A)=>
  */
 const hold = <A>(v:A) => (s:Stream<A>): Prop<A> => {
     const p = () => v;
-    bindStreamToProp(s,p,(_v)=>v=_v);
+    PROP_UPDATE.set(p, (_v)=>v);
+    PROP_FROM.set(p, s);
+    cleanupRegistry.register(p, new WeakRef(p));
+    if(STREAM_PROP_RELATIONS.has(s))
+        STREAM_PROP_RELATIONS.get(s)!.push(p);
+    else
+        STREAM_PROP_RELATIONS.set(s, [p]);
     return p;
 }
 
@@ -324,26 +314,23 @@ const remap = <A,B>(f:(v:A)=>B) => (p:Prop<A>) : Prop<B> =>
  * @param fn - 統合関数
  * @returns Props配列を受け取り新しいPropを返す関数
  */
-const lift = <A>(f: (values: any[]) => A) => (props: Prop<any>[]): Prop<A> => {
-  // 循環検出：新しい derived prop が props のいずれかの祖先に自分自身を持つか
-  const reachable = new Set<Prop<any>>();
-  props.forEach(function walk(p:Prop<any>) {
-    if (reachable.has(p)) return;
-    reachable.add(p);
-    DERIVED_UPSTREAMS.get(p)?.forEach(walk);
+function lift<V, T extends any[]>(
+  f: (values: T) => V, 
+  props: { [K in keyof T]: Prop<T[K]> }
+): Prop<V> {
+  type reservation = [number, any];
+  const valueFn = () => f(props.map(p => p()) as T);
+  const streams : MappedStream<any,reservation[]>[] = 
+    props.flatMap((p, i) => PROP_FROM.has(p) ? map((v) => [[i, v]] as reservation[])(PROP_FROM.get(p)!) : []);
+  const mergedStream = merge<reservation[]>(streams, (a, b) => a.concat(b));
+  const transformed = map((updates: reservation[]) => {
+    const map = new Map(updates);
+    return f(props.map((p, i) => map.has(i) ? map.get(i)! : p()) as T);
+  })(mergedStream);
+  STREAM_CLEANERS.set(transformed, () => {
+    streams.forEach((s)=>clear(s));
   });
-
-  const p = () => f(props.map(p => p()));
-
-  // props のいずれかが p の downstream になりうるかを検査
-  if ([...reachable].some(u => DERIVED_UPSTREAMS.get(u)?.includes(u))) {
-    throw new Error("lift: circular dependency detected in upstream graph");
-  }
-
-  bindStreamToProp(merge(props.filter(p => PROP_FROM.has(p)).map(p => PROP_FROM.get(p)!)), p, NOOP);
-  DERIVED_UPSTREAMS.set(p, props);
-  DERIVED_FN.set(p, f);
-  return p;
+  return hold(valueFn())(transformed);
 };
 
 // 内部実装用の関数群
@@ -368,29 +355,21 @@ const assertSyncValue = (v: any) => {
   if (v instanceof Promise) throw new Error("Promise is prohibited in blooky-fp v1.0.0");
 };
 
-const flow = <A>(v:A) => {
+const flow = <A>([s,v]: [Stream<A>,A]): FlowingState => {
     assertSyncValue(v);
-    return (s:Stream<A>) : FlowingState => {
-        const state = streamToFlowingState(v)(s);
-        const next = [...s.next].filter((s)=> !("filterFn" in s) || s.filterFn(v));
-        return next.length
-            ? next.map((_s) => flow("mapFn" in _s ? _s.mapFn(v) : v)(_s)).reduce(concatTuple, state)
-            : state;
-    }
-};
+    const state = streamToFlowingState(v)(s);
+    const next = [...s.next].filter((s)=> !("filterFn" in s) || s.filterFn(v));
+    return next.length
+        ? next.map((_s) => flow([_s, "mapFn" in _s ? _s.mapFn(v) : v])).reduce(concatTuple, state)
+        : state;
+}
 
-const flowLazy = <A>(v:A) => (s:Stream<A>) : FlowingState => {
-    const r = flow(v)(s);
+const flowLazy = <A>(plan:[Stream<A>,A]) : FlowingState => {
+    const r = flow(plan);
     const [updates,waiting] = r;
     if(!waiting.length) return r;
-    const m = waiting.reduce((m,[s,v])=> {
-        if(m.has(s))
-            m.get(s)!.push(v);
-        else
-            m.set(s, [v]);
-        return m;
-    }, new Map<MergedStream<any>,any[]>());
-    return [...m].map(([s,v])=>flowLazy(v.reduce(s.reduceFn))(s)).reduce(concatTuple, [updates,[]]);
+    const m = waiting.reduce(tupplesToMapReducer, new Map<MergedStream<any>,any[]>());
+    return [...m].map(([s,v])=>flowLazy([s,v.reduce(s.reduceFn)])).reduce(concatTuple, [updates,[]]);
 }
 
 const tupplesToMapReducer = <K,V>(map: Map<K,V[]>, [key,value]: [K,V]) => {
@@ -402,207 +381,146 @@ const tupplesToMapReducer = <K,V>(map: Map<K,V[]>, [key,value]: [K,V]) => {
     return map;
 };
 
+// Planがどのコミット時点から作成されたかを保管
+const COMMIT_PLAN_ORIGIN = new WeakMap<CommitPlan,CommitPlan>();
+
+// 最終コミット
+const lastSnapshotProp = hold<CommitPlan>([])(stream());
+
+
 /**
  * Dripperへの値注入によって生じるProp値の更新計画を返す
  * Data Flow:
  * ```
- * value + Dripper ──drip()──> DripPlan ──commit(plan)──> 実行
+ * Dripper + value ──drip()──> DripPlan ──commit(plan)──> 実行
  * ```
  * 
  * @param value - 流し込む値
  * @returns データフローを経由して生成されるProp更新計画
  */
-function drip<A>(plan: DripPlan<A>): CommitPlan;
-function drip(plans: DripPlan<any>[]): CommitPlanMap;
-function drip(arg: DripPlan<any> | DripPlan<any>[]): CommitPlan | CommitPlanMap {
-  // Dripper のマージ -> MergedStream のマージ -> lift解決の順序
+const drip = <A>(plan: DripPlan<A>): CommitPlan => {
+    const commits = flowLazy(plan)[0];
+    COMMIT_PLAN_ORIGIN.set(commits, lastSnapshotProp());
+    return commits;
+}
 
-  const allPropPlans : CommitPlan = [];
-  const plans = (isDripperStream<any>(arg[0]) ? [arg] : arg) as DripPlan<any>[];
+/**
+ * dripとは違い、同時到着の値を処理するための浸漬式更新計画を返す
+ * Data Flow:
+ * ```
+ * [Dripper + value][] ──drip()──> DripPlan ──commit(plan)──> 実行
+ * ```
+ * 
+ * @param plans 浸漬させる値のリスト
+ * @returns データフローを経由して生成されるProp更新計画
+ */
+const steep = (plans: DripPlan<any>[]) => {
+    if(plans.length < 2) return drip(plans[0]);
 
-  // DripPlan内のdripperが初回マージのターゲット
-  const mergeTargetMap = plans.reduce(tupplesToMapReducer, new Map<MergedStream<any>,any[]>())
-  while (mergeTargetMap.size) {
-    const entries = [...mergeTargetMap];
-    mergeTargetMap.clear();
-    for (const [ms, values] of entries) {
-        // Mergedではないstreamを処理
-      const [propPlans, waiting] = flow(values.reduce(ms.reduceFn))(ms);
-      allPropPlans.push(...propPlans);
-      // MergedStreamの処理
-      waiting.reduce(tupplesToMapReducer, mergeTargetMap);
-    }
-  }
+    // Kahn's アルゴリズムでトポロジカルソートする
+    const [allPropPlans, waiting] = plans.map(flow).reduce(concatTuple,[[],[]] as FlowingState);
+    if(!waiting.length) return allPropPlans;
 
-  // conflict 検出
-  const grouped = allPropPlans.reduce(tupplesToMapReducer, new Map<Prop<any>, any[]>());
-  const resolved = new Map<Prop<any>, any>();
-  for (const [p, values] of grouped) {
-    if (DERIVED_UPSTREAMS.has(p)) continue;
-    if (values.length === 1 || values.every(v => Object.is(v, values[0]))) {
-      resolved.set(p, values[0]);
-      continue;
-    }
-    throw new CommitConflictError(grouped);
-  }
+    const pendingValues = waiting.reduce(tupplesToMapReducer, new Map<MergedStream<any>,any[]>());
+    const mergedStreamArr = [...pendingValues.keys()];
+    const isDownStream = ((set)=>set.has.bind(set))(new Set(mergedStreamArr));
 
-  // lift トポロジカル再評価
-  // ... Kahn's algorithm
-  // derived prop をトポロジカル順に解決
-  // resolved と conflicts 両方に含まれる derived prop を対象にする
-  const derivedProps = [...grouped.keys()].filter(p => DERIVED_UPSTREAMS.has(p));
-  const inDegree = new Map(derivedProps.map((p)=>[p,0]));
-  const dependents = new Map<Prop<any>, Prop<any>[]>();
+    const dependents = new Map<MergedStream<any>, MergedStream<any>[]>();
+    const inDegree = new Map(mergedStreamArr.map((s)=>[s,0]));
 
-  for (const p of derivedProps) {
-    const upstreams = DERIVED_UPSTREAMS.get(p)!;
-    upstreams.filter((u) => inDegree.has(u)).forEach((u)=>{
-        if(!dependents.has(u))
-            dependents.set(u,[]);
+    mergedStreamArr.forEach((ms)=>{
+        // next 経由で到達できる lazyNext を下流として登録
+        const downStream = new Set<MergedStream<any>>();
+        // グラフを辿って lazyNext を取得
+        (function find(this: Set<MergedStream<any>>, {lazyNext,next}: Stream<any>) {
+            [...lazyNext].filter(isDownStream).forEach((s)=>this.add(s));
+            next.forEach(find, this);
+        }).call(downStream, ms);
+
+        if(!downStream.size) return;
+
+        // MergedStream同士の依存関係を保存
+        if(!dependents.has(ms))
+            dependents.set(ms, [...downStream]);
         else
-            dependents.get(u)!.push(u);
+            dependents.get(ms)!.push(...downStream);
+        // 次数管理
+        downStream.forEach((d) => inDegree.set(d, inDegree.get(d)! + 1));
     });
-    for (const u of upstreams) {
-      if (!inDegree.has(u)) continue;
-      if (!inDegree.has(u)) dependents.set(u, []);
-      dependents.get(u)!.push(p);
-      inDegree.set(p, inDegree.get(p)! + 1);
+
+    // 次数を元にソート
+    const queue = mergedStreamArr.filter(v => inDegree.get(v) === 0);
+    const sorted: MergedStream<any>[] = [];
+    while (queue.length) {
+        const ms = queue.shift()!;
+        sorted.push(ms);
+        for (const dep of (dependents.get(ms) ?? [])) {
+            const next = inDegree.get(dep)! - 1;
+            inDegree.set(dep, next);
+            if (next === 0) queue.push(dep);
+        }
     }
-  }
 
-  const queue = derivedProps.filter(p => inDegree.get(p) === 0);
-  const sorted: Prop<any>[] = [];
+    // 循環参照検出
+    if (sorted.length < mergedStreamArr.length)
+        throw new Error("[blooky-fp] steep: circular dependency detected");
 
-  while (queue.length) {
-    const p = queue.shift()!;
-    sorted.push(p);
-    for (const dep of (dependents.get(p) ?? [])) {
-      const next = inDegree.get(dep)! - 1;
-      inDegree.set(dep, next);
-      if (next === 0) queue.push(dep);
-    }
-  }
+    // トポロジカル順に MergedStream を解決
+    const walk = <A>([s,v]: [Stream<A>,A]) => {
+        assertSyncValue(v);
+        if(STREAM_PROP_RELATIONS.has(s))
+            allPropPlans.push(...STREAM_PROP_RELATIONS.get(s)!.map((p)=>[p,v] as [Prop<A>,A]));
+        // lazyNext への値を pendingValues に追記
+        s.lazyNext.forEach((ms) => {
+            if (pendingValues.has(ms)) pendingValues.get(ms)!.push(v);
+            else pendingValues.set(ms, [v]);
+        });
+        [...s.next]
+            .filter((s) =>!("filterFn" in s) || s.filterFn(v))
+            .forEach((s) => walk([s, "mapFn" in s ? s.mapFn(v) : v]));
+    };
+    sorted.forEach((ms)=>{
+        const values = pendingValues.get(ms);
+        if (values?.length) walk([ms, values.reduce(ms.reduceFn)]);
+    });
 
-  if (sorted.length < derivedProps.length) {
-    throw new Error("[blooky-fp] lift: circular dependency detected (invariant violation)");
-  }
-
-  for (const p of sorted) {
-    const upstreams = DERIVED_UPSTREAMS.get(p)!;
-    const fn = DERIVED_FN.get(p)!;
-    const values = upstreams.map(u => resolved.has(u) ? resolved.get(u) : u());
-    resolved.set(p, fn(values));
-    conflicts.delete(p); // derived prop のコンフリクトは topology 解決で確定する
-  }
-
-  return resolved;
-
+    COMMIT_PLAN_ORIGIN.set(allPropPlans, lastSnapshotProp());
+    return allPropPlans;
 }
 
-/**
- * 同時生成のCommitPlanを合成する。conflictは同値の破棄とliftの遅延による解決が試みられる。
- * @param plans 
- * @param is 
- * @returns 
- */
-const concatenate = (plans: CommitPlan, is: (a:unknown,b:unknown)=>boolean = Object.is) : [CommitPlanMap,ConflictPropMap] => {
-    
-  // dedup + conflict 検出（derived も含めて全部処理、早期リターンしない）
-  const resolved: CommitPlanMap = new Map<Prop<any>, any>();
-  const conflicts: ConflictPropMap = new Map<Prop<any>, any[]>();
-
-  for (const [p, v] of plans) {
-    if (!resolved.has(p)) {
-      resolved.set(p, v);
-      continue;
-    }
-    const prev = resolved.get(p);
-    if (is(prev, v)) continue;
-    conflicts.set(p, conflicts.has(p) ? [...conflicts.get(p)!, v] : [prev, v]);
-  }
-
-  // derived prop をトポロジカル順に解決
-  // resolved と conflicts 両方に含まれる derived prop を対象にする
-  const allDerived = [...new Set([...resolved.keys(), ...conflicts.keys()])]
-    .filter(p => DERIVED_UPSTREAMS.has(p));
-
-  const inDegree = new Map<Prop<any>, number>();
-  const dependents = new Map<Prop<any>, Prop<any>[]>();
-  const derivedSet = new Set(allDerived);
-
-  for (const p of allDerived) {
-    inDegree.set(p, 0);
-  }
-
-  for (const p of allDerived) {
-    for (const u of DERIVED_UPSTREAMS.get(p)!) {
-      if (!derivedSet.has(u)) continue;
-      if (!dependents.has(u)) dependents.set(u, []);
-      dependents.get(u)!.push(p);
-      inDegree.set(p, inDegree.get(p)! + 1);
-    }
-  }
-
-  const queue = allDerived.filter(p => inDegree.get(p) === 0);
-  const sorted: Prop<any>[] = [];
-
-  while (queue.length) {
-    const p = queue.shift()!;
-    sorted.push(p);
-    for (const dep of (dependents.get(p) ?? [])) {
-      const next = inDegree.get(dep)! - 1;
-      inDegree.set(dep, next);
-      if (next === 0) queue.push(dep);
-    }
-  }
-
-  if (sorted.length < allDerived.length) {
-    throw new Error("[blooky-fp] lift: circular dependency detected (invariant violation)");
-  }
-
-  // 4. トポロジカル順に再評価し、conflicts から除去する
-  for (const p of sorted) {
-    const upstreams = DERIVED_UPSTREAMS.get(p)!;
-    const fn = DERIVED_FN.get(p)!;
-    const values = upstreams.map(u => resolved.has(u) ? resolved.get(u) : u());
-    resolved.set(p, fn(values));
-    conflicts.delete(p); // derived prop のコンフリクトは topology 解決で確定する
-  }
-
-  return [resolved, conflicts];
-}
-
-/**
- * PropPlanの競合を収集する
- * @param plan 
- * @param equals 
- * @returns 
- */
-const conflict = (plan: CommitPlan): Map<Prop<any>,any[]> => {
-    const seen = new WeakMap<Prop<any>,any>();
-    const result = new Map<Prop<any>,any[]>();
-    for (const [p,v] of plan) {
-        if(seen.has(p))
-            result.set(p, result.has(p) ? result.get(p)!.concat(v) : [seen.get(p), v])
-        else
-            seen.set(p,v);
-    }
-    return result;
-};
 
 /**
  * 更新計画に基づいて値をPropに反映させる
  * @param plan 
  */
-const commit = (plan: CommitPlan) => {
+const commit = (plan: CommitPlan): CommitPlan => {
+    // ChainedProp以外はNG
     if(plan.some(([p])=>!PROP_UPDATE.has(p)))
         throw new Error("[blooky-fp] commit: chained prop only");
-    plan.forEach(([p,v]) => PROP_UPDATE.get(p)!(v));
-}
+    // 紐づけが存在し、現在の lastCommittedPlan と一致しない場合は設計違反
+    if (COMMIT_PLAN_ORIGIN.has(plan) && COMMIT_PLAN_ORIGIN.get(plan) !== lastSnapshotProp())
+        throw new Error("[blooky-fp] commit: plan is stale");
+    // conflict 検出
+    const seen = new Map<Prop<any>, any>();
+    for (const [p, v] of plan) {
+        if (seen.has(p) && !Object.is(seen.get(p), v))
+        throw new Error("[blooky-fp] commit: plan is conflict");
+        seen.set(p, v);
+    }
 
+    // 現在のsnapshotを取得
+    const snapshot: CommitPlan = plan.map(([p])=>[p,p()]);
+    // Planの全てのPropを設定
+    plan.forEach(([p,v]) => PROP_UPDATE.get(p)!(v));
+    // lastSnapShotを更新(今のところは非公開Propのため直接setterを呼んでいる)
+    PROP_UPDATE.get(lastSnapshotProp)!(snapshot);
+    //  snapshotが自身を指すことにより、1手戻ることが可能になる
+    COMMIT_PLAN_ORIGIN.set(snapshot, snapshot);
+    return snapshot;
+}
 export {
     // Core
-    drip, concatenate, conflict, commit, stream,
+    drip, steep, commit, stream,
     // Stream operators
     merge, junction, map, filter,
     // Prop creators
@@ -610,7 +528,12 @@ export {
     // Utilities
     pipe, clear, disconnect, vertex,
     // Type guards
-    isStream, isDripperStream as isDripper, isDripperStream, isChainedProp, isVertex,
+    isStream,
+    isDripperStream as isDripper,
+    isDripperStream,
+    isDripPlan,
+    isChainedProp,
+    isVertex,
 };
 
 export type {
