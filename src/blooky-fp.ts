@@ -24,6 +24,11 @@ const PROP_FROM = new WeakMap<Prop<any>, Stream<any>>();
  * Propの値を更新する
  */
 const PROP_UPDATE = new WeakMap<Prop<any>, ((v:any)=>void)>();
+/**
+ * Planがどのコミットから作成されたかを保管
+ */
+const COMMIT_PLAN_ORIGIN = new WeakMap<CommitPlan,CommitPlan>();
+
 
 /**
  * ストリーム/プロパティのメモリを解放する。
@@ -113,7 +118,6 @@ const stream = <A>() : DripperStream<A> => {
     return s;
 };
 
-const lastWriteWins = <A>(_:A,v:A) => v;
 
 /**
  * 複数のStreamを一つに合流させる。
@@ -123,11 +127,11 @@ const lastWriteWins = <A>(_:A,v:A) => v;
  * @param reduceFn - 値の統合方法（省略時は後の値で上書き）
  * @returns 合流後のStream
  */
-const merge = <A> (s:Stream<A>[], f:(a:A,b:A)=>A = lastWriteWins) : MergedStream<A> => {
+const merge = <A> (s:Stream<A>[], f?:(v:A[]) => A) : MergedStream<A> => {
     const _s : MergedStream<A> = {
         next: new Set(),
         lazyNext: new Set(),
-        reduceFn: f
+        reduceFn: f || ((v:A[])=>v[0])
     };
     STREAM_CLEANERS.set(_s, () => {
         s.forEach((s)=>s.lazyNext.delete(_s));
@@ -352,7 +356,7 @@ const streamToFlowingState = <A>(v:A) => (s:Stream<A>) : FlowingState => {
 const concatTuple = <T extends any[][]>(a: T, b: T): T => a.map((x, i) => x.concat(b[i])) as T;
 
 const assertSyncValue = (v: any) => {
-  if (v instanceof Promise) throw new Error("Promise is prohibited in blooky-fp v1.0.0");
+  if (v instanceof Promise) throw new Error("[blooky-fp]Promise is prohibited in blooky-fp v1.0.0");
 };
 
 const flow = <A>([s,v]: [Stream<A>,A]): FlowingState => {
@@ -369,7 +373,7 @@ const flowLazy = <A>(plan:[Stream<A>,A]) : FlowingState => {
     const [updates,waiting] = r;
     if(!waiting.length) return r;
     const m = waiting.reduce(tupplesToMapReducer, new Map<MergedStream<any>,any[]>());
-    return [...m].map(([s,v])=>flowLazy([s,v.reduce(s.reduceFn)])).reduce(concatTuple, [updates,[]]);
+    return [...m].map(([s,v])=>flowLazy([s, s.reduceFn(v)])).reduce(concatTuple, [updates,[]]);
 }
 
 const tupplesToMapReducer = <K,V>(map: Map<K,V[]>, [key,value]: [K,V]) => {
@@ -381,12 +385,27 @@ const tupplesToMapReducer = <K,V>(map: Map<K,V[]>, [key,value]: [K,V]) => {
     return map;
 };
 
-// Planがどのコミット時点から作成されたかを保管
-const COMMIT_PLAN_ORIGIN = new WeakMap<CommitPlan,CommitPlan>();
+const conflict = (plan: DripPlan<any>|CommitPlan) => {
+    // conflict 検出
+    const seen = new Map<Prop<any>, any>();
+    if(isDripPlan(plan)) {
+        for (const [p, v] of plan) {
+            if (seen.has(p) && !Object.is(seen.get(p), v))
+            throw new Error("[blooky-fp] commit: plan is conflict");
+            seen.set(p, v);
+        }
+    } else {
+        for (const [p, v] of plan) {
+            if (seen.has(p) && !Object.is(seen.get(p), v))
+            throw new Error("[blooky-fp] commit: plan is conflict");
+            seen.set(p, v);
+        }
+    }
+
+}
 
 // 最終コミット
-const lastSnapshotProp = hold<CommitPlan>([])(stream());
-
+const latestCommitPlan = hold<CommitPlan>([])(stream());
 
 /**
  * Dripperへの値注入によって生じるProp値の更新計画を返す
@@ -400,7 +419,7 @@ const lastSnapshotProp = hold<CommitPlan>([])(stream());
  */
 const drip = <A>(plan: DripPlan<A>): CommitPlan => {
     const commits = flowLazy(plan)[0];
-    COMMIT_PLAN_ORIGIN.set(commits, lastSnapshotProp());
+    COMMIT_PLAN_ORIGIN.set(commits, latestCommitPlan());
     return commits;
 }
 
@@ -414,12 +433,12 @@ const drip = <A>(plan: DripPlan<A>): CommitPlan => {
  * @param plans 浸漬させる値のリスト
  * @returns データフローを経由して生成されるProp更新計画
  */
-const steep = (plans: DripPlan<any>[]) => {
+const steep = (plans: DripPlan<any>[]) : CommitPlan => {
     if(plans.length < 2) return drip(plans[0]);
 
     // Kahn's アルゴリズムでトポロジカルソートする
-    const [allPropPlans, waiting] = plans.map(flow).reduce(concatTuple,[[],[]] as FlowingState);
-    if(!waiting.length) return allPropPlans;
+    const [nextCommitPlan, waiting] = plans.map(flow).reduce(concatTuple,[[],[]] as FlowingState);
+    if(!waiting.length) return nextCommitPlan;
 
     const pendingValues = waiting.reduce(tupplesToMapReducer, new Map<MergedStream<any>,any[]>());
     const mergedStreamArr = [...pendingValues.keys()];
@@ -469,7 +488,7 @@ const steep = (plans: DripPlan<any>[]) => {
     const walk = <A>([s,v]: [Stream<A>,A]) => {
         assertSyncValue(v);
         if(STREAM_PROP_RELATIONS.has(s))
-            allPropPlans.push(...STREAM_PROP_RELATIONS.get(s)!.map((p)=>[p,v] as [Prop<A>,A]));
+            nextCommitPlan.push(...STREAM_PROP_RELATIONS.get(s)!.map((p)=>[p,v] as [Prop<A>,A]));
         // lazyNext への値を pendingValues に追記
         s.lazyNext.forEach((ms) => {
             if (pendingValues.has(ms)) pendingValues.get(ms)!.push(v);
@@ -484,38 +503,44 @@ const steep = (plans: DripPlan<any>[]) => {
         if (values?.length) walk([ms, values.reduce(ms.reduceFn)]);
     });
 
-    COMMIT_PLAN_ORIGIN.set(allPropPlans, lastSnapshotProp());
-    return allPropPlans;
+    COMMIT_PLAN_ORIGIN.set(nextCommitPlan, latestCommitPlan());
+    return nextCommitPlan;
 }
 
-
+const SNAPSHOT_BEFORE = Symbol("SNAPSHOT_PLAN");
+type SnapshotPlan = CommitPlan & { [SNAPSHOT_BEFORE]?: CommitPlan };
 /**
  * 更新計画に基づいて値をPropに反映させる
  * @param plan 
+ * @returns コミット前状態のsnapshotを集めたCommitPlan
  */
-const commit = (plan: CommitPlan): CommitPlan => {
+const commit = (plan: SnapshotPlan | CommitPlan): CommitPlan => {
     // ChainedProp以外はNG
     if(plan.some(([p])=>!PROP_UPDATE.has(p)))
         throw new Error("[blooky-fp] commit: chained prop only");
+
     // 紐づけが存在し、現在の lastCommittedPlan と一致しない場合は設計違反
-    if (COMMIT_PLAN_ORIGIN.has(plan) && COMMIT_PLAN_ORIGIN.get(plan) !== lastSnapshotProp())
-        throw new Error("[blooky-fp] commit: plan is stale");
-    // conflict 検出
-    const seen = new Map<Prop<any>, any>();
-    for (const [p, v] of plan) {
-        if (seen.has(p) && !Object.is(seen.get(p), v))
-        throw new Error("[blooky-fp] commit: plan is conflict");
-        seen.set(p, v);
+    if(SNAPSHOT_BEFORE in plan) {
+        if(plan[SNAPSHOT_BEFORE] !== latestCommitPlan()) 
+            throw new Error("[blooky-fp] commit: plan is stale");
+    }
+    else {
+        if (COMMIT_PLAN_ORIGIN.get(plan) !== latestCommitPlan())
+            throw new Error("[blooky-fp] commit: plan is stale");
     }
 
     // 現在のsnapshotを取得
-    const snapshot: CommitPlan = plan.map(([p])=>[p,p()]);
+    const snapshot = plan.map(([p])=>[p,p()]) as SnapshotPlan;
+    snapshot[SNAPSHOT_BEFORE] = plan;
+    COMMIT_PLAN_ORIGIN.set(snapshot, latestCommitPlan());
+
     // Planの全てのPropを設定
     plan.forEach(([p,v]) => PROP_UPDATE.get(p)!(v));
-    // lastSnapShotを更新(今のところは非公開Propのため直接setterを呼んでいる)
-    PROP_UPDATE.get(lastSnapshotProp)!(snapshot);
-    //  snapshotが自身を指すことにより、1手戻ることが可能になる
-    COMMIT_PLAN_ORIGIN.set(snapshot, snapshot);
+    const origin = SNAPSHOT_BEFORE in plan
+        ? COMMIT_PLAN_ORIGIN.get(plan)!
+        : plan;
+    // latestCommitPlanを更新(今のところは非公開Propのため直接setterを呼んでいる)
+    PROP_UPDATE.get(latestCommitPlan)!(origin);
     return snapshot;
 }
 export {
@@ -535,6 +560,17 @@ export {
     isChainedProp,
     isVertex,
 };
+
+export const utils = {
+    isStream,
+    isDripper: isDripperStream,
+    isDripperStream,
+    isDripPlan,
+    isChainedProp,
+    isVertex,
+    concatTuple,
+    tupplesToMapReducer
+}
 
 export type {
     Stream, Prop, DripperStream as Dripper, DripPlan

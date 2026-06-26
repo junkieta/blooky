@@ -13,7 +13,7 @@ export type DripperStream<A> = StreamBase<A, {
 export type Dripper<A> = DripperStream<A>;
 
 export type MergedStream<A> = StreamBase<A, {
-  reduceFn: (a: A, b: A) => A
+  reduceFn: (v: A[]) => A
 }>
 
 export type MappedStream<A,B> = StreamBase<B, { mapFn: (v: A) => B }>;
