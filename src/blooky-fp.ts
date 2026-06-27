@@ -293,7 +293,7 @@ const vertex = (s:Stream<any>): Vertex => {
  */
 const hold = <A>(v:A) => (s:Stream<A>): Prop<A> => {
     const p = () => v;
-    PROP_UPDATE.set(p, (_v)=>v);
+    PROP_UPDATE.set(p, (_v)=>v=_v);
     PROP_FROM.set(p, s);
     cleanupRegistry.register(p, new WeakRef(p));
     if(STREAM_PROP_RELATIONS.has(s))
@@ -326,7 +326,7 @@ function lift<V, T extends any[]>(
   const valueFn = () => f(props.map(p => p()) as T);
   const streams : MappedStream<any,reservation[]>[] = 
     props.flatMap((p, i) => PROP_FROM.has(p) ? map((v) => [[i, v]] as reservation[])(PROP_FROM.get(p)!) : []);
-  const mergedStream = merge<reservation[]>(streams, (a, b) => a.concat(b));
+  const mergedStream = merge<reservation[]>(streams, (v) => v.flat());
   const transformed = map((updates: reservation[]) => {
     const map = new Map(updates);
     return f(props.map((p, i) => map.has(i) ? map.get(i)! : p()) as T);
@@ -438,6 +438,7 @@ const steep = (plans: DripPlan<any>[]) : CommitPlan => {
 
     // Kahn's アルゴリズムでトポロジカルソートする
     const [nextCommitPlan, waiting] = plans.map(flow).reduce(concatTuple,[[],[]] as FlowingState);
+    COMMIT_PLAN_ORIGIN.set(nextCommitPlan, latestCommitPlan());
     if(!waiting.length) return nextCommitPlan;
 
     const pendingValues = waiting.reduce(tupplesToMapReducer, new Map<MergedStream<any>,any[]>());
@@ -503,7 +504,6 @@ const steep = (plans: DripPlan<any>[]) : CommitPlan => {
         if (values?.length) walk([ms, values.reduce(ms.reduceFn)]);
     });
 
-    COMMIT_PLAN_ORIGIN.set(nextCommitPlan, latestCommitPlan());
     return nextCommitPlan;
 }
 
