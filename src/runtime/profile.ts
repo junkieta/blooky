@@ -2,7 +2,6 @@ import { isChainedProp } from "../blooky-fp";
 import { Prop } from "../blooky-fp-types";
 import { FVRuntime } from "../blooky-fv";
 import type { CancelToken, FxNote, FxRef, OutcomeBase, ExecutionContext, RunnerProfile, SuspendOutcome, SuspendUntil, YieldDriver, YieldLocator } from "../blooky-fx-types";
-import { resolveYieldLocator } from "../blooky-fxdom";
 
 export const isOutcome = <T>(v: unknown) : v is OutcomeBase<T> => {
   const value = v as OutcomeBase<T>;
@@ -19,6 +18,7 @@ export const isOutcome = <T>(v: unknown) : v is OutcomeBase<T> => {
 export const createDefaultProfile = (deps: {
   runtime: FVRuntime;
   yieldDriver: YieldDriver;
+  resolveYieldLocator: (until: SuspendUntil, ctx: ExecutionContext) => YieldLocator;
 }): RunnerProfile => {
   const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
   const resolveRef = <T>(ref: FxRef<T>, _ctx?: ExecutionContext): Prop<T> => _ctx.config.resolver(ref, _ctx);
@@ -46,7 +46,7 @@ export const createDefaultProfile = (deps: {
   };
 
   const startYield = async (until, ctx) => {
-    const locator: YieldLocator = resolveYieldLocator(until, ctx);
+    const locator: YieldLocator = deps.resolveYieldLocator(until, ctx);
     const input = until.input === undefined ? undefined : resolveRef(until.input, ctx)();
     const id = `${ctx.executionId}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
 

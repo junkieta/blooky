@@ -22,6 +22,7 @@ import { Prop } from "../blooky-fp-types";
 import { decode, bind } from "../blooky-context";
 import { stream } from "../blooky-fp";
 import { clock } from "./clock";
+import { createChildCancelToken } from "./registry";
 
 const NotResolved = Symbol.for("NotResolved");
 
@@ -30,22 +31,8 @@ const isCancelledError = (e: unknown): e is Error =>
 
 const cancelledReasonFromError = (e: Error) => e.message.slice("cancelled:".length) || "user";
 
-function createCancelToken(parent?: CancelToken): CancelToken {
-  let isCancelled = false;
-  let cancelReason: any;
-  return {
-    parent,
-    cancel: (reason: any = "user") => {
-      isCancelled = true;
-      cancelReason = reason;
-    },
-    cancelled: () => isCancelled || !!parent?.cancelled(),
-    get reason() {
-      if (isCancelled) return cancelReason;
-      return parent?.reason;
-    },
-  };
-}
+// Use createChildCancelToken from registry.ts for consistency
+const createCancelToken = createChildCancelToken;
 
 // ExecutionConfig.idSlots の生成
 const createIdSlots = (flow: FxNote, parentSlot?: Record<string, any>) => {
