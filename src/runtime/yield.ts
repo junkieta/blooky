@@ -1,14 +1,16 @@
 // runtime/yield-hub-local.ts
 
 import { query } from "../blooky-fx";
-import { FxRef, ExecutionContext, YieldConditionRef, YieldDriver, YieldHub, YieldLocator, YieldRequest } from "../blooky-fx-types";
+import { ExecutionContext, YieldDriver, YieldHub, YieldLocator, YieldRequest } from "../blooky-fx-types";
+import { createChildCancelToken } from "./cancel-token";
 
+// Internal Hub implementation for RemoteYieldDriver only
 type Entry =
   | { state: "pending"; p: Promise<void>; resolve: () => void; reject: (e: unknown) => void }
   | { state: "resolved"; value: unknown }
   | { state: "rejected"; error: unknown };
 
-export class LocalYieldHub implements YieldHub {
+class LocalYieldHub implements YieldHub {
   private map = new Map<string, Entry>();
 
   start(id: string) {
@@ -64,7 +66,7 @@ export type YieldDriverMap = Partial<Record<YieldLocator["kind"], YieldDriver>>;
 export class CompositeYieldDriver implements YieldDriver {
   constructor(private drivers: YieldDriverMap) {}
 
-  requestYield(req: YieldRequest): void | Promise<void> {
+  requestYield(req: YieldRequest): void | Promise<unknown> {
     const d = this.drivers[req.locator.kind];
     if (!d) throw new Error(`[yield] no driver for locator.kind=${req.locator.kind}`);
     return d.requestYield(req);
@@ -77,8 +79,6 @@ import { FxFlowElement } from "../blooky-fxdom"; // 実際の型に合わせて
 import { isFxRefKey } from "./engine";
 
 type Deps = {
-  hub: YieldHub;
-
   /** templateId -> HTMLTemplateElement 解決 */
   getTemplateById?: (id: string) => HTMLTemplateElement | null;
 
@@ -93,7 +93,7 @@ type Deps = {
 export class TemplateYieldDriver implements YieldDriver {
   constructor(private deps: Deps) {}
 
-  async requestYield(req: YieldRequest): Promise<void> {
+  async requestYield(req: YieldRequest): Promise<unknown> {
     const { id, locator, input } = req;
     let dispose : ()=>void = () => {};
     try {
@@ -120,17 +120,17 @@ export class TemplateYieldDriver implements YieldDriver {
       // connected 要件のため attach
       this.deps.attachParent.appendChild(host);
 
-      const runtime = req.ctx.config;
+      const childCancelToken = createChildCancelToken(req.ctx.cancelToken);
       const handle = query(host.toFxNote(), req.ctx.appContext, {
         idSlots: input ? { $_: input } : undefined,
-        cancelToken: runtime.cancelToken,
+        cancelToken: childCancelToken,
         executionId: `${req.ctx.executionId}:yield:${id}`,
       });
       const result = await handle.done;
 
-      this.deps.hub.resolve(id, result);
+      return result;
     } catch (e) {
-      this.deps.hub.reject(id, e);
+      throw e;
     } finally {
       dispose();
     }
@@ -147,23 +147,29 @@ type RemoteClient = {
 
 export class RemoteYieldDriver implements YieldDriver {
   private detach?: () => void;
+  private hub: LocalYieldHub;
 
-  constructor(private deps: { hub: YieldHub; client: RemoteClient }) {
+  constructor(private deps: { client: RemoteClient }) {
+    // Remote driver creates its own Hub for out-of-band result reception
+    this.hub = new LocalYieldHub();
     // 結果受信を購読
     this.detach = this.deps.client.onYieldResult((msg) => {
-      if (msg.ok) this.deps.hub.resolve(msg.id, msg.value);
-      else this.deps.hub.reject(msg.id, msg.error);
+      if (msg.ok) this.hub.resolve(msg.id, msg.value);
+      else this.hub.reject(msg.id, msg.error);
     });
   }
 
-  async requestYield(req: YieldRequest): Promise<void> {
+  async requestYield(req: YieldRequest): Promise<unknown> {
     if (req.locator.kind !== "remote") throw new Error("invalid locator");
+    this.hub.start(req.id);
     await this.deps.client.requestYield(req.locator.endpoint, {
       id: req.id,
       locator: req.locator.locator,
       input: req.input,
       executionId: req.ctx.executionId,
     });
+    // Remote driver uses Hub for out-of-band result reception
+    return this.hub.await(req.id).then(() => this.hub.get(req.id));
   }
 
   dispose() {
@@ -171,25 +177,4 @@ export class RemoteYieldDriver implements YieldDriver {
     this.detach = undefined;
   }
 }
-
-// base.resolveRef を引数でもらう（default profile の resolveRef を使う想定）
-export const resolveYieldLocator = (
-  until: YieldConditionRef,
-  ctx: ExecutionContext
-): YieldLocator => {
-  if (until.kind !== "yield") throw new Error("unsupported yield condition");
-  const t = until.target;
-  const raw = (t as any).ref;
-  const resolved =
-    isFxRefKey(raw) || typeof raw === "function"
-      ? ctx.config.resolver(raw as FxRef<unknown>, ctx)() || document.getElementById(raw.key?.slice(1))
-      : raw;
-
-  if (typeof raw === "string") return { kind: "template", templateId: raw };
-  if (resolved instanceof HTMLTemplateElement) return { kind: "template-el", el: resolved };
-  if (raw?.kind === "template" && raw.el instanceof HTMLTemplateElement) return raw;
-  if (raw?.kind === "template-id" && typeof raw.id === "string") return raw;
-
-  throw new Error("Unsupported local yield target ref (expected {kind:'template'|'template-id', ...})");
-};
 

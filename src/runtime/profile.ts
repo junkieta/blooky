@@ -1,8 +1,7 @@
 import { isChainedProp } from "../blooky-fp";
 import { Prop } from "../blooky-fp-types";
 import { FVRuntime } from "../blooky-fv";
-import type { CancelToken, FxNote, FxRef, OutcomeBase, ExecutionContext, RunnerProfile, SuspendOutcome, SuspendUntil, YieldDriver, YieldHub, YieldLocator, YieldSession } from "../blooky-fx-types";
-import { resolveYieldLocator } from "./yield";
+import type { CancelToken, FxNote, FxRef, OutcomeBase, ExecutionContext, RunnerProfile, SuspendOutcome, SuspendUntil, YieldDriver, YieldLocator } from "../blooky-fx-types";
 
 export const isOutcome = <T>(v: unknown) : v is OutcomeBase<T> => {
   const value = v as OutcomeBase<T>;
@@ -18,8 +17,8 @@ export const isOutcome = <T>(v: unknown) : v is OutcomeBase<T> => {
 
 export const createDefaultProfile = (deps: {
   runtime: FVRuntime;
-  yieldHub: YieldHub;
   yieldDriver: YieldDriver;
+  resolveYieldLocator: (until: SuspendUntil, ctx: ExecutionContext) => YieldLocator;
 }): RunnerProfile => {
   const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
   const resolveRef = <T>(ref: FxRef<T>, _ctx?: ExecutionContext): Prop<T> => _ctx.config.resolver(ref, _ctx);
@@ -47,24 +46,15 @@ export const createDefaultProfile = (deps: {
   };
 
   const startYield = async (until, ctx) => {
-    // session id は stable に（id 再利用しない）
+    const locator: YieldLocator = deps.resolveYieldLocator(until, ctx);
+    const input = until.input === undefined ? undefined : resolveRef(until.input, ctx)();
     const id = `${ctx.executionId}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
 
-    const session: YieldSession = { kind: "yield-session", id, until };
-    deps.yieldHub.start(id);
-
-    const locator: YieldLocator = resolveYieldLocator(until, ctx);
-    const input = until.input === undefined ? undefined : resolveRef(until.input, ctx)();
-
     // driver に主権移譲（ここで template/remote/worker が分岐される）
-    void Promise.resolve(
-      deps.yieldDriver.requestYield({ id, locator, input, ctx })
-    ).catch((e) => {
-      // request 失敗は reject に落とす
-      deps.yieldHub.reject(id, e);
-    });
+    // driver の Promise を直接待つ（Hub を仲介しない）
+    const result = await deps.yieldDriver.requestYield({ id, locator, input, ctx });
 
-    return session;
+    return result;
   };
   
   const watchPropUntilTrue = async (p: Prop<boolean>) => {
@@ -99,9 +89,7 @@ export const createDefaultProfile = (deps: {
 
       case "yield": {
         try {
-          const session = await startYield(until, ctx);
-          await awaitYield(session, ctx);
-          const raw = await getYieldResult(session, ctx);
+          const raw = await Promise.race([startYield(until, ctx), waitCancel(cancel)]);
           return (isOutcome(raw) && (raw.kind === "value" || raw.kind === "crash"))
             ? raw
              // yield で error は直接返さず、child由来の timeout/cancel も昇格させない
@@ -135,12 +123,6 @@ export const createDefaultProfile = (deps: {
     }
   };
 
-
-  const awaitYield = async (session, ctx) => {
-    await Promise.race([deps.yieldHub.await(session.id), waitCancel(ctx.cancelToken)]);
-  };
-
-  const getYieldResult = async (session, _ctx) => deps.yieldHub.get(session.id);
 
   const projectEffect = (ref: unknown) => ref;
 
