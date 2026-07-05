@@ -7,7 +7,7 @@
 } from "./blooky-fxdom";
 import type { AppContext, ExecutionConfig, FxNote, PerformanceStep } from "./blooky-fx-types";
 import { clock } from "./runtime/clock";
-import { observeRuntimeStep } from "./runtime/step-line";
+import { observeRuntimeStep } from "./blooky-fx";
 import { decode } from "./blooky-context";
 
 import { drip, isChainedProp, isDripperStream, isStream, isVertex, Prop, Stream, vertex } from "./blooky-fp";

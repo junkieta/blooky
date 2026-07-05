@@ -19,7 +19,7 @@ import { prepare, execute as executeImpl, FxRefSymbol } from "./runtime/engine";
 import { createRegistry, registerDefault } from "./runtime/registry";
 import { createDefaultProfile } from "./runtime/profile";
 import { clock } from "./runtime/clock";
-import { emitRuntimeStep, observeRuntimeStep } from "./runtime/step-line";
+import { createObserverBus } from "./runtime/internal/observer-bus";
 import { TemplateYieldDriver, CompositeYieldDriver } from "./runtime/yield";
 import { resolveYieldLocator } from "./runtime/yield-locator";
 
@@ -28,6 +28,9 @@ import { resolveYieldLocator } from "./runtime/yield-locator";
 // registry は1回だけ作る
 const registry = createRegistry();
 registerDefault(registry);
+
+// step observation bus
+const stepBus = createObserverBus<PerformanceStep>();
 
 // prepareは変更なし
 export {prepare};
@@ -60,7 +63,7 @@ export const execute = (prepared: PreparedFx): ExecutionHandle => {
     if (effect?.kind === "done") {
       await clock.submitPlan([effect.dripper, effect.value]);
     }
-    emitRuntimeStep(step);
+    stepBus.emit(step);
   };
   const handle = executeImpl({
     prepared,
@@ -74,7 +77,7 @@ export const execute = (prepared: PreparedFx): ExecutionHandle => {
   };
 };
 
-export { observeRuntimeStep };
+export const observeRuntimeStep = stepBus.observe;
 
 export const query = (note: FxNote, app: AppContext = {}, ctx?: Partial<ExecutionConfig>) =>
   execute(prepare(note, app, ctx));
