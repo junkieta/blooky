@@ -113,7 +113,7 @@ const save$ = stream();
 const $triggerSave = hold(false)(map(() => true)(save$));
 
 const statusMessageStream$ = stream<FxResult<string>>();
-const changeCountStream = merge([map(() => 1)(increment$), map(() => -1)(decrement$)], ((a, b) => a + b));
+const changeCountStream = merge([map(() => 1)(increment$), map(() => -1)(decrement$)], ((v) => v.reduce((a,b)=>a+b)));
 const $count = accum((current: number, val: number) => current + val, 0)(changeCountStream);
 const $statusMessage = hold('Ready.')(map<FxResult<string>,string>((r)=> r.kind === "value" ? r.value : JSON.stringify(r) )(statusMessageStream$));
 const $finalMessage = remap<number, string>((v) => `Saved Count:${v}`)($count);

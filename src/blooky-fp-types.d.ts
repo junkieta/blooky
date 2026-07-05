@@ -7,10 +7,14 @@ export type StreamBase<A, T> = {
   lazyNext: Set<MergedStream<A>>;
 } & T;
 
-export type DripperStream<A> = StreamBase<A, { isDripper: true }>;
+export type DripperStream<A> = StreamBase<A, {
+  isDripper: true,
+}>;
 export type Dripper<A> = DripperStream<A>;
 
-export type MergedStream<A> = StreamBase<A, { reduceFn: (a: A, b: A) => A }>;
+export type MergedStream<A> = StreamBase<A, {
+  reduceFn: (v: A[]) => A
+}>
 
 export type MappedStream<A,B> = StreamBase<B, { mapFn: (v: A) => B }>;
 
@@ -32,11 +36,11 @@ export type Vertex = {
 };
 
 
+export type DripPlan<A> = [DripperStream<A>, A];
 export type PropPlan<A> = [Prop<A>, A];
-export type DripPlan<A> = {
-  dripper: DripperStream<A>,
-  value: A
-};
+export type CommitPlan = PropPlan<any>[];
+export type CommitPlanMap = Map<Prop<any>,any>;
+export type ConflictPropMap = Map<Prop<any>,any[]>;
 
 // Informative / internal
-export type FlowingState = [PropPlan<unknown>[], [MergedStream<any>, any][]];
+export type FlowingState = [CommitPlan, [MergedStream<any>, any][]];

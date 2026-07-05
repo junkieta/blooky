@@ -22,6 +22,7 @@ import { Prop } from "../blooky-fp-types";
 import { decode, bind } from "../blooky-context";
 import { stream } from "../blooky-fp";
 import { clock } from "./clock";
+import { createChildCancelToken, Cancelled } from "./cancel-token";
 
 const NotResolved = Symbol.for("NotResolved");
 
@@ -30,22 +31,8 @@ const isCancelledError = (e: unknown): e is Error =>
 
 const cancelledReasonFromError = (e: Error) => e.message.slice("cancelled:".length) || "user";
 
-function createCancelToken(parent?: CancelToken): CancelToken {
-  let isCancelled = false;
-  let cancelReason: any;
-  return {
-    parent,
-    cancel: (reason: any = "user") => {
-      isCancelled = true;
-      cancelReason = reason;
-    },
-    cancelled: () => isCancelled || !!parent?.cancelled(),
-    get reason() {
-      if (isCancelled) return cancelReason;
-      return parent?.reason;
-    },
-  };
-}
+// Use createChildCancelToken from registry.ts for consistency
+const createCancelToken = createChildCancelToken;
 
 // ExecutionConfig.idSlots の生成
 const createIdSlots = (flow: FxNote, parentSlot?: Record<string, any>) => {
@@ -250,6 +237,7 @@ export function prepare(flow: FxNote, initialAppContext: AppContext = {}, parent
       resolver: parent?.resolver ?? defaultResolve,
       idSlots: createIdSlots(flow, parent?.idSlots),
       executionId: parent?.executionId,
+      cancelToken: parent?.cancelToken,
     },
   };
 }
@@ -271,8 +259,6 @@ const resolveExitEffect = (note: FxNote, ctx: ExecutionContext, result: unknown)
   return { kind: "done", dripper, value };
 };
 
-
-
 export function execute(args: {
   prepared: PreparedFx;
   registry: Registry;
@@ -282,7 +268,7 @@ export function execute(args: {
   const { prepared, registry, profile, onStep } = args;
   const { rootNote, config, appContext } = prepared;
   const [ execution_id, unbind_exec_id] = generateExecutionId();
-  const rootCancelToken = createCancelToken();
+  const rootCancelToken = createCancelToken(config.cancelToken);
 
   let stepCount = 0;
 
@@ -462,12 +448,7 @@ export class Terminated extends Error {
   }
 }
 
-export class Cancelled extends Error {
-  readonly name = "Cancelled";
-  constructor(readonly reason: string) {
-    super(`Execution cancelled: ${reason}`);
-  }
-}
+// Cancelled class moved to cancel-token.ts to avoid circular import
 
 export type DispatchDepends = {
   profile: RunnerProfile;

@@ -13,7 +13,7 @@
 ## 0. Purpose
 
 本仕様は、UI・Execution・外部入力を含むあらゆる入力経路から生成された
-**DripPlan を Tick 単位で集約し、Atomic Commit する Runtime の契約**を定義する。
+**CommitPlan を Tick 単位で集約し、Atomic Commit する Runtime の契約**を定義する。
 
 本仕様は以下を規定する：
 
@@ -33,29 +33,26 @@
 
 # 1. Fundamental Model
 
-## 1.1 DripPlan
+## 1.1 CommitPlan
 
 ```
-type DripPlan = Array<[Prop<any>, any]>
+type CommitPlan = Array<[Prop<any>, any]>
 ```
 
-DripPlan は **単一評価の帰結として得られる Prop 更新集合**である。
+CommitPlan は **単一評価の帰結として得られる Prop 更新集合**である。
 
-DripPlan は命令ではなく、**次状態の宣言**である。
+CommitPlan は命令ではなく、**次状態の宣言**である。
+
+CommitPlan は Tick 内で確定する状態遷移集合を意味する。
 
 ---
 
-## 1.2 CommitPlan/ObservedPlan
+## 1.2 ObservedPlan
 ```
-type CommitPlan = DripPlan;      // same representation, different semantics
-type ObservedPlan = DripPlan;    // view type alias
+type ObservedPlan = CommitPlan;    // view type alias
 ```
 
 ### 規範
-
-CommitPlan と DripPlan は 同一表現を持つ（MUST）。
-
-CommitPlan は Tick 内で確定する状態遷移集合を意味する。
 
 ObservedPlan は commit に供される更新集合の viewである。
 
@@ -96,10 +93,10 @@ Runtime においても recoverable failure として扱ってはならない（
 
 ## 2.1 Legitimate Plan Sources（Normative）
 
-DripPlan は、以下のいずれかの方法で生成されなければならない（MUST）：
+CommitPlan は、以下のいずれかの方法で生成されなければならない（MUST）：
 
-1. `drip(value)(dripper)` によるデータフロー評価の結果
-2. 既存の DripPlan に対する **構造的変換**（Structural Transformation）
+1. `drip(plan)` によるデータフロー評価の結果
+2. 既存の CommitPlan に対する **構造的変換**（Structural Transformation）
 3. 現在状態の読み取り `p()` に基づく **Snapshot 生成**
 
 ---
@@ -145,7 +142,7 @@ undoPlan = plan.map(([p]) => [p, p()])
 Runtime が行ってよいのは：
 
 * `drip(...)` の呼び出し
-* 複数 DripPlan の合成
+* 複数 CommitPlan の合成
 * 検証
 
 Prop と値の組を直接生成してはならない。
@@ -154,19 +151,19 @@ Prop と値の組を直接生成してはならない。
 
 ## 2.2 No Arbitrary Value Injection
 
-Runtime は DripPlan に対して：
+Runtime は CommitPlan に対して：
 
 * 新しい Prop を追加してはならない（MUST NOT）
 * 既存エントリの値を変更してはならない（MUST NOT）
 * 外部値を注入してはならない（MUST NOT）
 
-DripPlan は常にデータフロー評価の帰結でなければならない。
+CommitPlan は常にデータフロー評価の帰結でなければならない。
 
 ---
 
 # 3. Plan Composition
 
-Runtime は同一 Tick 内で複数の DripPlan を合成してよい（MAY）。
+Runtime は同一 Tick 内で複数の CommitPlan を合成してよい（MAY）。
 
 合成結果は **CommitPlan** と呼ぶ。
 
@@ -186,8 +183,8 @@ CommitPlan は単一の状態遷移である。
 ## 3.2 Deduplication Rule（Optional）
 
 前提（Normative Clarification）:
-各入力 DripPlan は blooky-fp v1.0.0 の一意性制約（同一 Prop の重複禁止）を満たしていなければならない（MUST）。
-本節で扱う重複は、同一 Tick 内で複数 DripPlan を合成した結果として発生する重複に限る。
+各入力 CommitPlan は blooky-fp v1.0.0 の一意性制約（同一 Prop の重複禁止）を満たしていなければならない（MUST）。
+本節で扱う重複は、同一 Tick 内で複数 CommitPlan を合成した結果として発生する重複に限る。
 
 同一 Prop に対する複数更新が存在する場合：
 
@@ -211,7 +208,7 @@ Runtime は、Tick 内で合成・正規化・conflict 検証が完了し、
 この写像を **ObservedPlan** と呼ぶ。
 
 ```ts
-type ObservedPlan = DripPlan
+type ObservedPlan = CommitPlan
 ```
 
 ## 4.1 ObservedPlan Contract（Normative）
@@ -227,7 +224,7 @@ ObservedPlan は以下を満たさなければならない（MUST）：
 
 Runtime は以下の順序を守らなければならない（MUST）：
 
-1. DripPlan を合成する。
+1. CommitPlan を合成する。
 2. Conflict 検証を行う。
 3. CommitPlan を確定する。
 4. ObservedPlan を生成し observer に通知する。
@@ -316,7 +313,7 @@ Observer は：
 
 Runtime は以下の順序を守らなければならない（MUST）：
 
-1. DripPlan を合成する。
+1. CommitPlan を合成する。
 2. Conflict 検証を行う。
 3. CommitPlan を確定する。
 4. ObservedPlan を生成し Observer に通知する（MAY）。

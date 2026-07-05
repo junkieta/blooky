@@ -37,8 +37,8 @@ const finishPhaseAction$ = stream<Event>();
 const endOfPhase$ = map<Event,Phase>((e)=>(e.target as HTMLButtonElement).value as Phase)(finishPhaseAction$);
 const doneConfirmResult$ = stream<"done-free"|"done-pro">();
 const $phase = hold<Phase>("email")(merge<Phase>([
-  map<Phase,Phase>(getNextPhase)(merge([endOfPhase$,doneConfirmResult$])),
-  map((): Phase => "email")(restart$),
+  map<Phase,Phase>(getNextPhase)(merge([endOfPhase$,doneConfirmResult$ as Dripper<Phase>])),
+  map<void,Phase>((): Phase => "email")(restart$),
 ]))
 
 // フォーム値
@@ -147,9 +147,6 @@ const $planLabel = remap((p: string) => p === "pro" ? "Pro ¥2,980/月" : "Free 
 const $planLabelCls = remap((p: string) => "summary-val " + (p === "pro" ? "plan-pro" : "plan-free"))($plan);
 
 // ステップカードの内容（$phase から派生）
-
-
-
 const nextStepBtn = prime(({
   $value,
   action$
@@ -165,11 +162,12 @@ const nextStepBtn = prime(({
     onclick: (e: Event) => {
       const btn = e.currentTarget as HTMLButtonElement;
       const formElement = btn.form;
-      if(formElement && !formElement.checkValidity()) {
+      if(!formElement) return;
+      if(!formElement.checkValidity()) {
         formElement.reportValidity();
       } else {
         const next = getNextPhase(btn.value as Phase);
-        clock.submitPlan({ dripper: action$, value: e }).then(()=>{
+        clock.submitPlan([action$,e]).then(()=>{
           [...formElement.children].filter((n)=>n.nodeName === "FIELDSET").forEach((n)=>{
             (n as HTMLFieldSetElement).style.display = n.className === next ? "flex" : "none";
           })
@@ -319,7 +317,7 @@ async function restart() {
     wizardHandle = null;
   }
   // restart$ 一本で全状態をリセット
-  await clock.submitPlan({ dripper: restart$, value: undefined });
+  await clock.submitPlan([restart$,undefined]);
 
   if (wizardFxContainer) {
     const old = wizardFxContainer.querySelector("fx-effect");

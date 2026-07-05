@@ -20,7 +20,10 @@ import { createRegistry, registerDefault } from "./runtime/registry";
 import { createDefaultProfile } from "./runtime/profile";
 import { clock } from "./runtime/clock";
 import { emitRuntimeStep, observeRuntimeStep } from "./runtime/step-line";
-import { TemplateYieldDriver, CompositeYieldDriver, LocalYieldHub } from "./runtime/yield";
+import { TemplateYieldDriver, CompositeYieldDriver } from "./runtime/yield";
+import { resolveYieldLocator } from "./runtime/yield-locator";
+
+
 
 // registry は1回だけ作る
 const registry = createRegistry();
@@ -30,33 +33,32 @@ registerDefault(registry);
 export {prepare};
 
 export const execute = (prepared: PreparedFx): ExecutionHandle => {
-  const hub = new LocalYieldHub();
   const drivers: any = {};
   // template driver は DOM が必要（ただし profile は分岐不要。driver を差し替えるだけ）
   const isBrowser = typeof document !== "undefined";
   if (isBrowser) {
     drivers["template"] = new TemplateYieldDriver({
-      hub,
       attachParent: document.body,
       getTemplateById: (id) => document.getElementById(id) as any,
     });
     drivers["template-el"] = drivers["template"];
   }
   // remote driver は transport があるなら常に注入可能
-  // drivers["remote"] = new RemoteYieldDriver({ hub, client: remoteClient });
+  // drivers["remote"] = new RemoteYieldDriver({ client: remoteClient });
   const profile = createDefaultProfile({
     runtime: {
       observeCommit: clock.observeCommit,
       unobserveCommit: clock.unobserveCommit,
       submitPlan: clock.submitPlan
     },
-    yieldHub: hub,
     yieldDriver: new CompositeYieldDriver(drivers),
+    resolveYieldLocator,
   });
+
   const onStep = async (step: PerformanceStep) => {
     const effect = step.effect as BridgeEffect | undefined;
     if (effect?.kind === "done") {
-      await clock.submitPlan({ dripper: effect.dripper, value: effect.value });
+      await clock.submitPlan([effect.dripper, effect.value]);
     }
     emitRuntimeStep(step);
   };
@@ -133,4 +135,6 @@ export const fx = {
     ...(id ? { id } : {}),
   }),
 };
+
+
 

@@ -126,6 +126,7 @@ export interface ExecutionConfig {
   resolver: <T>(ref: FxRef<T>, ctx: ExecutionContext) => Prop<T>;
   idSlots: Record<string, any>;
   executionId?: string;
+  cancelToken?: CancelToken;
 }
 
 // ─── PreparedFx ───
@@ -281,7 +282,7 @@ export interface YieldHub {
 }
 
 export interface YieldDriver {
-  requestYield(req: YieldRequest): void | Promise<void>;
+  requestYield(req: YieldRequest): void | Promise<unknown>;
 }
 
 export interface FxCallAction<A = void, B = unknown> {

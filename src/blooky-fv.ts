@@ -4,7 +4,7 @@
  * blooky-fpのStream/Propの概念をDOMにバインドし、宣言的なHTML記述（JSHTML）を可能にする。
  *
  * Next: fv は fx に直依存せず、FVRuntime（observeCommit/unobserveCommit/submitPlan）を注入して動作する。
- * - DOM Event -> drip -> DripPlan を生成し、runtime.submitPlanへ委譲
+ * - DOM Event -> drip -> CommitPlan を生成し、runtime.submitPlanへ委譲
  * - commit時の plan 通知は runtime.observeCommit 経由で update(plan) が呼ばれる
  *
  * NOTE: mutations() はコアから排除（削除）。
@@ -38,7 +38,7 @@ import type { Prop, Dripper, Stream, DripPlan } from "./blooky-fp-types";
  * ------------------------------------------- */
 
 // 観測されたPropとその更新予定の値のMap
-export type ObservedDripPlan = Map<Prop<any>,any>;
+export type ObservedCommitPlan = Map<Prop<any>,any>;
 
 export interface FVRuntime {
 
@@ -46,10 +46,10 @@ export interface FVRuntime {
    * f(plan) を受け取る関数を登録し、Propを監視対象に登録する registerProp を返す。
    * registerProp(p) が呼ばれた Prop に関する commit が発生したとき、onPlan が呼ばれること。
    */
-  observeCommit(f: (plan: ObservedDripPlan) => void): (p: Prop<any>) => ()=>void;
+  observeCommit(f: (plan: ObservedCommitPlan) => void): (p: Prop<any>) => ()=>void;
 
   /** observeしたobserve/register の対象から外す */
-  unobserveCommit(f: (plan: ObservedDripPlan) => void): (p: Prop<any>) => void;
+  unobserveCommit(f: (plan: ObservedCommitPlan) => void): (p: Prop<any>) => void;
 
   /** fv からの「更新計画」を受け取り、適切な境界で commit する（or スケジュールする） */
   submitPlan<A>(plan: DripPlan<A>): Promise<any>;
@@ -205,7 +205,7 @@ export const createFV = (rt: FVRuntime) => {
   /**
    * Plan を受けて DOM を更新する（runtime.observeCommit から呼ばれる）
    */
-  const update = (plan: ObservedDripPlan) => {
+  const update = (plan: ObservedCommitPlan) => {
 
     // DOMに関係するPropを残してガベージコレクト
     const update_target = [...plan.keys()].flatMap((p) => PROP_BRIDGE_RECORD.get(p) || []);
@@ -266,7 +266,7 @@ const listenerForSubmit =
       return;
     }
 
-    const plan = { dripper, value: ev };
+    const plan: DripPlan<A> = [dripper,ev];
 
     // キャンセル可能（fv側の責務）
     const ok = target.dispatchEvent(
