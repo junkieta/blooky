@@ -22,7 +22,7 @@ import { Prop } from "../blooky-fp-types";
 import { decode, bind } from "../blooky-context";
 import { stream } from "../blooky-fp";
 import { clock } from "./clock";
-import { createChildCancelToken } from "./registry";
+import { createChildCancelToken, Cancelled } from "./cancel-token";
 
 const NotResolved = Symbol.for("NotResolved");
 
@@ -448,12 +448,7 @@ export class Terminated extends Error {
   }
 }
 
-export class Cancelled extends Error {
-  readonly name = "Cancelled";
-  constructor(readonly reason: string) {
-    super(`Execution cancelled: ${reason}`);
-  }
-}
+// Cancelled class moved to cancel-token.ts to avoid circular import
 
 export type DispatchDepends = {
   profile: RunnerProfile;

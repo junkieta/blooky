@@ -2,7 +2,7 @@
 
 import { query } from "../blooky-fx";
 import { ExecutionContext, YieldDriver, YieldHub, YieldLocator, YieldRequest } from "../blooky-fx-types";
-import { createChildCancelToken } from "./registry";
+import { createChildCancelToken } from "./cancel-token";
 
 // Internal Hub implementation for RemoteYieldDriver only
 type Entry =

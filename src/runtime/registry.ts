@@ -1,7 +1,7 @@
 import { bind } from "../blooky-context";
 import type { FxNote, Registry, Semantics, StructureEvent, StructureRunner, YieldConditionRef } from "../blooky-fx-types";
 import type { CancelToken } from "../blooky-fx-types";
-import { Cancelled } from "./engine";
+import { Cancelled, createChildCancelToken } from "./cancel-token";
 
 
 export const createRegistry = (): Registry => ({
@@ -137,23 +137,6 @@ const overlayContext = (
   }
   return scoped as Record<string, any>;
 };
-
-export function createChildCancelToken(parent?: CancelToken): CancelToken {
-  let cancelled = false;
-  let reason: any;
-  return {
-    parent,
-    cancel: (r: any = "user") => {
-      cancelled = true;
-      reason = r;
-    },
-    cancelled: () => cancelled || !!parent?.cancelled(),
-    get reason() {
-      if (cancelled) return reason;
-      return parent?.reason;
-    },
-  };
-}
 
 export const registerDefault = (reg: Registry) => {
   reg.semantics.set("none", semNone);
