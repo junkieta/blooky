@@ -95,19 +95,24 @@ const stream = <A>() : DripperStream<A> =>
     isDripper: true,
 });
 
+
 /**
  * 複数のStreamを一つに合流させる。
  * いずれかのStreamに値が流れると、合流後のStreamにも値が流れる。
  * reduceFnで、複数の値をどう統合するかを指定できる。
  * @param streams - 合流させるStreamの配列
- * @param reduceFn - 値の統合方法（省略時は後の値で上書き）
+ * @param reduceFn - 値の統合方法（省略時は複数値同時到着をエラーとみなす）
  * @returns 合流後のStream
  */
 const merge = <A> (s:Stream<A>[], f?:(v:A[]) => A) : MergedStream<A> => {
     const _s : MergedStream<A> = {
         next: new Set(),
         lazyNext: new Set(),
-        reduceFn: f || ((v:A[])=>v[0])
+        reduceFn: f || ((v) => {
+            if (v.length > 1)
+                throw new MergeConflictError(_s, v);
+            return v[0];
+        })
     };
     STREAM_CLEANERS.set(_s, () => {
         s.forEach((s)=>s.lazyNext.delete(_s));
@@ -159,10 +164,10 @@ function map<A,B>(f:((v:A)=>B)|Prop<B>|B) {
 
 /**
  * Prop<A>の値に応じて、異なるStreamを選択的に合流させる。
- * @param records - { key: Stream } の形式のレコードまたはMap
+ * @param records - { key: Stream } の形式のレコードまたはMap。Mapとの互換性のため、Recordのsymbolキーは不許可。
  * @returns Propを受け取りMergedStreamを返す関数
  */
-const junction = <A,B>(records: Map<A,Stream<B>>|Record<string|symbol|number,Stream<B>>) => {
+const junction = <A,B>(records: Map<A,Stream<B>>|Record<string|number,Stream<B>>) => {
     if(!(records instanceof Map)) return junction(new Map(Object.entries(records)));
     return (p:Prop<A>) : MergedStream<B> => {
         const streams = [...records.entries()].map(([k,s]:[A,Stream<B>])=>filter<B>(()=>p()===k)(s));
@@ -283,7 +288,9 @@ const hold = <A>(v:A) => (s:Stream<A>): Prop<A> => {
 }
 
 /**
- * Propを別のPropに変換する。元のPropがStreamと接続されていれば、新しいPropも同じStreamから自動的に値を受け取る。
+ * Propを元に別のPropを作成する。元のPropがStreamと接続されていれば、新しいPropも同じStreamから自動的に値を受け取る。
+ * メモリ管理上の注意:
+ * あくまで新規のPropであり、紐づけはStreamに対するもの。元のPropがdisconnectされても、remapされたPropは自動削除されない。
  * @param fn - 変換関数
  * @returns Propを受け取り新しいPropを返す関数
  */
@@ -294,6 +301,8 @@ const remap = <A,B>(f:(v:A)=>B) => (p:Prop<A>) : Prop<B> =>
 
 /**
  * 複数のPropを組み合わせて新しいPropを生成。いずれかのPropが更新されると、新しいPropも自動的に再計算される。
+ * メモリ管理上の注意:
+ * remapと同様、liftのPropは元となるPropがdisconnectされても影響を受けない。disconnectされたPropはただのゲッター関数である。
  * @param fn - 統合関数
  * @returns Props配列を受け取り新しいPropを返す関数
  */
@@ -316,11 +325,19 @@ function lift<V, T extends any[]>(
   return hold(valueFn())(transformed);
 };
 
-// 内部実装用の関数群
+// 内部実装用
 export class CommitConflictError extends Error {
   name = "CommitConflictError";
   constructor(readonly conflicts: Map<Prop<any>, any[]>) {
     super("Conflict in CommitPlan");
+  }
+}
+
+export class MergeConflictError<A> extends Error {
+  name = "MergeConflictError";
+  
+  constructor(readonly stream: MergedStream<A>, conflicts: A[]) {
+    super("Conflict in MergedStream");
   }
 }
 
@@ -380,6 +397,7 @@ const latestCommitPlan = hold<CommitPlan>([])(stream());
  * @returns データフローを経由して生成されるProp更新計画
  */
 const drip = <A>(plan: DripPlan<A>): CommitPlan => {
+    if (!isDripPlan(plan)) throw new Error("[blooky-fp] drip: invalid plan");
     const commits = flowLazy(plan)[0];
     COMMIT_PLAN_BASE.set(commits, latestCommitPlan());
     return commits;
@@ -396,6 +414,7 @@ const drip = <A>(plan: DripPlan<A>): CommitPlan => {
  * @returns データフローを経由して生成されるProp更新計画
  */
 const steep = (plans: DripPlan<any>[]) : CommitPlan => {
+    if(!plans.length) throw new Error("[blooky-fp] steep: empty plans");
     if(plans.length < 2) return drip(plans[0]);
 
     // Kahn's アルゴリズムでトポロジカルソートする
@@ -479,10 +498,9 @@ const steep = (plans: DripPlan<any>[]) : CommitPlan => {
 const inverse = (plan: CommitPlan) : CommitPlan => {
     const base = COMMIT_PLAN_BASE.get(plan);
     if (!base)
-        throw new Error("[blooky-fp] snapshot: foreign or stale plan");
+        throw new Error("[blooky-fp] inverse: foreign or stale plan");
     if (COMMIT_PLAN_BASE.has(base))
-        throw new Error("[blooky-fp] snapshot: cannot snapshot a snapshot plan");
-    // 現在のsnapshotを取得
+        throw new Error("[blooky-fp] inverse: cannot inverse an already-inversed plan");
     const inverse = plan.map(([p])=>[p,p()]) as CommitPlan;
     COMMIT_PLAN_BASE.set(inverse, plan);
     return inverse;
@@ -518,7 +536,7 @@ const commit = (plan: CommitPlan) => {
     // Planの全てのPropを設定
     plan.forEach(([p,v]) => PROP_UPDATE.get(p)!(v));
 
-    // baseにbaseが存在するのはsnapshotなので、latestをsnapshot前のCommitPlanにする
+    // baseにbaseが存在するのはinversedなので、latestをさらに前のCommitPlanにする
     const latest = COMMIT_PLAN_BASE.has(base)
         ? COMMIT_PLAN_BASE.get(base)
         : plan;
