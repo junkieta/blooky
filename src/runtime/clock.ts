@@ -353,12 +353,17 @@ const unobserveCommit: FVRuntime["unobserveCommit"] = (f) => (p) => {
   }
 };
 
+const tickBusDisposers = new WeakMap<TickObserver, () => void>();
 const observeTick = (f: TickObserver): (() => void) => {
-  return tickBus.observe(f);
+  const dispose = tickBus.observe(f);
+  tickBusDisposers.set(f, dispose);
+  return dispose;
 };
 
 const unobserveTick = (f: TickObserver): void => {
-  // No-op: observer-bus handles cleanup via the returned unsubscribe function
+  const dispose = tickBusDisposers.get(f);
+  if (dispose) dispose();
+  tickBusDisposers.delete(f);
 };
 
 // ─────────────────────────────────────────────────────────
