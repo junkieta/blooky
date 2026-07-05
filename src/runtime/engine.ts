@@ -250,6 +250,7 @@ export function prepare(flow: FxNote, initialAppContext: AppContext = {}, parent
       resolver: parent?.resolver ?? defaultResolve,
       idSlots: createIdSlots(flow, parent?.idSlots),
       executionId: parent?.executionId,
+      cancelToken: parent?.cancelToken,
     },
   };
 }
@@ -271,8 +272,6 @@ const resolveExitEffect = (note: FxNote, ctx: ExecutionContext, result: unknown)
   return { kind: "done", dripper, value };
 };
 
-
-
 export function execute(args: {
   prepared: PreparedFx;
   registry: Registry;
@@ -282,7 +281,7 @@ export function execute(args: {
   const { prepared, registry, profile, onStep } = args;
   const { rootNote, config, appContext } = prepared;
   const [ execution_id, unbind_exec_id] = generateExecutionId();
-  const rootCancelToken = createCancelToken();
+  const rootCancelToken = createCancelToken(config.cancelToken);
 
   let stepCount = 0;
 

@@ -138,7 +138,7 @@ const overlayContext = (
   return scoped as Record<string, any>;
 };
 
-function createChildCancelToken(parent?: CancelToken): CancelToken {
+export function createChildCancelToken(parent?: CancelToken): CancelToken {
   let cancelled = false;
   let reason: any;
   return {
