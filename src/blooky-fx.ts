@@ -139,5 +139,8 @@ export const fx = {
   }),
 };
 
+// Score構造操作 — devtools はこの経路経由で参照し、runtime を直接知らずに済む。
+export { flattenFxNotes, resolveNoteId } from "./runtime/fx-tree";
+
 
 

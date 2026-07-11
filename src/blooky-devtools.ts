@@ -1,31 +1,22 @@
 ﻿import {
   fxdom,
-  executeByElement as defaultExecuteByElement,
   EffectElementTagNameMap as DefaultEffectElementTagNameMap,
-  FxEffectElement as ConcreteEffectElementConstructor,
+  withLifecycleHooks,
+  EffectElement,
   FxEffectElement,
+  getElementForNote,
 } from "./blooky-fxdom";
+import { query, flattenFxNotes, resolveNoteId, observeRuntimeStep } from "./blooky-fx";
 import type { AppContext, ExecutionConfig, FxNote, PerformanceStep } from "./blooky-fx-types";
 import { clock } from "./runtime/clock";
-import { observeRuntimeStep } from "./blooky-fx";
 import { decode } from "./blooky-context";
-
-import { drip, isChainedProp, isDripperStream, isStream, isVertex, Prop, Stream, vertex } from "./blooky-fp";
-import { Vertex, DripperStream, MergedStream } from "./blooky-fp-types";
-import { resolveNoteId } from "./runtime/engine";
+import { drip, isDripperStream, Prop } from "./blooky-fp";
 
 // ---------------------------------------------------------------------------
-// FxDOM injection (core projection primitives)
+// FxDOM projection state
 // ---------------------------------------------------------------------------
 
-/**
- * FxNote ↔ EffectElement binding.
- * NOTE: Spec recommends external binding tables (WeakMap), not embedding into FxNote.
- */
 const FxElementStates = new WeakMap<HTMLElement, CustomStateSet>();
-type NoteElementCollector = (note: FxNote, element: HTMLElement) => void;
-type NoteElementResolver = (noteId: string, executionId: string) => HTMLElement | undefined;
-let activeNoteElementCollector: NoteElementCollector | null = null;
 
 export const getFxElement = (
   bindings: ReadonlyMap<string, HTMLElement>,
@@ -35,12 +26,8 @@ export const getFxElementStates = (el: HTMLElement): CustomStateSet | undefined 
 
 // ---- Stylesheets (dev-only visual aid) ----
 
-const devtoolsCSSPath = []//["./blooky-devtools-nested.css", "./blooky-devtools-theme.css"];
+const devtoolsCSSPath: string[] = []; // ["./blooky-devtools-nested.css", "./blooky-devtools-theme.css"];
 
-/**
- * Load style sheets for EffectElement projections.
- * Failure MUST be isolated.
- */
 const DevEffectElementStyleSheets: Promise<CSSStyleSheet[]> = Promise.all(
   devtoolsCSSPath.map(async (path) => {
     try {
@@ -51,7 +38,6 @@ const DevEffectElementStyleSheets: Promise<CSSStyleSheet[]> = Promise.all(
       return sheet;
     } catch (e) {
       console.warn("[devtools] Failed to load stylesheet:", path, e);
-      // Return an empty sheet to keep adoptedStyleSheets stable.
       return new CSSStyleSheet();
     }
   })
@@ -60,73 +46,7 @@ const DevEffectElementStyleSheets: Promise<CSSStyleSheet[]> = Promise.all(
   return [];
 });
 
-// ---- Dynamic extends for all EffectElements ----
-
-/**
- * Dev-only EffectElementTagNameMap.
- * - Adds CustomStateSet-based projection
- * - Adds small ShadowRoot label UI for debugging/inspection
- *
- * IMPORTANT: This map MUST be passed to fxdom.defineEffectElements() by the entry-point.
- * This module does not call defineEffectElements() by itself.
- */
-const EffectElementTagNameMap: typeof DefaultEffectElementTagNameMap = Object.fromEntries(
-  new Map(Object.entries(DefaultEffectElementTagNameMap))
-) as any;
-
-Object.entries(EffectElementTagNameMap).forEach(([tag, fxClass]) => {
-
-  EffectElementTagNameMap[tag as keyof typeof EffectElementTagNameMap] = class extends (
-    fxClass as typeof ConcreteEffectElementConstructor
-  ) {
-    constructor() {
-      super();
-      try {
-        const internals = this.attachInternals();
-        FxElementStates.set(this, internals.states);
-      } catch (e) {
-        // attachInternals may be unavailable in some environments; isolate.
-        console.warn("[devtools] attachInternals unavailable (isolated):", e);
-      }
-    }
-
-  connectedCallback() {
-    super.connectedCallback();
-
-    const shadow = this.shadowRoot || this.attachShadow({ mode: "open" });
-
-    DevEffectElementStyleSheets.then((sheets) => {
-      try {
-        // Avoid duplicates if possible
-        const existing = new Set(shadow.adoptedStyleSheets);
-        const next = sheets.filter((s) => !existing.has(s));
-        if (next.length) shadow.adoptedStyleSheets.push(...next);
-      } catch (e) {
-        console.warn("[devtools] adoptedStyleSheets failed (isolated):", e);
-      }
-    });
-
-    // Insert selector label once
-    if (!shadow.querySelector(":scope > code.selector")) {
-      shadow.insertBefore(toSelectorExpression(this), shadow.firstChild);
-    }
-
-    if (!shadow.querySelector("slot")) {
-      shadow.append(document.createElement("slot"));
-    }
-  }
-
-  toFxNote(): FxNote {
-    const result = super.toFxNote() as FxNote;
-    activeNoteElementCollector?.(result, this);
-    return result;
-  }
-} as any;
-
-});
-
 const toSelectorExpression = (e: Element) => {
-
   const element = (tag: string, attrs?: Record<string, string>, text?: string) => {
     const elm = document.createElement(tag);
     if (attrs) for (const name in attrs) elm.setAttribute(name, attrs[name]);
@@ -151,11 +71,128 @@ const toSelectorExpression = (e: Element) => {
       element("code", undefined, '"]')
     );
   });
-
   container.append(df);
   return container;
+};
 
+// ---- Instrumentation: baseline (CustomStateSet + selector label) ----
+
+const instrumentBase = (Base: typeof EffectElement) =>
+  withLifecycleHooks(Base, {
+    connected(el) {
+      try {
+        const internals = el.attachInternals();
+        FxElementStates.set(el, internals.states);
+      } catch (e) {
+        console.warn("[devtools] attachInternals unavailable (isolated):", e);
+      }
+
+      const shadow = el.shadowRoot || el.attachShadow({ mode: "open" });
+
+      DevEffectElementStyleSheets.then((sheets) => {
+        try {
+          const existing = new Set(shadow.adoptedStyleSheets);
+          const next = sheets.filter((s) => !existing.has(s));
+          if (next.length) shadow.adoptedStyleSheets.push(...next);
+        } catch (e) {
+          console.warn("[devtools] adoptedStyleSheets failed (isolated):", e);
+        }
+      });
+
+      if (!shadow.querySelector(":scope > code.selector")) {
+        shadow.insertBefore(toSelectorExpression(el), shadow.firstChild);
+      }
+      if (!shadow.querySelector("slot")) {
+        shadow.append(document.createElement("slot"));
+      }
+    },
+  });
+
+const EffectElementTagNameMap: typeof DefaultEffectElementTagNameMap = Object.fromEntries(
+  Object.entries(DefaultEffectElementTagNameMap).map(([tag, cls]) => [tag, instrumentBase(cls)])
+) as any;
+
+// ---- Instrumentation: fx-switch named-slot exposure ----
+
+if (EffectElementTagNameMap["fx-switch"]) {
+  EffectElementTagNameMap["fx-switch"] = withLifecycleHooks(EffectElementTagNameMap["fx-switch"], {
+    connected(el) {
+      try {
+        const shadow = el.shadowRoot;
+        if (!shadow) return;
+
+        const existingSlot = shadow.querySelector("slot");
+        existingSlot?.remove();
+
+        const slots = [...el.children]
+          .filter((elm) => elm.slot != null)
+          .map((elm) => {
+            const s = document.createElement("slot");
+            s.name = elm.slot;
+            return s;
+          });
+        shadow.append(...slots);
+
+        if (!slots.length) shadow.append(document.createElement("slot"));
+      } catch (e) {
+        console.error("[devtools] fx-switch enhancement failed (isolated):", e);
+      }
+    },
+  });
 }
+
+// ---- Instrumentation: fx-effect theme stylesheet ----
+
+if (EffectElementTagNameMap["fx-effect"]) {
+  const themeSheets = new WeakMap<HTMLElement, CSSStyleSheet>();
+
+  const loadTheme = (el: HTMLElement, src: string) => {
+    try {
+      if (!src || !el.shadowRoot) return;
+      let sheet = themeSheets.get(el);
+      if (!sheet) {
+        sheet = new CSSStyleSheet();
+        themeSheets.set(el, sheet);
+        el.shadowRoot.adoptedStyleSheets.push(sheet);
+      }
+      fetch(src)
+        .then((r) => r.text())
+        .then((t) => sheet!.replace(t))
+        .catch((e) => console.warn("[devtools] theme fetch failed (isolated):", e));
+    } catch (e) {
+      console.warn("[devtools] theme load failed (isolated):", e);
+    }
+  };
+
+  EffectElementTagNameMap["fx-effect"] = withLifecycleHooks(EffectElementTagNameMap["fx-effect"], {
+    observedAttributes: ["theme"],
+    connected(el) {
+      if (el.hasAttribute("theme")) loadTheme(el, el.getAttribute("theme")!);
+    },
+    attributeChanged(el, name, oldValue, newValue) {
+      if (name === "theme" && oldValue !== newValue) loadTheme(el, newValue!);
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Step → FxDOM CustomState projection
+// ---------------------------------------------------------------------------
+
+const setFxState = (el: HTMLElement, state: string, on: boolean) => {
+  const st = FxElementStates.get(el);
+  if (st) {
+    if (on) st.add(state);
+    else st.delete(state);
+  } else {
+    if (on) el.classList.add(`is-${state}`);
+    else el.classList.remove(`is-${state}`);
+  }
+};
+
+const clearFxStates = (el: HTMLElement, states: string[]) => {
+  for (const s of states) setFxState(el, s, false);
+};
 
 const isFxRefKeyLike = (v: unknown): v is { key: string } =>
   !!v && typeof v === "object" && typeof (v as any).key === "string";
@@ -198,94 +235,7 @@ const tickToFxState = (
   }
 };
 
-// fx-switch: expose named slots in shadowRoot for visual inspection
-if (EffectElementTagNameMap["fx-switch"]) {
-  const Base = EffectElementTagNameMap["fx-switch"];
-  EffectElementTagNameMap["fx-switch"] = class FxSwitchDevtools extends Base {
-    connectedCallback(): void {
-      super.connectedCallback?.();
-
-      try {
-        const shadow = this.shadowRoot;
-        if (!shadow) return;
-
-        // replace default slot with explicit named slots for each case label
-        const existingSlot = shadow.querySelector("slot");
-        existingSlot?.remove();
-
-        const slots = [...this.children].filter((elm) => elm.slot != null).map((elm)=>{
-          const s = document.createElement("slot");
-          s.name = elm.slot;
-          return s;
-        });
-        shadow.append(...slots);
-
-        // ensure at least one slot exists
-        if (!slots.length) shadow.append(document.createElement("slot"));
-      } catch (e) {
-        console.error("[devtools] fx-switch enhancement failed (isolated):", e);
-      }
-    }
-  } as any;
-}
-
-// fx-effect: theme stylesheet (purely visual)
-if (EffectElementTagNameMap["fx-effect"]) {
-  const Base = EffectElementTagNameMap["fx-effect"] as any;
-  EffectElementTagNameMap["fx-effect"] = class FxEffectDevtools extends Base {
-    static observedAttributes = ["theme", ...(Base.observedAttributes ?? [])];
-
-    private themeCSS?: CSSStyleSheet;
-
-    private loadTheme(src: string) {
-      try {
-        if (!src || !this.shadowRoot) return;
-
-        if (!this.themeCSS) {
-          this.themeCSS = new CSSStyleSheet();
-          this.shadowRoot.adoptedStyleSheets.push(this.themeCSS);
-        }
-        fetch(src)
-          .then((r) => r.text())
-          .then((t) => this.themeCSS!.replace(t))
-          .catch((e) => console.warn("[devtools] theme fetch failed (isolated):", e));
-      } catch (e) {
-        console.warn("[devtools] theme load failed (isolated):", e);
-      }
-    }
-
-    attributeChangedCallback(name: string, oldValue: string, newValue: string) {
-      super.attributeChangedCallback?.(name, oldValue, newValue);
-      if (name === "theme" && oldValue !== newValue) this.loadTheme(newValue);
-    }
-
-    connectedCallback(): void {
-      super.connectedCallback?.();
-      if (this.hasAttribute("theme")) this.loadTheme(this.getAttribute("theme")!);
-    }
-  } as any;
-}
-
-
-// ---------------------------------------------------------------------------
-// Step → FxDOM CustomState projection
-// ---------------------------------------------------------------------------
-
-const setFxState = (el: HTMLElement, state: string, on: boolean) => {
-  const st = FxElementStates.get(el);
-  if (st) {
-    if (on) st.add(state);
-    else st.delete(state);
-  } else {
-    // attachInternals unavailable fallback（任意）
-    if (on) el.classList.add(`is-${state}`);
-    else el.classList.remove(`is-${state}`);
-  }
-};
-
-const clearFxStates = (el: HTMLElement, states: string[]) => {
-  for (const s of states) setFxState(el, s, false);
-};
+type NoteElementResolver = (noteId: string, executionId: string) => HTMLElement | undefined;
 
 export const stepToFxState = (
   step: PerformanceStep,
@@ -295,10 +245,6 @@ export const stepToFxState = (
     const el = resolveElement(step.note_id, step.execution_id);
     if (!el) return;
 
-    // 状態語彙（必要最低限）
-    // running: 実行中
-    // paused : suspend 中（yield/wait）
-    // completed/failed/cancelled/terminated: 終了状態
     switch (step.phase) {
       case "enter": {
         clearFxStates(el, ["completed", "failed", "cancelled", "terminated"]);
@@ -311,13 +257,12 @@ export const stepToFxState = (
         setFxState(el, "paused", false);
         if(el.tagName.toLowerCase() === "fx-loop") {
           [...el.getElementsByTagName("*")].forEach((e)=>{
-            clearFxStates(e as FxEffectElement, ["running","paused","completed","failed","cancelled","terminated"]);
+            clearFxStates(e as HTMLElement, ["running","paused","completed","failed","cancelled","terminated"]);
           })
         }
         break;
       }
       case "suspend": {
-        // suspend は「境界で止まっている」
         setFxState(el, "running", false);
         setFxState(el, "paused", true);
         break;
@@ -327,13 +272,11 @@ export const stepToFxState = (
         break;
       }
       case "exit": {
-        // note と note の間（あなたの境界）で running を落とす
         setFxState(el, "running", false);
         setFxState(el, "paused", false);
 
         const terminated = !!(step.payload as any)?.terminated;
-        const failed = !!(step.payload as any)?.failed; // もし runner が入れるなら
-        // 現状の run() だと terminated は入っている。failed は入っていないので必要なら拡張。
+        const failed = !!(step.payload as any)?.failed;
 
         if (terminated) setFxState(el, "terminated", true);
         else if (failed) setFxState(el, "failed", true);
@@ -352,45 +295,56 @@ export const stepToFxState = (
     }
 
   } catch (error) {
-    // MUST isolate
     console.error("[devtools] Step observer error (isolated):", error);
   }
 };
+
+// ---------------------------------------------------------------------------
+// Execution bridge
+//
+// note↔element の対応は fxdom 内部の noteElementMap（非公開）が toFxNote()
+// 呼び出し時に自動記録する。devtools はそれを getElementForNote() 経由で
+// 読むだけで、fxdom の実装(クラス階層・呼び出しタイミング)を一切知らない。
+// note木の走査には blooky-fx が公開する flattenFxNotes() を使い、
+// runtime/engine.ts には一切依存しない。
+// ---------------------------------------------------------------------------
 
 export const executeByElement = (
   root: FxEffectElement,
   app: AppContext = {},
   ctx?: Partial<ExecutionConfig>
 ) => {
+  if (root.tagName.toLowerCase() !== "fx-effect")
+    throw new Error("[ExecuteError] executeByElement needs `fx-effect` Element");
+  if (!root.isConnected)
+    throw new Error("[ExecuteError] Element is not connected");
+
+  const note = root.toFxNote();
+
   const bindings = new Map<string, HTMLElement>();
   const propBindings = new Map<Prop<any>, Set<HTMLElement>>();
-  const executionScope = new Set<string>();
-  const collectBindings: NoteElementCollector = (note, element) => {
-    const noteId = resolveNoteId(note);
+
+  flattenFxNotes(note).forEach((n) => {
+    const element = getElementForNote(n);
+    if (!element) return;
+
+    const noteId = resolveNoteId(n);
     const existing = bindings.get(noteId);
     if (existing && existing !== element) {
-      // Duplicate explicit id means ambiguous projection target.
       console.warn("[devtools] Duplicate note_id for fx projection; keeping first binding:", noteId);
       return;
     }
     bindings.set(noteId, element);
 
-    const doneProp = resolveDoneProp(note, app);
+    const doneProp = resolveDoneProp(n, app);
     if (doneProp) {
       if (!propBindings.has(doneProp)) propBindings.set(doneProp, new Set());
       propBindings.get(doneProp)!.add(element);
     }
-  };
+  });
 
-  const prevCollector = activeNoteElementCollector;
-  activeNoteElementCollector = collectBindings;
-
-  let handle;
-  try {
-    handle = defaultExecuteByElement(root, app, ctx);
-  } finally {
-    activeNoteElementCollector = prevCollector;
-  }
+  const executionScope = new Set<string>();
+  const handle = query(note, app, ctx);
 
   const unobserveTick = clock.observeTick((tick) => {
     tickToFxState(tick, propBindings);
@@ -413,134 +367,11 @@ export const executeByElement = (
   return handle;
 };
 
-
 // ---------------------------------------------------------------------------
-// Optional: FRP graph monitoring helpers (Informative only)
+// FRP graph monitoring — 別モジュールへ委譲するのみ。
+// demo.ts 等の既存importを壊さないための再export。
 // ---------------------------------------------------------------------------
 
-export function dumpGraphDOT(
-  entries: Record<string, Stream<any> | Prop<any> | unknown>,
-  graphAttrs: Record<string, string> = { rankdir: "LR" }
-): string {
-  const vertex_map: [string, any][] = Object.entries(entries).map(([k, v]) => [k, isStream(v) ? vertex(v) : v]);
-
-  const names = new WeakMap(vertex_map.map(([k, v]) => [Object(v), k]));
-  const visited = new WeakMap<any, string>();
-  const edges: string[] = [];
-  const nodes: string[] = [];
-  let counter = 0;
-
-  function addNode(label: string, attrs: Record<string, any>) {
-    const id = `n${counter++}`;
-    const attrsList = [`label="${label}"`];
-    if (attrs) attrsList.push(...Object.entries(attrs).map(([k, v]) => `${k}="${v}"`));
-    nodes.push(`${id} [${attrsList.join(" ")}]`);
-    return id;
-  }
-
-  function getShape(node: Stream<any>) {
-    if (isDripperStream(node)) return "ellipse";
-    if ("mapFn" in node) return "diamond";
-    if ("filterFn" in node) return "triangle";
-    if ("reduceFn" in node) return "hexagon";
-    return "plain";
-  }
-
-  function visit(obj: Vertex | Prop<any>, label: string) {
-    if (visited.has(obj)) return visited.get(obj)!;
-
-    if (isChainedProp<any>(obj)) {
-      const value = obj();
-      const valueLabel =
-        typeof value === "symbol" ? `symbol(${value.description || ""})` :
-        typeof value === "string" ? `\\"${value.replace(/"/g, '\\"')}\\"` :
-        String(value);
-
-      const id = addNode(label + "|" + valueLabel, {
-        id: label,
-        shape: "record",
-        class: "prop " + (value === null ? "null" : typeof value),
-      });
-      visited.set(obj, id);
-      return id;
-    }
-
-    if (!isVertex(obj)) {
-      const id = addNode(label, { id: names.get(obj) || "unknown", shape: "circle" });
-      visited.set(obj, id);
-      return id;
-    }
-
-    const nodeAttr = names.has(obj)
-      ? { id: "node-" + label, shape: getShape(obj.sourceStream) }
-      : { shape: "point" };
-
-    const id = addNode(label, nodeAttr);
-    visited.set(obj, id);
-
-    const next = [...(obj.next ?? []), ...(obj.lazyNext ?? [])];
-    if (next.length) {
-      edges.push(
-        ...next.map((target) => {
-          const targetLabel = names.get(target) || "Stream";
-          const targetId = visit(target, targetLabel);
-          return `${id} -> ${targetId}`;
-        })
-      );
-    }
-
-    const props = obj.props;
-    if (props) edges.push(...props.map((p) => `${id} -> ${visit(p, names.get(p) || "none")}`));
-    return id;
-  }
-
-  vertex_map.forEach(([name, streamOrProp]) => visit(streamOrProp, name));
-
-  const digraph_attrs = Object.entries(graphAttrs).map((v) => v.join("=")).join(";\n");
-  return `digraph BlookyGraph {\ngraph [\n${digraph_attrs}\n];\n${nodes.join("\n")}\n${edges.join("\n")}\n}`;
-}
-
-export function dripGraph<A>(
-  value: A
-): (dripper: DripperStream<A>) => {
-  dripper: DripperStream<A>;
-  value: A;
-  streams: Map<Stream<any>, any>;
-  effects: Map<Prop<any>, any>;
-} {
-  return (dripper) => {
-    const lazy = new Map<Vertex, any[]>();
-    const streams = new Map<Stream<any>, any>();
-    const effects = new Map<Prop<any>, any>();
-
-    const walk = (v: any) => (vert: Vertex) => {
-      streams.set(vert.sourceStream, v);
-      vert.props?.forEach((p) => effects.set(p, v));
-
-      if (vert.lazyNext) {
-        vert.lazyNext.forEach((lazySource) => {
-          if (lazy.has(lazySource)) lazy.get(lazySource)!.push(v);
-          else lazy.set(lazySource, [v]);
-        });
-      }
-
-      if (vert.next?.length) {
-        vert.next
-          .filter(({ sourceStream }) => !("filterFn" in sourceStream) || sourceStream.filterFn(v))
-          .forEach((s) => walk("mapFn" in s.sourceStream ? s.sourceStream.mapFn(v) : v)(s));
-      }
-    };
-
-    walk(value)(vertex(dripper));
-
-    while (lazy.size) {
-      const entries = [...lazy];
-      lazy.clear();
-      entries.forEach(([s, values]) => walk(values.reduce((s.sourceStream as MergedStream<any>).reduceFn))(s));
-    }
-
-    return { dripper, value, streams, effects };
-  };
-}
+export { dumpGraphDOT, dripGraph } from "./blooky-fp-graphviz";
 
 export { fxdom, EffectElementTagNameMap };
