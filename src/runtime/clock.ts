@@ -15,6 +15,7 @@ import type {
   Prop,
   Vertex,
 } from "../blooky-fp-types";
+import { createObserverBus } from "./internal/observer-bus";
 
 // ─────────────────────────────────────────────────────────
 // 型
@@ -168,7 +169,7 @@ const buildCommitIntent = (t: number, plans: DripPlan<any>[]): BuildResult => {
 
 const tickQueue: Reservation[] = [];
 const clockObservers = new Map<(plan: ObservedCommitPlan) => void, Set<Prop<unknown>>>();
-const tickObservers = new Set<TickObserver>();
+const tickBus = createObserverBus<ObservedTick>();
 
 let tickIndexCounter = 0;
 let clockRunning = false;
@@ -227,7 +228,7 @@ const notifyObservers = (commits: CommitPlanMap): void => {
 
   const errors: Error[] = [];
 
-  tickObservers.forEach((f) => callIsolated(() => f(observedTick), errors));
+  tickBus.emit(observedTick);
   if (errors.length) console.error("[clock] tick observer errors:", ...errors);
 
   const propAll = new Set(commits.keys());
@@ -276,7 +277,7 @@ const advanceClock = (): void => {
     clockRunning = false;
     if (fatalState) return;
 
-    if (!tickQueue.length && !clockObservers.size && !tickObservers.size && !shouldKeepAlive()) {
+    if (!tickQueue.length && !clockObservers.size && !shouldKeepAlive()) {
       return;
     }
 
@@ -352,13 +353,17 @@ const unobserveCommit: FVRuntime["unobserveCommit"] = (f) => (p) => {
   }
 };
 
+const tickBusDisposers = new WeakMap<TickObserver, () => void>();
 const observeTick = (f: TickObserver): (() => void) => {
-  tickObservers.add(f);
-  return () => tickObservers.delete(f);
+  const dispose = tickBus.observe(f);
+  tickBusDisposers.set(f, dispose);
+  return dispose;
 };
 
 const unobserveTick = (f: TickObserver): void => {
-  tickObservers.delete(f);
+  const dispose = tickBusDisposers.get(f);
+  if (dispose) dispose();
+  tickBusDisposers.delete(f);
 };
 
 // ─────────────────────────────────────────────────────────

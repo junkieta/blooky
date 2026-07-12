@@ -1,0 +1,54 @@
+<html>
+    <head>
+        <link rel="stylesheet" href="../../../public/blooky-showcase-basic.css">
+    </head>
+    <body>
+        <form>
+            
+
+            <fieldset class="email">
+                <legend class="step-title">Step 1 / メールアドレス</legend>
+                <div class="field">
+                    <label for="email-inp">email</label>
+                    <input type="email" id="email-inp"
+                        required
+                        placeholder="you@example.com">
+                </div>
+                <button type="button" class="btn btn-primary" value="email">Next →</button>
+            </fieldset>
+
+            <fieldset class="plan">
+                <legend class="step-title">Step 2 / プランを選択</legend>
+                <div class="plan-cards">
+                    <div class="plan-card selected" id="card-free" data-plan="free">
+                        <div class="plan-name">Free</div>
+                        <div class="plan-price">¥0 / 月</div>
+                    </div>
+                    <div class="plan-card" id="card-pro" data-plan="pro">
+                        <div class="plan-name">Pro</div>
+                        <div class="plan-price">¥2,980 / 月</div>
+                    </div>
+                </div>
+                <button type="button" class="btn btn-primary" value="email">Next →</button>
+            </fieldset>
+
+            <fieldset class="confirm">
+                <legend class="step-title">Step 3 / 確認</legend>
+                <div class="summary">
+                    <div class="summary-row"><span class="summary-key">email</span><span class="summary-val">a@a</span></div>
+                    <div class="summary-row"><span class="summary-key">plan</span><span class="summary-val plan-free">Free
+                            ¥0/月</span></div>
+                </div><button type="button" class="btn btn-primary" value="email">Next →</button>
+            </fieldset>
+
+            <fieldset class="step-inner">
+                <legend>
+                    <div class="done-title">🔑 API キー発行完了！</div>
+                </legend>
+                <div class="done-sub">ダッシュボードからご確認ください。</div>
+                <button class="btn btn-restart" value="restart">↺ 最初から</button>
+            </fieldset>
+
+        </form>
+    </body>
+</html>

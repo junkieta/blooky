@@ -34,17 +34,44 @@ export const defaultFxStylesheet = new CSSStyleSheet();
 defaultFxStylesheet.replaceSync(":host { display: none; }");
 
 /**
+ * note ↔ element の受動的対応表。
+ *
+ * 公開契約は getElementForNote() のみ。データ構造（WeakMapであること）や
+ * 更新タイミングは非公開の実装詳細であり、将来変更されても
+ * getElementForNote() のシグネチャが安定している限り消費側は影響を受けない。
+ */
+const noteElementMap = new WeakMap<FxNote, EffectElement>();
+
+export function getElementForNote(note: FxNote): EffectElement | undefined {
+  return noteElementMap.get(note);
+}
+
+/**
  * 副作用フローのノード (FxNote) を表現するすべてのカスタム要素の抽象基底クラス。
  */
 export abstract class EffectElement extends HTMLElement {
 
   /**
-   * このDOM要素に対応するFxNoteオブジェクトを生成して返す。
+   * このDOM要素に対応するFxNoteを構築する。純粋な変換のみを行い、
+   * 副作用（記録・登録など）を持ってはならない。
+   * 記録は公開テンプレートメソッド toFxNote() の責務。
    */
-  abstract toFxNote(): FxNote;
+  protected abstract buildFxNote(): FxNote;
+
+  /**
+   * このDOM要素に対応するFxNoteオブジェクトを生成して返す。
+   * 生成結果は自動的に note↔element 対応表へ記録される。
+   * サブクラスはこのメソッドをオーバーライドしない（buildFxNote を実装する）。
+   */
+  toFxNote(): FxNote {
+    const note = this.buildFxNote();
+    noteElementMap.set(note, this);
+    return note;
+  }
 
   /**
    * 子要素を走査し、対応するFxNoteの配列を生成する。
+   * 子も必ず公開 toFxNote() 経由になるため、対応表への登録漏れが起きない。
    * @returns 子要素から生成されたFxNoteの配列
    */
   protected childrenToFxNotes(): FxNote[] {
@@ -59,6 +86,43 @@ export abstract class EffectElement extends HTMLElement {
     shadow.adoptedStyleSheets = [defaultFxStylesheet];
   }
 
+}
+
+// ---- 合成可能な instrumentation フック ----
+
+export type LifecycleHooks<T extends EffectElement = EffectElement> = {
+  observedAttributes?: string[];
+  connected?: (el: T) => void;
+  attributeChanged?: (el: T, name: string, oldValue: string | null, newValue: string | null) => void;
+};
+
+/**
+ * EffectElement サブクラスへの合成可能な instrumentation 拡張点。
+ * 消費側（例: devtools）はクラスを継承せず、フック関数を渡すだけで
+ * connectedCallback / attributeChangedCallback に処理を差し込める。
+ * fxdom の実装（メソッド解決順序やクラス階層）を知る必要がない。
+ */
+export function withLifecycleHooks<T extends typeof EffectElement>(
+  Base: T,
+  hooks: LifecycleHooks<InstanceType<T>>
+): T {
+  const BaseClass = Base as any;
+  return class extends BaseClass {
+    static get observedAttributes() {
+      const parentAttrs = BaseClass.observedAttributes ?? [];
+      return [...new Set([...parentAttrs, ...(hooks.observedAttributes ?? [])])];
+    }
+    connectedCallback() {
+      super.connectedCallback();
+      hooks.connected?.(this as InstanceType<T>);
+    }
+    attributeChangedCallback(name: string, oldValue: string | null, newValue: string | null) {
+      if ('attributeChangedCallback' in BaseClass.prototype) {
+        super.attributeChangedCallback(name, oldValue, newValue);
+      }
+      hooks.attributeChanged?.(this as InstanceType<T>, name, oldValue, newValue);
+    }
+  } as unknown as T;
 }
 
 // ---- コンテキストバインディング ----
@@ -99,7 +163,7 @@ const attrValueToContextKey = ({target,name,value,context}: JSHTMLAttrRuntime<an
  * 子ノードを順番に実行する。
  */
 class FxSequenceElement extends EffectElement {
-  toFxNote(): FxNote {
+  protected buildFxNote(): FxNote {
     return fx.sequence(this.childrenToFxNotes());
   }
 }
@@ -109,7 +173,7 @@ class FxSequenceElement extends EffectElement {
  * すべての子ノードを並行して実行し、すべてが完了するのを待つ。
  */
 class FxParallelElement extends EffectElement {
-  toFxNote(): FxNote {
+  protected buildFxNote(): FxNote {
     return fx.parallel(this.childrenToFxNotes());
   }
 }
@@ -119,7 +183,7 @@ class FxParallelElement extends EffectElement {
  * 子ノードを並行して実行し、最初に完了したノードの結果を返す。
  */
 class FxRaceElement extends EffectElement {
-  toFxNote(): FxNote {
+  protected buildFxNote(): FxNote {
     return fx.race(this.childrenToFxNotes());
   }
 }
@@ -133,7 +197,7 @@ class FxWaitElement extends EffectElement {
   /** @inheritdoc */
   static [JSHTML_ATTR_HANDLER] = { until: attrValueToContextKey }
 
-  toFxNote(): FxNote {
+  protected buildFxNote(): FxNote {
     const timerAttr = this.getAttribute("timer");
     let timer : FxRef<number>|undefined = undefined;
     
@@ -160,7 +224,7 @@ class FxCallElement extends EffectElement {
   /** @inheritdoc */
   static [JSHTML_ATTR_HANDLER] = { action: attrValueToContextKey, input: attrValueToContextKey, done: attrValueToContextKey }
 
-  toFxNote(): FxNote {
+  protected buildFxNote(): FxNote {
     const actionAttr = this.getAttribute("action");
     // action属性がなければ何もしない
     if (!actionAttr) return fx.none();
@@ -207,7 +271,7 @@ class FxIfElement extends EffectElement {
   /** @inheritdoc */
   static [JSHTML_ATTR_HANDLER] = { test: attrValueToContextKey }
   
-  toFxNote(): FxNote {
+  protected buildFxNote(): FxNote {
     const testAttr = this.getAttribute("test");
     if (!testAttr) return fx.none();
 
@@ -218,6 +282,7 @@ class FxIfElement extends EffectElement {
     const condRef = ref<boolean>(testAttr);
 
     if (thenNode) {
+      // thenNode/elseNode は公開 toFxNote() 経由 → 自動で対応表へ登録される
       return fx.condition(condRef, thenNode.toFxNote(), elseNode?.toFxNote());
     } else {
       // スロットがない場合は、直接の子ノードをthenノードとして使用
@@ -235,7 +300,7 @@ class FxSwitchElement extends EffectElement {
   /** @inheritdoc */
   static [JSHTML_ATTR_HANDLER] = { by: attrValueToContextKey }
   
-  toFxNote(): FxNote {
+  protected buildFxNote(): FxNote {
     const byAttr = this.getAttribute("by");
     if (!byAttr) return fx.none();
 
@@ -260,7 +325,7 @@ class FxLoopElement extends EffectElement {
   /** @inheritdoc */
   static [JSHTML_ATTR_HANDLER] = { while: attrValueToContextKey }
 
-  toFxNote(): FxNote {
+  protected buildFxNote(): FxNote {
     const whileAttr = this.getAttribute("while");
     if (!whileAttr) return fx.none();
     
@@ -302,7 +367,7 @@ class FxYieldElement extends EffectElement {
     done: attrValueToContextKey
   }
   
-  toFxNote(): FxNote {
+  protected buildFxNote(): FxNote {
     const id = this.id;
     const forAttr = this.getAttribute("for");
     
@@ -357,7 +422,7 @@ class FxReturnElement extends EffectElement {
   /** @inheritdoc */
   static [JSHTML_ATTR_HANDLER] = { value: attrValueToContextKey }
   
-  toFxNote(): FxNote {
+  protected buildFxNote(): FxNote {
     return fx.return(this.hasAttribute("value") ? ref(this.getAttribute("value")!) : undefined);
   }
 }
@@ -381,7 +446,7 @@ class FxFlowElement extends EffectElement {
     return this.parentElement ? this.parentElement.closest("fx-flow,fx-effect") : null;
   }
 
-  toFxNote(): FxNote {
+  protected buildFxNote(): FxNote {
     const nodes = this.childrenToFxNotes();
     // 子ノードの有無に応じて、単一ノード、シーケンス、または none を選択
     const child = !nodes.length

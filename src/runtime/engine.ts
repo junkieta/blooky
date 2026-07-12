@@ -23,6 +23,7 @@ import { decode, bind } from "../blooky-context";
 import { stream } from "../blooky-fp";
 import { clock } from "./clock";
 import { createChildCancelToken, Cancelled } from "./cancel-token";
+import { flattenFxNotes, resolveNoteId } from "./fx-tree";
 
 const NotResolved = Symbol.for("NotResolved");
 
@@ -42,7 +43,7 @@ const createIdSlots = (flow: FxNote, parentSlot?: Record<string, any>) => {
   if(parentSlot) {
     Object.assign(idSlots, parentSlot);
   }
-  flatten(flow).forEach((n) => {
+  flattenFxNotes(flow).forEach((n) => {
     if (n.id) idSlots["#" + n.id] = NotResolved;
   });
   // 書き込みはツリー内のid情報に基づいたキーだけにこの時点で閉じる
@@ -417,29 +418,6 @@ export function execute(args: {
 
 
 
-function flatten(n: FxNote): FxNote[] {
-  switch (n.type) {
-    case "sequence":
-    case "parallel":
-    case "race":
-      return [n, ...n.steps.flatMap(flatten)];
-
-    case "loop":
-      return [n, ...flatten(n.body)];
-
-    case "condition":
-      return [n, ...flatten(n.then), ...(n.else ? flatten(n.else) : [])];
-
-    case "switch":
-      return [n, ...[...n.cases.values()].flatMap(flatten), ...(n.default ? flatten(n.default) : [])];
-
-    case "flow":
-      return [n, ...flatten(n.child)];
-
-    default:
-      return [n];
-  }
-}
 
 export class Terminated extends Error {
   readonly name = "Terminated";
@@ -571,17 +549,6 @@ const dispatchSemEvent = async (ev: SemanticEvent, deps: DispatchDepends) => {
   }
 };
 
-const NOTE_ID_SYMBOL = Symbol.for("blooky.note_id");
-let autoNoteIdCounter = 0;
-
-export const resolveNoteId = (note: FxNote): string => {
-  if (note.id && note.id.length) return note.id;
-  const existing = (note as any)[NOTE_ID_SYMBOL];
-  if (typeof existing === "string" && existing.length) return existing;
-  const generated = `note-${autoNoteIdCounter++}`;
-  (note as any)[NOTE_ID_SYMBOL] = generated;
-  return generated;
-};
 
 type Phase = "entered" | "active" | "suspended" | "exited" | "cancelled";
 
@@ -655,4 +622,8 @@ class RunnerFSM {
     this.phase = "cancelled";
   }
 }
+
+// Re-exported for backward compatibility with existing importers
+// (e.g. modules that previously imported flatten/resolveNoteId from here).
+export { flattenFxNotes, resolveNoteId };
 
