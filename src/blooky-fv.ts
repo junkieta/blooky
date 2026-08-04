@@ -30,8 +30,8 @@ import type {
   JSHTMLAttrBuilder,
 } from "./blooky-fv-types";
 
-import { isDripper, drip, isChainedProp, stream } from "./blooky-fp";
-import type { Prop, Dripper, Stream, DripPlan } from "./blooky-fp-types";
+import { isDripper, isChainedProp } from "./blooky-fp";
+import type { Prop, Dripper, DripPlan } from "./blooky-fp-types";
 
 /* ---------------------------------------------
  * FV Runtime Interface (Normative boundary)
@@ -61,12 +61,6 @@ export interface FVRuntime {
  * ------------------------------------------- */
 
 /**
- * tag指定がjshtmlの仕様に沿わなかった場合に生成される要素の定義。
- */
-class JSHTMLUnknownElement extends HTMLElement {}
-customElements.define("jshtml-unknown", JSHTMLUnknownElement);
-
-/**
  * カスタム要素をjshtmlで生成する際の独自フックを登録するためのSymbol。
  * カスタム要素クラスの静的プロパティとして使用し、要素生成時の初期化ロジックを提供する。
  */
@@ -89,67 +83,6 @@ export class EmptyElementAttributeMapSource {
   }
 }
 
-/**
- * Promiseの解決を待つ間に表示されるプレースホルダー要素。Promiseが解決すると、生成されたDOMノードに置き換えられる。
- * NOTE: fv-coreとしては Promise をJSHTMLソースとして許容（DOM生成層の都合）。
- */
-class PromisedElement extends HTMLElement {
-  promise: Promise<JSHTMLNodeSource | Node>;
-  constructor(promise: Promise<JSHTMLNodeSource | Node>) {
-    super();
-    this.promise = promise;
-  }
-  connectedCallback() {
-    if (!this.promise) return;
-    this.promise
-      .then((n) => {
-        const node = n instanceof Node ? n : (this as any)._jshtml(n); // createFVが注入
-        this.dispatchEvent(
-          new CustomEvent("promise-resolved", {
-            bubbles: true,
-            detail: { value: node },
-          })
-        );
-        if (this.parentNode) this.parentNode.replaceChild(node, this);
-      })
-      .catch((error) => {
-        if (
-          this.dispatchEvent(
-            new CustomEvent("promise-rejected", {
-              cancelable: true,
-              bubbles: true,
-              detail: { error },
-            })
-          )
-        )
-          throw new Error('"promise-rejected" event is not prevented');
-      });
-  }
-}
-customElements.define("blooky-promised-placeholder", PromisedElement);
-
-/* ---------------------------------------------
- * Global attribute handler registry
- * ------------------------------------------- */
-
-const ATTRIBUTE_HANDLER_RREGISTRY: {
-  [key: string]: <V>(runtime: JSHTMLAttrRuntime<V>) => boolean | void;
-} = Object.create(null);
-
-/**
- * グローバルなカスタム属性更新ハンドラを登録する。
- * 組み込み属性処理や`jshtmlAttrBuilder`の実行前にカスタムロジックを挿入できる。
- * ハンドラが`false`を返した場合、後続の属性処理はスキップされる。
- * @throws 既に登録されている属性ハンドラがある場合
- */
-export const defineAttrUpdateHandlers = (handlers: {
-  [key: string]: (value: any, target: HTMLElement) => boolean;
-}) => {
-  const defined = Object.keys(handlers).filter((k) => k in ATTRIBUTE_HANDLER_RREGISTRY);
-  if (defined.length) throw new Error(`Attribute handlers already defined: ${defined.join('", "')}`);
-  Object.assign(ATTRIBUTE_HANDLER_RREGISTRY, handlers);
-};
-
 /* ---------------------------------------------
  * Utilities
  * ------------------------------------------- */
@@ -160,15 +93,43 @@ const setCSSProperty = (n: WritableCSSProperty | string, v: string) => (cssDec: 
   else (cssDec as any)[n as WritableCSSProperty] = v;
 };
 
+export type JSHTMLSourceErrorCode =
+  | "AMBIGUOUS_TAG_KEY"
+  | "MISSING_TAG_KEY";
+
+export class JSHTMLSourceError extends Error {
+
+  readonly name = "JSHTMLSourceError";
+
+  constructor(
+    public readonly code: JSHTMLSourceErrorCode,
+    message: string,
+    public readonly detail?: Record<string, unknown>
+  ) {
+    super(message);
+  }
+}
+
 /**
  * JSHTML要素ソースをタグ、属性、子ノードの部品に分割して返す（内部ヘルパー）。
  */
 const extractElementSource = (s: JSHTMLElementSource): JSHTMLExtractedElementSource => {
-  const tag = Object.keys(s).find((t) => t !== "$");
-  if (!tag) {
-    console.error("invalid tag name err:", tag);
-    return ["jshtml-unknown", null];
-  }
+  const tags = Object.keys(s).filter((t) => t !== "$");
+  if (!tags.length)
+    throw new JSHTMLSourceError(
+      "MISSING_TAG_KEY",
+      "[jshtml] Element source must have exactly one tag key besides '$'.",
+      { source: s }
+    );
+
+  if (tags.length > 1)
+    throw new JSHTMLSourceError(
+      "AMBIGUOUS_TAG_KEY",
+      `[jshtml] Element source has ambiguous tag keys: ${tags.join(", ")}.`,
+      { source: s, tags }
+    );
+
+  const [tag] = tags;
   const children = (s as any)[tag] as JSHTMLNodeSource;
   const attrs = "$" in s ? ((s as any).$ as JSHTMLAttributeMapSource) : undefined;
   return !attrs && children instanceof EmptyElementAttributeMapSource
@@ -486,24 +447,10 @@ const listenerForSubmit =
         : (e: Element) => e.setAttribute(n, v + "");
 
   /**
-   * Promiseが解決するまでプレースホルダーを表示する要素を生成する。
-   */
-  const promised = (p: Promise<JSHTMLNodeSource | Node>, msg: JSHTMLNodeSource) => {
-    const element = new PromisedElement(p);
-    // PromisedElement内部でjshtmlを使うため、インスタンスへ注入
-    (element as any)._jshtml = jshtml;
-
-    if (msg != null) element.append(jshtml(msg));
-    else element.style.display = "none";
-    return element;
-  };
-
-  /**
    * JSHTMLのノードソースの型を分析する（内部ヘルパー）。
    */
   const analyzeNodeSource: JSHTMLNodeSourceAnalyzer = (s: JSHTMLNodeSource): JSHTMLNodeSourceType => {
     if (s instanceof Node) return "node";
-    if (s instanceof Promise) return "promise";
     if (typeof s === "function") return "prop";
     if (Array.isArray(s)) return "array";
     if (s == null || s == undefined) return "nullable";
@@ -598,12 +545,6 @@ const listenerForSubmit =
     node: ({ source }: JSHTMLNodeRuntime<Node>) =>
       (source as any).nodeName === "TEMPLATE" ? (source as HTMLTemplateElement).content.cloneNode(true) : source,
 
-    promise: ({ source }: JSHTMLNodeRuntime<Promise<JSHTMLNodeSource>>) => {
-      const elm = new PromisedElement(source as any);
-      (elm as any)._jshtml = jshtml;
-      return elm;
-    },
-
     prop: ({ source, build }: JSHTMLNodeRuntime<Prop<JSHTMLNodeSource>>) => {
       const n = build((source as any)());
       let a: Node, b: Node;
@@ -660,10 +601,8 @@ const listenerForSubmit =
             value = rtAttr.value;
           }
 
-          if (!(name in ATTRIBUTE_HANDLER_RREGISTRY) || ATTRIBUTE_HANDLER_RREGISTRY[name](rtAttr) !== false) {
-            const kind = analyzeAttrSource(rtAttr.name, rtAttr.value);
-            (jshtmlAttrBuilder as any)[kind](rtAttr);
-          }
+          const kind = analyzeAttrSource(rtAttr.name, rtAttr.value);
+          (jshtmlAttrBuilder as any)[kind](rtAttr);
         }
       }
 
@@ -688,9 +627,7 @@ const listenerForSubmit =
 
   // fv-coreの公開API
   return {
-    defineAttrUpdateHandlers, // グローバル登録だが利便性のため返す
     listenerForSubmit,
-    promised,
     jshtml: jshtml as typeof jshtml & { $: (attrs: JSHTMLAttributeMapSource) => EmptyElementAttributeMapSource },
     prime,
     JSHTML_ELEMENT_HANDLER,

@@ -159,7 +159,6 @@ export type JSHTMLExtractedElementSource = [
 
 export type JSHTMLNodeSourceType =
   | "node"
-  | "promise"
   | "prop"
   | "array"
   | "nullable"
@@ -202,8 +201,6 @@ export type JSHTMLNodeFactory = {
   text: (runtime: JSHTMLNodeRuntime<any>) => Text;
   node: (runtime: JSHTMLNodeRuntime<Node>) => Node;
   prop: (runtime: JSHTMLNodeRuntime<JSHTMLPropSource>) => Node;
-  // 実装は PromisedElement extends HTMLElement を返す
-  promise: (runtime: JSHTMLNodeRuntime<Promise<JSHTMLNodeSource | Node>>) => HTMLElement;
   element: (runtime: JSHTMLNodeRuntime<JSHTMLElementSource>) => HTMLElement;
 };
 
@@ -254,24 +251,3 @@ export type BlookyPropEventMap = {
   "style-prop-update": CustomEvent<BlookyAttrPropEventDetail<V_STRING>>;
   "dataset-prop-update": CustomEvent<BlookyAttrPropEventDetail<V_STRING>>;
 };
-
-/*
-// ------------------------------------------------------------
-// fxdom (deferred / commented out)
-// ------------------------------------------------------------
-
-// --- fxdom 用タグ
-export type FxTag = "call" | "delay" | "sequence" | "parallel" | "cancel" | "repeat" | "race" | "if";
-
-// --- fxdom
-export type JSHTMLEffectElementSource = {
-  [K in FxTag]?: JSHTMLEffectElementSource | JSHTMLAttributeMapSource | JSHTMLNodeSource | null;
-} & { $?: JSHTMLAttributeMapSource };
-
-// export type FxExecutionEventMap = {
-//   "fx-step": CustomEvent<PerformanceStep>
-//   "fx-execution-start": CustomEvent<{ executionId: string }>
-//   "fx-execution-complete": CustomEvent<{ executionId: string, context: AppContext }>
-//   "fx-execution-error": CustomEvent<{ executionId: string, error: Error }>
-// }
-*/
