@@ -157,9 +157,12 @@ const mo = new MutationObserver((records)=>{
 
 mo.observe(document.body, { subtree: true, childList: true });
 
-document.body.append(
-  AppUIRenderer(context),
-  EffectRenderer(context),
-  jshtml([renderDot(dot), { pre: dot }])
-);
+renderDot(dot).then((graph)=>{
+  document.body.append(
+    AppUIRenderer(context),
+    EffectRenderer(context),
+    jshtml([graph, { pre: dot }])
+  );
+})
+
 
