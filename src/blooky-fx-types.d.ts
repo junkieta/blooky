@@ -237,7 +237,12 @@ export type ExecutionContext = {
   cancelToken: CancelToken;
   config: ExecutionConfig;
   resolve: <T>(ref: FxRef<T>) => Prop<T>;
-  executeChild: <Result>(child: FxNote) => FxExecution<Result>;
+  executeChild: <Result>(
+    child: FxNote,
+    appContext?: AppContext,
+    cancelToken?: CancelToken,
+  ) => FxExecution<Result>;
+  awaitSuspend: (until: SuspendUntil) => Promise<SuspendOutcome<unknown>>;
 };
 
 export interface NoteDefinition<

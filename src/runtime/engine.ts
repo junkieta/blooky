@@ -277,7 +277,8 @@ export function execute(args: {
   const run = async (
     note: FxNote,
     appContext: Record<string, any>,
-    cancelToken: CancelToken
+    cancelToken: CancelToken,
+    relay?: (step: PerformanceStep) => void | Promise<void>,
   ): Promise<unknown> => {
 
     const fsm = new RunnerFSM();
@@ -288,37 +289,68 @@ export function execute(args: {
       appContext,
       executionId: execution_id,
       resolve: <T>(ref: FxRef<T>) => config.resolver(ref, ctx),
-      executeChild: <Result>(child: FxNote) => (async function* () {
-        return await run(child, appContext, cancelToken) as Result;
+      executeChild: <Result>(
+        child: FxNote,
+        childAppContext = appContext,
+        childCancelToken = cancelToken,
+      ) => (async function* () {
+        const queued: PerformanceStep[] = [];
+        let finished = false;
+        let wake: (() => void) | undefined;
+        const notify = () => {
+          const resolve = wake;
+          wake = undefined;
+          resolve?.();
+        };
+        const completion = run(child, childAppContext, childCancelToken, async (step) => {
+          queued.push(step);
+          notify();
+        });
+        completion.then(
+          () => {
+            finished = true;
+            notify();
+          },
+          () => {
+            finished = true;
+            notify();
+          },
+        );
+
+        while (!finished || queued.length > 0) {
+          if (queued.length === 0) {
+            await new Promise<void>((resolve) => { wake = resolve; });
+          } else {
+            yield queued.shift()!;
+          }
+        }
+        return await completion as Result;
       })(),
+      awaitSuspend: (until) => profile.awaitSuspend(until, ctx),
     };
 
     const note_id = resolveNoteId(note);
     const emit = onStep
-      ? async (draft: PerformanceStepDraft) => await onStep({
+      ? async (draft: PerformanceStepDraft) => {
+        const step = {
           ...draft,
           note_id,
           execution_id,
           step_index: stepCount++
-        })
-      : async () => {};
+        };
+        await (relay ?? onStep)?.(step);
+      }
+      : async (draft: PerformanceStepDraft) => {
+        if (!relay) return;
+        await relay({
+          ...draft,
+          note_id,
+          execution_id,
+          step_index: stepCount++,
+        });
+      };
 
     const definition = registry.definitions.get(note.type);
-    if (definition) {
-      const final = await runFxExecution(
-        definition.execute(ctx as never),
-        onStep,
-        cancelToken,
-      );
-      await emit({
-        phase: "exit",
-        payload: { result: final },
-        effect: resolveExitEffect(note, ctx, final),
-      });
-      if (note.id) config.idSlots["#" + note.id] = final;
-      return final;
-    }
-
     const depends: DispatchDepends = { profile, ctx, cancelToken, emit, };
 
     try {
@@ -329,6 +361,27 @@ export function execute(args: {
       await emit({ phase: "active", payload: { reason: "entered" }, });
       fsm.onEnter();
       fsm.onActive();
+
+      if (definition) {
+        const final = await runFxExecution(
+          definition.execute(ctx as never),
+          async (step) => emit({
+            phase: step.phase,
+            payload: step.payload,
+            effect: step.effect,
+            timestamp: step.timestamp,
+          }),
+          cancelToken,
+        );
+        fsm.onExit();
+        await emit({
+          phase: "exit",
+          payload: { result: final },
+          effect: resolveExitEffect(note, ctx, final),
+        });
+        if (note.id) config.idSlots["#" + note.id] = final;
+        return final;
+      }
 
       const struct = registry.structures.get(note.type);
       if (struct) {
