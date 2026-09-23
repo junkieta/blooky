@@ -125,6 +125,7 @@ export class TemplateYieldDriver implements YieldDriver {
         idSlots: input ? { $_: input } : undefined,
         cancelToken: childCancelToken,
         executionId: `${req.ctx.executionId}:yield:${id}`,
+        stepObserver: req.onStep,
       });
       const result = await handle.done;
 
@@ -141,13 +142,18 @@ export class TemplateYieldDriver implements YieldDriver {
 
 type RemoteClient = {
   requestYield: (endpoint: string, payload: { id: string; locator: unknown; input?: unknown; executionId?: string }) => Promise<void>;
+  cancelYield?: (endpoint: string, payload: { id: string; executionId?: string; reason: string }) => void | Promise<void>;
   // remote 側から結果が返る channel（実装依存）
   onYieldResult: (fn: (msg: { id: string; ok: boolean; value?: unknown; error?: unknown }) => void) => () => void;
+  onYieldStep?: (fn: (msg: { id: string; step: import("../blooky-fx-types").PerformanceStep }) => void) => () => void;
 };
 
 export class RemoteYieldDriver implements YieldDriver {
   private detach?: () => void;
+  private detachStep?: () => void;
   private hub: LocalYieldHub;
+  private stepObservers = new Map<string, (step: import("../blooky-fx-types").PerformanceStep) => void | Promise<void>>();
+  private cancelSubscriptions = new Map<string, () => void>();
 
   constructor(private deps: { client: RemoteClient }) {
     // Remote driver creates its own Hub for out-of-band result reception
@@ -157,24 +163,49 @@ export class RemoteYieldDriver implements YieldDriver {
       if (msg.ok) this.hub.resolve(msg.id, msg.value);
       else this.hub.reject(msg.id, msg.error);
     });
+    this.detachStep = this.deps.client.onYieldStep?.((msg) => {
+      void this.stepObservers.get(msg.id)?.(msg.step);
+    });
   }
 
   async requestYield(req: YieldRequest): Promise<unknown> {
     if (req.locator.kind !== "remote") throw new Error("invalid locator");
+    const endpoint = req.locator.endpoint;
     this.hub.start(req.id);
-    await this.deps.client.requestYield(req.locator.endpoint, {
+    if (req.onStep) this.stepObservers.set(req.id, req.onStep);
+    const completion = this.hub.await(req.id).then(() => this.hub.get(req.id));
+    completion.catch(() => {});
+    if (req.cancelToken && this.deps.client.cancelYield) {
+      this.cancelSubscriptions.set(req.id, req.cancelToken.onCancel((reason) => {
+        void this.deps.client.cancelYield!(endpoint, {
+          id: req.id,
+          executionId: req.ctx.executionId,
+          reason,
+        });
+        this.hub.reject(req.id, new Error(`cancelled:${reason}`));
+      }));
+    }
+    await this.deps.client.requestYield(endpoint, {
       id: req.id,
       locator: req.locator.locator,
       input: req.input,
       executionId: req.ctx.executionId,
     });
     // Remote driver uses Hub for out-of-band result reception
-    return this.hub.await(req.id).then(() => this.hub.get(req.id));
+    return completion.finally(() => {
+      this.stepObservers.delete(req.id);
+      this.cancelSubscriptions.get(req.id)?.();
+      this.cancelSubscriptions.delete(req.id);
+    });
   }
 
   dispose() {
     this.detach?.();
     this.detach = undefined;
+    this.detachStep?.();
+    this.detachStep = undefined;
+    this.cancelSubscriptions.forEach((unsubscribe) => unsubscribe());
+    this.cancelSubscriptions.clear();
   }
 }
 

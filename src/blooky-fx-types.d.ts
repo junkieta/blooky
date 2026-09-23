@@ -61,6 +61,7 @@ export type CancelToken = {
   cancel: (reason?: CancelReason) => void;
   cancelled: () => boolean;
   reason?: CancelReason; // 🆕 キャンセルの理由
+  onCancel: (listener: (reason: CancelReason) => void) => () => void;
 };
 
 // ─── FxNote 定義 ───
@@ -133,6 +134,7 @@ export interface ExecutionConfig {
   idSlots: Record<string, any>;
   executionId?: string;
   cancelToken?: CancelToken;
+  stepObserver?: StepObserver;
 }
 
 // ─── PreparedFx ───
@@ -256,6 +258,7 @@ export type YieldRequest = {
   ctx: ExecutionContext;
   /** 任意：cancel を driver 側でも参照したい場合 */
   cancelToken?: CancelToken;
+  onStep?: StepObserver;
 };
 
 export interface YieldHub {

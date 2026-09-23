@@ -237,6 +237,7 @@ export function prepare(flow: FxNote, initialAppContext: AppContext = {}, parent
       idSlots: createIdSlots(flow, parent?.idSlots),
       executionId: parent?.executionId,
       cancelToken: parent?.cancelToken,
+      stepObserver: parent?.stepObserver,
     },
   };
 }
@@ -264,8 +265,10 @@ export function execute(args: {
   profile: RunnerProfile;
   onStep?: (step: PerformanceStep) => void | Promise<void>;
 }): ExecutionHandle {
-  const { prepared, registry, profile, onStep } = args;
+  const { prepared, registry, profile } = args;
   const { rootNote, config, appContext } = prepared;
+  const onStep = args.onStep ?? config.stepObserver;
+  config.stepObserver = onStep;
   const [ execution_id, unbind_exec_id] = generateExecutionId();
   const rootCancelToken = createCancelToken(config.cancelToken);
 

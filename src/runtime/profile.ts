@@ -18,7 +18,7 @@ export const isOutcome = <T>(v: unknown) : v is OutcomeBase<T> => {
 export const createDefaultProfile = (deps: {
   runtime: FVRuntime;
   yieldDriver: YieldDriver;
-  resolveYieldLocator: (until: SuspendUntil, ctx: ExecutionContext) => YieldLocator;
+  resolveYieldLocator: (until: YieldConditionRef, ctx: ExecutionContext) => YieldLocator;
 }): RunnerProfile => {
   const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
   const resolveRef = <T>(ref: FxRef<T>, ctx: ExecutionContext): Prop<T> => ctx.config.resolver(ref, ctx);
@@ -30,7 +30,13 @@ export const createDefaultProfile = (deps: {
 
     // driver に主権移譲（ここで template/remote/worker が分岐される）
     // driver の Promise を直接待つ（Hub を仲介しない）
-    const result = await deps.yieldDriver.requestYield({ id, locator, input, ctx });
+    const result = await deps.yieldDriver.requestYield({
+      id,
+      locator,
+      input,
+      ctx,
+      onStep: ctx.config.stepObserver,
+    });
 
     return result;
   };
@@ -110,9 +116,15 @@ export const createDefaultProfile = (deps: {
 };
 
 const waitCancel = async (cancelToken: CancelToken) => {
-  while (!cancelToken.cancelled()) {
-    await new Promise((r) => setTimeout(r, 16));
+  if (cancelToken.cancelled()) {
+    throw new Error(`cancelled:${cancelToken.reason ?? "user"}`);
   }
-  throw new Error(`cancelled:${cancelToken.reason ?? "user"}`);
+  await new Promise<void>((_resolve, reject) => {
+    let unsubscribe = () => {};
+    unsubscribe = cancelToken.onCancel((reason) => {
+      unsubscribe();
+      reject(new Error(`cancelled:${reason}`));
+    });
+  });
 };
 
