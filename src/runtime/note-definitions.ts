@@ -34,10 +34,22 @@ const step = (
   payload,
 });
 
+type ResolvedCallAction = FxCallAction | ((input: unknown) => unknown | Promise<unknown>);
+
 const resolveAction = (
   note: FxCallNote,
   ctx: ExecutionContext,
-): FxCallAction => ctx.resolve(note.action)() as FxCallAction;
+): ResolvedCallAction => {
+  const resolved = ctx.resolve(note.action) as ResolvedCallAction & {
+    FX_CALL_ACTION_PROP?: boolean;
+  };
+  return resolved.FX_CALL_ACTION_PROP
+    ? (resolved as unknown as () => ResolvedCallAction)()
+    : resolved;
+};
+
+const actionFunction = (action: ResolvedCallAction) =>
+  typeof action === "function" ? action : action?.call;
 
 export class CallNoteDefinition implements NoteDefinition<"call", unknown> {
   readonly type = "call" as const;
@@ -46,12 +58,16 @@ export class CallNoteDefinition implements NoteDefinition<"call", unknown> {
     ctx: ExecutionContext & { note: FxCallNote },
   ): FxExecution<unknown> {
     const action = resolveAction(ctx.note, ctx);
+    const invoke = actionFunction(action);
+    if (typeof invoke !== "function") {
+      throw new TypeError("Fx call action must be a function or an object with a call method");
+    }
     const input = ctx.note.input === undefined ? undefined : ctx.resolve(ctx.note.input)();
 
     yield step(ctx, "active", { event: "prepare" }, 0);
     yield step(ctx, "active", {
       event: "executing",
-      functionName: action.call.name || "anonymous",
+      functionName: invoke.name || "anonymous",
       input,
     }, 1);
 
@@ -59,7 +75,9 @@ export class CallNoteDefinition implements NoteDefinition<"call", unknown> {
       throw new Error(`cancelled:${ctx.cancelToken.reason ?? "user"}`);
     }
 
-    const result = await action.call(ctx.appContext, input);
+    const result = await (action as unknown as {
+      call: (context: Readonly<AppContext>, input: unknown) => unknown | Promise<unknown>;
+    }).call(ctx.appContext, input);
     yield step(ctx, "active", { event: "completed", result }, 2);
     return result;
   }

@@ -31,7 +31,12 @@ const createContext = <T extends ExecutionContext["note"]>(
   executionId: "execution-1",
   cancelToken: createChildCancelToken(),
   config: {} as ExecutionContext["config"],
-  resolve: <V>(ref: V) => () => ref,
+  resolve: <V>(ref: V) => {
+    if (typeof ref === "function") return ref as any;
+    const prop = (() => ref) as any;
+    if (ref && typeof ref === "object" && "call" in ref) prop.FX_CALL_ACTION_PROP = true;
+    return prop;
+  },
   executeChild,
   awaitSuspend,
 }) as ExecutionContext & { note: T };
@@ -60,6 +65,24 @@ describe("Note async generator execution", () => {
 
     expect(result).toBe("result:value");
     expect(steps).toEqual(["prepare", "executing", "completed"]);
+  });
+
+  it("supports a plain function resolved from app context", async () => {
+    const note: FxCallNote = {
+      type: "call",
+      action: "identity" as unknown as FxCallNote["action"],
+      input: "saved",
+    };
+    const identity = (value: unknown) => value;
+    const ctx = {
+      ...createContext(note),
+      appContext: { identity },
+      resolve: <T>(ref: T) => ref === "identity" ? identity : (() => ref) as any,
+    } as ExecutionContext & { note: FxCallNote };
+
+    const result = await runFxExecution(callNoteDefinition.execute(ctx), undefined, ctx.cancelToken);
+
+    expect(result).toBe("saved");
   });
 
   it("waits through the context suspend service", async () => {
