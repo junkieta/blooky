@@ -41,7 +41,7 @@ describe("Note async generator execution", () => {
     const note: FxCallNote = {
       type: "call",
       action: {
-        call: async (_context, input) => `result:${input}`,
+        call: async (_context: Readonly<Record<string, any>>, input: unknown) => `result:${input}`,
       },
       input: "value",
       id: "call-1",
