@@ -15,9 +15,8 @@ export type PerformanceStep = {
   note_id: string;
   execution_id: string;
   step_index: number;
-  // Implementation convention:
-  // semantic events such as effect/result/terminate are represented in payload.event
-  // while phase remains one of PerformancePhase.
+  // Diagnostic/display data associated with the performance phase.
+  // It must not recreate an execution protocol such as result or terminate.
   payload?: unknown;
   effect?: unknown;
   timestamp?: number;
@@ -186,24 +185,8 @@ export type SuspendOutcome<T> =
   | Exclude<OutcomeBase<T>, { kind: "error" }>;
 
 export interface RunnerProfile {
-  resolveSelection(
-    note: Extract<FxNote, { type: "condition" | "switch" }>,
-    ctx: ExecutionContext
-  ): FxNote | null;
-
-  // Yield or Wait
   awaitSuspend(until: SuspendUntil, ctx: ExecutionContext): Promise<SuspendOutcome<unknown>>;
-
-  projectEffect(ref: unknown, ctx: ExecutionContext): unknown;
-  applyEffect(ref: unknown, ctx: ExecutionContext): Promise<EffectOutcome<unknown>>;
-
 }
-
-export type SemanticEvent =
-  | { type: "result"; value: unknown }
-  | { type: "suspend"; until: SuspendUntil }
-  | { type: "effect"; ref: unknown }
-  | { type: "terminate"; value?: unknown };
 
 export type YieldUntil = YieldConditionRef;
 
@@ -255,31 +238,8 @@ export interface NoteDefinition<
   ): FxExecution<Result>;
 }
 
-export type Semantics = (note: FxNote, ctx: ExecutionContext) => Generator<SemanticEvent, void, void>;
-export type RunChild = (
-  n: FxNote,
-  overrideAppContext?: AppContext,
-  overrideCancelToken?: CancelToken
-) => Promise<unknown>;
-export type StepSink = (step: PerformanceStepDraft) => void | Promise<void>;
-
-export type StructureEvent =
-  | { type: "run";              note: FxNote; appContext?: AppContext; cancelToken?: CancelToken }
-  | { type: "run-all";          notes: FxNote[] }
-  | { type: "run-race";         notes: FxNote[]; childTokens: CancelToken[] }
-  | { type: "resolve-selection"; note: Extract<FxNote, { type: "condition" | "switch" }> }
-  | { type: "iterate", iteration: number };
-
-// AsyncGenerator<yield型, return型, next型>
-export type StructureRunner = (
-  note: FxNote,
-  ctx: ExecutionContext
-) => AsyncGenerator<StructureEvent, unknown, unknown>;
-
 export interface Registry {
   definitions: Map<FxNote["type"], NoteDefinition<any, any>>;
-  semantics: Map<FxNote["type"], Semantics>;
-  structures: Map<FxNote["type"], StructureRunner>;
 }
 
 /** locator: yield の主権移譲先 */
@@ -323,7 +283,7 @@ export interface FxCallAction<A = void, B = unknown> {
  * Runner が生成した PerformanceStep を受け取り、
  * step.effect を Clock transaction（submitPlan）へ変換する唯一の経路。
  *
- * - runtime semantics を変更してはならない（MUST NOT）
+ * - execution semantics を変更してはならない（MUST NOT）
  * - step の順序・内容を書き換えてはならない（MUST NOT）
  * - submitPlan の失敗は Execution failure として上位に伝播してよい（MAY）
  */

@@ -53,18 +53,18 @@ describe("Note async generator execution", () => {
     };
     const ctx = createContext(note);
     const cancelToken = ctx.cancelToken;
-    const steps: string[] = [];
+    const stages: string[] = [];
 
     const result = await runFxExecution(
       callNoteDefinition.execute(ctx),
       (step) => {
-        steps.push((step.payload as { event: string }).event);
+        stages.push((step.payload as { stage: string }).stage);
       },
       cancelToken,
     );
 
     expect(result).toBe("result:value");
-    expect(steps).toEqual(["prepare", "executing", "completed"]);
+    expect(stages).toEqual(["prepare", "executing", "completed"]);
   });
 
   it("supports a plain function resolved from app context", async () => {
@@ -111,14 +111,14 @@ describe("Note async generator execution", () => {
     const note: FxSequenceNote = { type: "sequence", steps: [child] };
     const childExecution = callNoteDefinition.execute(createContext(child));
     const ctx = createContext(note, (() => childExecution) as ExecutionContext["executeChild"]);
-    const events: unknown[] = [];
+    const stages: string[] = [];
 
     const result = await runFxExecution(sequenceNoteDefinition.execute(ctx), (step) => {
-      events.push((step.payload as { event: string }).event);
+      stages.push((step.payload as { stage: string }).stage);
     }, ctx.cancelToken);
 
     expect(result).toBe("child-result");
-    expect(events).toEqual(["prepare", "executing", "completed"]);
+    expect(stages).toEqual(["prepare", "executing", "completed"]);
   });
 
   it("runs a sequence through the production generator path", async () => {
@@ -136,10 +136,7 @@ describe("Note async generator execution", () => {
       prepared: prepare(note),
       registry,
       profile: {
-        resolveSelection: () => null,
         awaitSuspend: async () => ({ kind: "continue" }),
-        projectEffect: (value) => value,
-        applyEffect: async () => ({ kind: "none" }),
       },
       onStep: (step) => {
         observed.push(step);
@@ -148,9 +145,31 @@ describe("Note async generator execution", () => {
 
     expect(result).toBe("production-result");
     expect(observed
-      .map((step) => (step.payload as { event?: string })?.event)
-      .filter((event): event is string => event !== undefined))
+      .map((step) => (step.payload as { stage?: string })?.stage)
+      .filter((stage): stage is string => stage !== undefined))
       .toEqual(["prepare", "executing", "completed"]);
+  });
+
+  it("runs standard Notes with definitions only", async () => {
+    const registry = createRegistry();
+    registerDefault(registry);
+    const note: FxSequenceNote = {
+      type: "sequence",
+      steps: [{
+        type: "call",
+        action: { call: async () => "definitions-only" },
+      }],
+    };
+
+    const result = await execute({
+      prepared: prepare(note),
+      registry,
+      profile: {
+        awaitSuspend: async () => ({ kind: "continue" }),
+      },
+    }).done;
+
+    expect(result).toBe("definitions-only");
   });
 
   it("orchestrates parallel child generators locally", async () => {

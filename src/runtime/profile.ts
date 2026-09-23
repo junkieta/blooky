@@ -1,7 +1,7 @@
 import { isChainedProp } from "../blooky-fp";
 import { Prop } from "../blooky-fp-types";
 import { FVRuntime } from "../blooky-fv";
-import type { CancelToken, FxNote, FxRef, OutcomeBase, ExecutionContext, RunnerProfile, SuspendOutcome, SuspendUntil, YieldDriver, YieldLocator } from "../blooky-fx-types";
+import type { CancelToken, FxNote, FxRef, OutcomeBase, ExecutionContext, RunnerProfile, SuspendOutcome, SuspendUntil, YieldConditionRef, YieldDriver, YieldLocator } from "../blooky-fx-types";
 
 export const isOutcome = <T>(v: unknown) : v is OutcomeBase<T> => {
   const value = v as OutcomeBase<T>;
@@ -21,31 +21,9 @@ export const createDefaultProfile = (deps: {
   resolveYieldLocator: (until: SuspendUntil, ctx: ExecutionContext) => YieldLocator;
 }): RunnerProfile => {
   const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
-  const resolveRef = <T>(ref: FxRef<T>, _ctx?: ExecutionContext): Prop<T> => _ctx.config.resolver(ref, _ctx);
+  const resolveRef = <T>(ref: FxRef<T>, ctx: ExecutionContext): Prop<T> => ctx.config.resolver(ref, ctx);
 
-  const resolveSelection: RunnerProfile["resolveSelection"] = (note, ctx) => {
-    if (note.type === "condition") {
-      const raw = resolveRef(note.if, ctx)(); 
-      return (isOutcome(raw) ? raw.kind === "value" && !!raw.value : !!raw)
-        ? note.then
-        : note.else ?? null;
-    } else {
-      const raw = resolveRef(note.by as any, ctx)();
-      const key = !isOutcome(raw)
-        ? raw
-        : raw.kind === "value"
-        ? raw.value
-        : raw.kind;
-      // まず正規化キーで探す
-      if (note.cases.has(key as any)) return note.cases.get(key as any)!;
-      // switchの入力が Outcome(value) かつ payloadキー不一致なら kind でフォールバック
-      return note.cases.has("value" as any) && isOutcome(raw) && raw.kind === "value"
-        ? note.cases.get("value" as any)!
-        : note.default ?? null;
-    }
-  };
-
-  const startYield = async (until, ctx) => {
+  const startYield = async (until: YieldConditionRef, ctx: ExecutionContext) => {
     const locator: YieldLocator = deps.resolveYieldLocator(until, ctx);
     const input = until.input === undefined ? undefined : resolveRef(until.input, ctx)();
     const id = `${ctx.executionId}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
@@ -124,32 +102,8 @@ export const createDefaultProfile = (deps: {
   };
 
 
-  const projectEffect = (ref: unknown) => ref;
-
-  const applyEffect: RunnerProfile["applyEffect"] = async (ref, ctx) => {
-    const e: any = ref;
-    if (e?.kind !== "call") return { kind: "none" };
-
-    if (ctx.cancelToken.cancelled()) {
-      return { kind: "cancel", reason: ctx.cancelToken.reason };
-    }
-
-    try {
-      const action = resolveRef(e.action, ctx) as any;
-      const input = e.input === undefined ? undefined : resolveRef(e.input, ctx)();
-      const callable = action.FX_CALL_ACTION_PROP ? action() : action;
-      const raw = await Promise.resolve(callable.call(ctx.appContext, input));
-      return isOutcome(raw) ? raw : { kind: "value", value: raw };
-    } catch (error) {
-      return { kind: "crash", error, source: "action" };
-    }
-  };
-
   return {
-    resolveSelection,
     awaitSuspend,
-    projectEffect,
-    applyEffect,
   };
 
   

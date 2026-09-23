@@ -12,11 +12,8 @@ import type {
   FxRefKey,
   Registry,
   ExecutionContext as ExecutionContext,
-  SemanticEvent,
-  StepSink,
   RunnerProfile,
-  FxCallAction,
-  StructureEvent
+  FxCallAction
 } from "../blooky-fx-types";
 import { Prop } from "../blooky-fp-types";
 import { decode, bind } from "../blooky-context";
@@ -351,7 +348,6 @@ export function execute(args: {
       };
 
     const definition = registry.definitions.get(note.type);
-    const depends: DispatchDepends = { profile, ctx, cancelToken, emit, };
 
     try {
       if (cancelToken.cancelled()) {
@@ -376,76 +372,15 @@ export function execute(args: {
         fsm.onExit();
         await emit({
           phase: "exit",
-          payload: { result: final },
           effect: resolveExitEffect(note, ctx, final),
         });
         if (note.id) config.idSlots["#" + note.id] = final;
         return final;
       }
 
-      const struct = registry.structures.get(note.type);
-      if (struct) {
-        const gen = struct(note, ctx);
-        let value: unknown;
-        let cursor = await gen.next();
-        while(!cursor.done) {
-          const ev = cursor.value as StructureEvent;
-          value = await dispatchStructureEvent(ev, run, depends);
-          if(ev.type === "iterate") {
-            await emit({ phase: "active", payload: { iteration: value } });
-            if(note.id) config.idSlots["#"+note.id] = value;
-          }
-          cursor = await gen.next(value);
-        }
-        fsm.onExit();
-        await emit({
-          phase: "exit",
-          payload: { result: value },
-          effect: resolveExitEffect(note, ctx, value),
-        });
-        if (note.id) config.idSlots["#" + note.id] = value;
-        return value;
-      }
-
-      const sem = registry.semantics.get(note.type);
-      if (!sem) throw new Error(`No semantics for ${note.type}`);
-      let final: unknown = undefined;
-      for (const ev of sem(note, ctx)) {
-        fsm.onEvent(ev);
-        const r = await dispatchSemEvent(ev, depends);
-        if (ev.type === "suspend") {
-          fsm.onResume();
-          fsm.onActive();
-        }
-        if (r.kind === "result") {
-          if (ev.type !== "result") {
-            fsm.onEvent({ type: "result", value: r.value });
-          }
-          final = r.value;
-        }
-      }
-
-      fsm.onExit();
-      await emit({
-        phase: "exit",
-        payload: { result: final },
-        effect: resolveExitEffect(note, ctx, final),
-      });
-      if (note.id) config.idSlots["#" + note.id] = final;
-      return final;
+      throw new Error(`No NoteDefinition for ${note.type}`);
 
     } catch (e) {
-      if (e instanceof Terminated) {
-        fsm.onExit();
-        await emit({
-          phase: "exit",
-          payload: { result: e.value, terminated: true },
-          effect: resolveExitEffect(note, ctx, e.value),
-        });
-        if(note.id) config.idSlots["#"+note.id] = e.value;
-        throw e;
-      }
-
       // Cancelを正規化する
       let reason: string, err: Error;
       if(e instanceof Cancelled) {
@@ -471,12 +406,8 @@ export function execute(args: {
         try {
           finalValue = await run(rootNote, appContext, rootCancelToken);
         } catch (e) {
-          if (e instanceof Terminated) {
-            finalValue = e.value;
-          } else {
-            reject(e);
-            return;
-          }
+          reject(e);
+          return;
         }
         resolve(finalValue);
       })()
@@ -492,145 +423,10 @@ export function execute(args: {
 }
 
 
-
-
-export class Terminated extends Error {
-  readonly name = "Terminated";
-  constructor(readonly value: unknown) {
-    super("Performance terminated");
-  }
-}
-
-// Cancelled class moved to cancel-token.ts to avoid circular import
-
-export type DispatchDepends = {
-  profile: RunnerProfile;
-  ctx: ExecutionContext;
-  cancelToken: CancelToken;
-  emit: StepSink;
-};
-
-const dispatchStructureEvent = async (
-  ev: StructureEvent,
-  run: (note: FxNote, app: AppContext, cancel: CancelToken) => Promise<unknown>,
-  {ctx,profile}: DispatchDepends,
-) => {
-  let childResult: unknown;
-  switch (ev.type) {
-    case "run":
-      childResult = await run(
-        ev.note,
-        ev.appContext ?? ctx.appContext,
-        ev.cancelToken ?? ctx.cancelToken
-      );
-      break;
-    case "run-all":
-      childResult = await Promise.all(
-        ev.notes.map(n => run(n, ctx.appContext, ctx.cancelToken))
-      );
-      break;
-    case "run-race": {
-      let settled = false;
-      const settle_fn = (winner_number:number) => () => {
-        if(!settled) {
-          settled = true;
-          ev.childTokens.forEach((t, j) => {
-            if (j !== winner_number) t.cancel("race_loser");
-          });
-        }
-      }
-      const wrapped = ev.notes.map((child, i) =>
-        run(child, ctx.appContext, ev.childTokens[i]).finally(settle_fn(i))
-      );
-      childResult = await Promise.race(wrapped);
-      break;
-    }
-    case "resolve-selection":
-      childResult = profile.resolveSelection(ev.note, ctx);
-      break;
-    case "iterate":
-      childResult = ev.iteration;
-      break;
-  }
-  return childResult;
-};
-
-const dispatchSemEvent = async (ev: SemanticEvent, deps: DispatchDepends) => {
-  if (deps.cancelToken.cancelled()) throw new Cancelled(deps.cancelToken.reason ?? "user");
-
-  switch (ev.type) {
-
-    case "effect": {
-      const projected = deps.profile.projectEffect(ev.ref, deps.ctx);
-      await deps.emit({
-        phase: "active",
-        payload: { event: "effect", effect: projected },
-        effect: projected,
-      });
-
-      const value = await deps.profile.applyEffect(ev.ref, deps.ctx);
-      if (value.kind === "none") return { kind: "continue" as const };
-      await deps.emit({
-        phase: "active",
-        payload: { event: "result", value },
-      });
-      return { kind: "result" as const, value };
-    }
-
-    case "suspend": {
-      await deps.emit({
-        phase: "suspend",
-        payload: { until: ev.until },
-      });
-
-      const out = await deps.profile.awaitSuspend(ev.until, deps.ctx);
-      await deps.emit({
-        phase: "resume",
-        payload: { until: ev.until },
-      });
-      await deps.emit({
-        phase: "active",
-        payload: { reason: "resumed" },
-      });
-
-      if (out.kind === "continue") return out;
-
-      await deps.emit({
-        phase: "active",
-        payload: { event: "result", value: out },
-      });
-      return { kind: "result" as const, value: out };
-    }
-
-    case "result":
-      {
-        const value = deps.ctx.config.resolver(ev.value as FxRef<unknown>, deps.ctx)();
-        await deps.emit({
-          phase: "active",
-          payload: { event: "result", value },
-        });
-        return { kind: "result" as const, value };
-      }
-
-    case "terminate":
-      {
-        const value = deps.ctx.config.resolver(ev.value as FxRef<unknown>, deps.ctx)();
-        await deps.emit({
-          phase: "active",
-          payload: { event: "terminate", value },
-        });
-        throw new Terminated(value);
-      }
-  }
-};
-
-
 type Phase = "entered" | "active" | "suspended" | "exited" | "cancelled";
 
 class RunnerFSM {
   private phase: Phase = "entered";
-  private sawResult = false;
-  private sawTerminate = false;
 
   onEnter() {
     if (this.phase !== "entered") throw new Error("FSM violation: enter twice");
@@ -641,42 +437,6 @@ class RunnerFSM {
       throw new Error(`FSM violation: active from ${this.phase}`);
     }
     this.phase = "active";
-  }
-
-  onEvent(ev: SemanticEvent) {
-    if (this.phase === "exited" || this.phase === "cancelled") {
-      throw new Error(`FSM violation: event after end (${ev.type})`);
-    }
-
-    switch (ev.type) {
-      case "effect":
-        if (this.sawResult || this.sawTerminate) {
-          throw new Error("FSM violation: effect after result/terminate");
-        }
-        return;
-
-      case "suspend":
-        if (this.sawResult || this.sawTerminate) {
-          throw new Error("FSM violation: suspend after result/terminate");
-        }
-        if (this.phase !== "active") {
-          throw new Error("FSM violation: suspend when not active");
-        }
-        this.phase = "suspended";
-        return;
-
-      case "result":
-        if (this.sawTerminate) throw new Error("FSM violation: result with terminate");
-        if (this.sawResult) throw new Error("FSM violation: duplicate result");
-        this.sawResult = true;
-        return;
-
-      case "terminate":
-        if (this.sawResult) throw new Error("FSM violation: terminate with result");
-        if (this.sawTerminate) throw new Error("FSM violation: duplicate terminate");
-        this.sawTerminate = true;
-        return;
-    }
   }
 
   onResume() {

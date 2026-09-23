@@ -226,7 +226,7 @@ const tickToFxState = (
       const targets = propBindings.get(prop);
       if (!targets) return;
       targets.forEach((el) => {
-        clearFxStates(el, ["running", "paused", "failed", "cancelled", "terminated"]);
+        clearFxStates(el, ["running", "paused", "failed", "cancelled"]);
         setFxState(el, "completed", true);
       });
     });
@@ -247,7 +247,7 @@ export const stepToFxState = (
 
     switch (step.phase) {
       case "enter": {
-        clearFxStates(el, ["completed", "failed", "cancelled", "terminated"]);
+        clearFxStates(el, ["completed", "failed", "cancelled"]);
         setFxState(el, "running", false);
         setFxState(el, "paused", false);
         break;
@@ -257,7 +257,7 @@ export const stepToFxState = (
         setFxState(el, "paused", false);
         if(el.tagName.toLowerCase() === "fx-loop") {
           [...el.getElementsByTagName("*")].forEach((e)=>{
-            clearFxStates(e as HTMLElement, ["running","paused","completed","failed","cancelled","terminated"]);
+            clearFxStates(e as HTMLElement, ["running","paused","completed","failed","cancelled"]);
           })
         }
         break;
@@ -275,11 +275,9 @@ export const stepToFxState = (
         setFxState(el, "running", false);
         setFxState(el, "paused", false);
 
-        const terminated = !!(step.payload as any)?.terminated;
         const failed = !!(step.payload as any)?.failed;
 
-        if (terminated) setFxState(el, "terminated", true);
-        else if (failed) setFxState(el, "failed", true);
+        if (failed) setFxState(el, "failed", true);
         else setFxState(el, "completed", true);
 
         break;

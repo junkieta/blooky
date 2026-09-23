@@ -64,9 +64,9 @@ export class CallNoteDefinition implements NoteDefinition<"call", unknown> {
     }
     const input = ctx.note.input === undefined ? undefined : ctx.resolve(ctx.note.input)();
 
-    yield step(ctx, "active", { event: "prepare" }, 0);
+    yield step(ctx, "active", { stage: "prepare" }, 0);
     yield step(ctx, "active", {
-      event: "executing",
+      stage: "executing",
       functionName: invoke.name || "anonymous",
       input,
     }, 1);
@@ -78,7 +78,7 @@ export class CallNoteDefinition implements NoteDefinition<"call", unknown> {
     const result = await (action as unknown as {
       call: (context: Readonly<AppContext>, input: unknown) => unknown | Promise<unknown>;
     }).call(ctx.appContext, input);
-    yield step(ctx, "active", { event: "completed", result }, 2);
+    yield step(ctx, "active", { stage: "completed" }, 2);
     return result;
   }
 }
