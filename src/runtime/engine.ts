@@ -24,6 +24,7 @@ import { stream } from "../blooky-fp";
 import { clock } from "./clock";
 import { createChildCancelToken, Cancelled } from "./cancel-token";
 import { flattenFxNotes, resolveNoteId } from "./fx-tree";
+import { runFxExecution } from "./generator-runner";
 
 const NotResolved = Symbol.for("NotResolved");
 
@@ -286,7 +287,12 @@ export function execute(args: {
       config,
       appContext,
       executionId: execution_id,
+      resolve: <T>(ref: FxRef<T>) => config.resolver(ref, ctx),
+      executeChild: <Result>(child: FxNote) => (async function* () {
+        return await run(child, appContext, cancelToken) as Result;
+      })(),
     };
+
     const note_id = resolveNoteId(note);
     const emit = onStep
       ? async (draft: PerformanceStepDraft) => await onStep({
@@ -296,6 +302,22 @@ export function execute(args: {
           step_index: stepCount++
         })
       : async () => {};
+
+    const definition = registry.definitions.get(note.type);
+    if (definition) {
+      const final = await runFxExecution(
+        definition.execute(ctx as never),
+        onStep,
+        cancelToken,
+      );
+      await emit({
+        phase: "exit",
+        payload: { result: final },
+        effect: resolveExitEffect(note, ctx, final),
+      });
+      if (note.id) config.idSlots["#" + note.id] = final;
+      return final;
+    }
 
     const depends: DispatchDepends = { profile, ctx, cancelToken, emit, };
 

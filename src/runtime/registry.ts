@@ -1,10 +1,12 @@
 import { bind } from "../blooky-context";
-import type { FxNote, Registry, Semantics, StructureEvent, StructureRunner, YieldConditionRef } from "../blooky-fx-types";
+import type { FxNote, NoteDefinition, Registry, Semantics, StructureEvent, StructureRunner, YieldConditionRef } from "../blooky-fx-types";
 import type { CancelToken } from "../blooky-fx-types";
 import { Cancelled, createChildCancelToken } from "./cancel-token";
+import { callNoteDefinition } from "./note-definitions";
 
 
 export const createRegistry = (): Registry => ({
+  definitions: new Map(),
   semantics: new Map(),
   structures: new Map(),
 });
@@ -139,6 +141,7 @@ const overlayContext = (
 };
 
 export const registerDefault = (reg: Registry) => {
+  reg.definitions.set("call", callNoteDefinition as NoteDefinition<any, any>);
   reg.semantics.set("none", semNone);
   reg.semantics.set("return", semReturn);
   reg.semantics.set("wait", semWait);

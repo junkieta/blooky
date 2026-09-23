@@ -25,6 +25,13 @@ export type PerformanceStep = {
 
 export type PerformanceStepDraft = Omit<PerformanceStep, "step_index"|"execution_id"|"note_id">;
 
+/**
+ * Primary execution contract for an FxNote.
+ * Yielded values are observable timeline steps; the generator return value is
+ * the note result.
+ */
+export type FxExecution<Result> = AsyncGenerator<PerformanceStep, Result, unknown>;
+
 
 // ─── FxRef: 実行時解決される値への参照 ───
 export declare const FxRefSymbol: unique symbol;
@@ -229,7 +236,19 @@ export type ExecutionContext = {
   executionId: string;
   cancelToken: CancelToken;
   config: ExecutionConfig;
+  resolve: <T>(ref: FxRef<T>) => Prop<T>;
+  executeChild: <Result>(child: FxNote) => FxExecution<Result>;
 };
+
+export interface NoteDefinition<
+  T extends FxNote["type"] = FxNote["type"],
+  Result = unknown
+> {
+  readonly type: T;
+  execute(
+    ctx: ExecutionContext & { note: Extract<FxNote, { type: T }> }
+  ): FxExecution<Result>;
+}
 
 export type Semantics = (note: FxNote, ctx: ExecutionContext) => Generator<SemanticEvent, void, void>;
 export type RunChild = (
@@ -253,6 +272,7 @@ export type StructureRunner = (
 ) => AsyncGenerator<StructureEvent, unknown, unknown>;
 
 export interface Registry {
+  definitions: Map<FxNote["type"], NoteDefinition<any, any>>;
   semantics: Map<FxNote["type"], Semantics>;
   structures: Map<FxNote["type"], StructureRunner>;
 }
